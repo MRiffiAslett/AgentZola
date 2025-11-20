@@ -1,0 +1,38 @@
+# StarCoder Generation Configuration
+# Configuration for generating test programs using VLLM
+
+[paths]
+prompt_dir = "prompts"
+output_dir = "generated-outputs"
+hf_home = "/JawTitan/huggingface/hub"
+hf_cache = null
+log_file = "whitefox-llm-gen.log"
+
+[model]
+name = "ise-uiuc/Magicoder-S-DS-6.7B"
+dtype = "bfloat16"
+max_model_len = 14000
+gpu_memory_utilization = 0.9
+swap_space = 20
+
+[generation]
+num_samples = 10
+max_tokens = 4096
+temperature = 1.0
+top_p = 1.0
+split_size = 20
+unit_num = 20
+
+[stopping]
+eof_strings = [
+    "<|endoftext|>",
+    "###",
+    "__output__ =",
+    "if __name__",
+    '"""',
+    "'''",
+    "# Model ends",
+    "# LLVM IR ends",
+    "# C++ Code ends",
+]
+
