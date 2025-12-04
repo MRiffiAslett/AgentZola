@@ -1,0 +1,6 @@
+[submodule "yaco_xla/xla"]
+	path = yaco_xla/xla
+	url = https://github.com/openxla/xla.git
+[submodule "yaco_tensorflow/tensorflow"]
+	path = yaco_tensorflow/tensorflow
+	url = https://github.com/MRiffiAslett/tensorflow.git
