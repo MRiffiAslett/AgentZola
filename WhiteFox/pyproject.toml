@@ -1,0 +1,17 @@
+[project]
+name = "whitefox"
+version = "0.1.0"
+description = "This is a Whitefox rebuild using the initial source code as reference (https://github.com/ise-uiuc/WhiteFox)"
+authors = [
+    {name = "Max Riffi-Aslett",email = "max.riffi3@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "tensorflow (>=2.20.0,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
