@@ -7,6 +7,11 @@ output_dir = "generated-outputs"
 hf_home = "/JawTitan/huggingface/hub"
 hf_cache = null
 log_file = "whitefox-llm-gen.log"
+# WhiteFox-specific paths
+test_output_root = null  # defaults to output_dir/whitefox_tests
+logs_root = null  # defaults to output_dir/whitefox_logs
+bandit_state_file = "whitefox_state.json"
+bug_reports_dir = null  # defaults to output_dir/whitefox_bugs
 
 [model]
 name = "ise-uiuc/Magicoder-S-DS-6.7B"
@@ -16,12 +21,72 @@ gpu_memory_utilization = 0.9
 swap_space = 20
 
 [generation]
-num_samples = 10
-max_tokens = 4096
-temperature = 1.0
-top_p = 1.0
-split_size = 20
-unit_num = 20
+num_samples = 10     # Total number of output samples to generate per prompt
+max_tokens = 4096    # Maximum number of tokens to generate for each output
+temperature = 1.0    # Controls randomness (higher = more random)
+top_p = 1.0          # Nucleus sampling limit (1.0 = consider all tokens)
+split_size = 20      # Number of prompts processed together per batch
+unit_num = 20        # Number of samples generated per batch call (until num_samples reached)
+# WhiteFox-specific generation parameters
+optimizations_dir = "WhiteFox/xilo_xla/artifacts/Prompts/req"  # Path to requirement prompt directory
+tests_per_optimization = 1000  # Total tests to generate per optimization
+tests_per_iteration = 10       # Tests to generate per iteration
+max_iterations = 100           # Maximum iterations per optimization
+examples_per_prompt = 3        # Number of examples to include in feedback prompt (N in Thompson Sampling)
+
+# Hardcoded list of optimizations that WhiteFox targets
+optimizations = [
+    "AllGatherBroadcastReorder",
+    "AllGatherCombiner",
+    "AllGatherDecomposer",
+    "AllReduceCombiner",
+    "AllReduceFolder",
+    "AllReduceReassociate",
+    "AllReduceSimplifier",
+    "AsyncCollectiveCreator",
+    "BatchDotSimplification",
+    "Bfloat16ConversionFolding",
+    "BroadcastCanonicalizer",
+    "ChangeOpDataType",
+    "CollectivesScheduleLinearizer",
+    "ConcatForwarding",
+    "ConditionalCanonicalizer",
+    "ConvertAsyncCollectivesToSync",
+    "ConvertMover",
+    "Defuser",
+    "DotDecomposer",
+    "DotMerger",
+    "DynamicIndexSplitter",
+    "HloConstantFolding",
+    "HloCse",
+    "HloDce",
+    "HloElementTypeConverter",
+    "IdentityConvertRemoving",
+    "IdentityReshapeRemoving",
+    "LoopScheduleLinearizer",
+    "MapInliner",
+    "ReduceScatterCombiner",
+    "ReduceScatterDecomposer",
+    "ReduceScatterReassociate",
+    "ReshapeBroadcastForwarding",
+    "ReshapeReshapeForwarding",
+    "ShardingRemover",
+    "SimplifyFpConversions",
+    "SliceConcatForwarding",
+    "SliceSinker",
+    "SortSimplifier",
+    "StochasticConvertDecomposer",
+    "TopkRewriter",
+    "TransposeFolding",
+    "TreeReductionRewriter",
+    "TupleSimplifier",
+    "WhileLoopConstantSinking",
+    "WhileLoopExpensiveInvariantCodeMotion",
+    "WhileLoopInvariantCodeMotion",
+    "WhileLoopTripCountAnnotator",
+    "ZeroSizedHloElimination",
+]
+
 
 [stopping]
 eof_strings = [
@@ -35,4 +100,8 @@ eof_strings = [
     "# LLVM IR ends",
     "# C++ Code ends",
 ]
+
+[oracles]
+float_rtol = 1e-5  # Relative tolerance for float comparison
+float_atol = 1e-8  # Absolute tolerance for float comparison
 
