@@ -1,17 +1,21 @@
-[project]
+[tool.poetry]
 name = "whitefox"
 version = "0.1.0"
 description = "This is a Whitefox rebuild using the initial source code as reference (https://github.com/ise-uiuc/WhiteFox)"
 authors = [
-    {name = "Max Riffi-Aslett",email = "max.riffi3@gmail.com"}
+    "Max Riffi-Aslett <max.riffi3@gmail.com>"
 ]
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-    "tensorflow (>=2.20.0,<3.0.0)"
-]
 
+# Match your wheel's Python version tag: cp312 → Python 3.12
+packages = [{ include = "whitefox" }]
+# (adjust if your package directory name differs)
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.13"
+tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+

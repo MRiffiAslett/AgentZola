@@ -1,9 +1,3 @@
-"""
-WhiteFox Generator - Core fuzzing logic.
-
-This module contains the StarCoderGenerator class that implements the WhiteFox
-white-box compiler fuzzing methodology using LLMs.
-"""
 
 import logging
 import os
@@ -15,27 +9,27 @@ from typing import Optional, List
 
 from vllm import LLM, SamplingParams
 
-# Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from AgentZola.WhiteFox.models.generation import GeneratorConfig
 
-# WhiteFox imports
 from .spec import load_optimization_specs
-from .bandit import (
+from ..domain.bandit import (
     WhiteFoxState,
     OptimizationState,
+)
+from .bandit import (
     select_examples_thompson_sampling,
     update_bandit_after_generation,
 )
 from .prompts import build_base_prompt, build_feedback_prompt
-from .harness import execute_test_in_subprocess, check_oracles
+from .harness import execute_test_in_subprocess
+from .oracle import check_oracles
 
-# TOML parsing: try tomllib (Python 3.11+), then tomli, then toml
 try:
-    import tomllib  # Python 3.11+
+    import tomllib
     TOML_LOAD = tomllib.load
 except ImportError:
     try:
@@ -52,7 +46,6 @@ except ImportError:
 
 
 class StarCoderGenerator:
-    """WhiteFox compiler fuzzer using LLMs for test generation."""
     
     def __init__(self, config: GeneratorConfig):
         self.config = config
@@ -62,32 +55,17 @@ class StarCoderGenerator:
         
     @classmethod
     def from_config_file(cls, config_path: Path) -> "StarCoderGenerator":
-        """
-        Create generator from TOML configuration file.
         
-        Args:
-            config_path: Path to TOML configuration file.
-            
-        Returns:
-            StarCoderGenerator instance.
-            
-        Raises:
-            FileNotFoundError: If config file doesn't exist.
-            ValueError: If config file is invalid.
-        """
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         
-        # Load TOML file
         try:
             with open(config_path, "rb") as f:
                 toml_data = TOML_LOAD(f)
         except (TypeError, AttributeError):
-            # Fall back to text mode for older toml library
             with open(config_path, "r") as f:
                 toml_data = TOML_LOAD(f)
         
-        # Create config from TOML data
         try:
             config = GeneratorConfig.from_toml(toml_data)
         except Exception as e:
@@ -130,7 +108,6 @@ class StarCoderGenerator:
         )
     
     def _create_sampling_params(self, num_samples: int) -> SamplingParams:
-        """Create sampling parameters for generation."""
         return SamplingParams(
             n=num_samples,
             temperature=self.config.generation.temperature,
@@ -141,8 +118,6 @@ class StarCoderGenerator:
         )
     
     def _load_or_init_whitefox_state(self) -> WhiteFoxState:
-        """Load existing WhiteFox state or initialize new state."""
-        # Load optimization specs
         optimizations_dir = Path(self.config.generation.optimizations_dir)
         if not optimizations_dir.exists():
             raise FileNotFoundError(
@@ -150,16 +125,13 @@ class StarCoderGenerator:
                 "Please set generation.optimizations_dir in config."
             )
         
-        # Use hardcoded optimizations list from config if available, otherwise scan directory
         optimizations_list = self.config.generation.optimizations
         specs = load_optimization_specs(optimizations_dir, optimizations_list)
         self.logger.info(f"Loaded {len(specs)} optimization specifications")
         
-        # Load or create state
         state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
         state = WhiteFoxState.load(state_file, specs)
         
-        # Initialize any new optimizations that weren't in the saved state
         for opt_name, spec in specs.items():
             if opt_name not in state.optimizations:
                 state.optimizations[opt_name] = OptimizationState(spec=spec)
@@ -174,12 +146,7 @@ class StarCoderGenerator:
         sample_idx: int,
         output_root: Path
     ) -> Path:
-        """
-        Save a generated test to a file.
-        
-        Returns:
-            Path to the saved test file.
-        """
+
         opt_dir = output_root / optimization_name
         opt_dir.mkdir(parents=True, exist_ok=True)
         
@@ -196,19 +163,9 @@ class StarCoderGenerator:
         bug_reports_dir: Path,
         only_optimizations: Optional[List[str]] = None
     ) -> None:
-        """
-        Run fuzzing for a single optimization.
-        
-        Args:
-            opt_state: OptimizationState for this optimization.
-            output_root: Root directory for test outputs.
-            logs_root: Root directory for execution logs.
-            bug_reports_dir: Directory for bug reports.
-            only_optimizations: If provided, only process optimizations in this list.
-        """
+
         opt_name = opt_state.spec.internal_name
         
-        # Skip if filtering and this optimization is not in the list
         if only_optimizations and opt_name not in only_optimizations:
             return
         
@@ -223,7 +180,6 @@ class StarCoderGenerator:
                 f"  Iteration {iteration + 1}/{max_iterations} for {opt_name}"
             )
             
-            # Select examples using Thompson Sampling (if any exist)
             if opt_state.triggering_tests:
                 example_tests = select_examples_thompson_sampling(
                     opt_state,
@@ -234,23 +190,19 @@ class StarCoderGenerator:
                 example_tests = []
                 prompt = build_base_prompt(opt_state.spec)
             
-            # Generate batch of tests using existing vLLM setup
             sampling_params = self._create_sampling_params(tests_per_iteration)
             outputs = self.llm.generate([prompt], sampling_params)
             
-            # Extract generated texts
             generated_texts = []
             for output in outputs:
                 for text_output in output.outputs:
                     generated_texts.append(text_output.text)
             
-            # Save and execute each generated test
             new_triggering_tests = []
             num_triggered = 0
             num_not_triggered = 0
             
             for sample_idx, generated_text in enumerate(generated_texts):
-                # Save test file
                 test_file = self._save_generated_test(
                     generated_text,
                     opt_name,
@@ -259,20 +211,16 @@ class StarCoderGenerator:
                     output_root
                 )
                 
-                # Execute test
                 result = execute_test_in_subprocess(test_file)
                 
-                # Save execution log
                 log_file = logs_root / opt_name / f"{test_file.stem}.log"
                 log_file.parent.mkdir(parents=True, exist_ok=True)
                 log_file.write_text(result.log_text)
                 
-                # Check if this optimization was triggered
                 pass_triggered = opt_state.spec.pass_log_name in result.triggered_passes
                 
                 if pass_triggered:
                     num_triggered += 1
-                    # Check if this is a new triggering test
                     is_new = True
                     for existing_test in opt_state.triggering_tests.values():
                         if existing_test.file_path == test_file:
@@ -284,11 +232,16 @@ class StarCoderGenerator:
                 else:
                     num_not_triggered += 1
                 
-                # Check oracles and save bug reports
+                # Read test code for oracle analysis (needed for randomness/cast detection)
+                test_code = None
+                try:
+                    test_code = test_file.read_text()
+                except Exception:
+                    pass
+                
                 bug_reports = check_oracles(
                     result,
-                    rtol=self.config.oracles.float_rtol,
-                    atol=self.config.oracles.float_atol
+                    test_code=test_code
                 )
                 
                 for bug_report in bug_reports:
@@ -298,7 +251,6 @@ class StarCoderGenerator:
                         f"Bug detected: {bug_report.oracle_type} in {test_file}"
                     )
             
-            # Update bandit state
             if opt_state.triggering_tests or new_triggering_tests:
                 update_bandit_after_generation(
                     opt_state,
@@ -308,7 +260,6 @@ class StarCoderGenerator:
                     new_triggering_tests
                 )
             
-            # Persist state after each iteration
             state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
             self.whitefox_state.save(state_file)
             
@@ -329,10 +280,8 @@ class StarCoderGenerator:
             only_optimizations: If provided, only process these optimizations
                 (list of internal names).
         """
-        # Initialize WhiteFox state
         self.whitefox_state = self._load_or_init_whitefox_state()
         
-        # Setup directories
         output_dir = Path(self.config.paths.output_dir)
         output_root = Path(
             self.config.paths.test_output_root or 
@@ -353,7 +302,6 @@ class StarCoderGenerator:
         
         self.logger.info(f"Starting WhiteFox fuzzing with {len(self.whitefox_state.optimizations)} optimizations")
         
-        # Process each optimization
         for opt_state in self.whitefox_state.optimizations.values():
             try:
                 self._run_single_optimization(

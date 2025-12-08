@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 
 from .spec import OptimizationSpec
-from .bandit import TriggeringTest
+from ..domain.bandit import TriggeringTest
 
 
 BASE_PROMPT_TEMPLATE = """### Please generate one valid TensorFlow model that satisfies requirements below.
