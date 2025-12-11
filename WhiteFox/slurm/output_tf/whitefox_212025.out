@@ -1,0 +1,12 @@
+[Thu 11 Dec 16:50:26 GMT 2025] Starting WhiteFox job on node: gpuvm13.doc.ic.ac.uk
+SLURM job ID: 212025
+
+Running WhiteFox with config: xilo_xla/config/generator.toml
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/main.py", line 12, in <module>
+    from .generator import StarCoderGenerator
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/generator.py", line 19, in <module>
+    from ..domain.bandit import (
+ImportError: attempted relative import beyond top-level package

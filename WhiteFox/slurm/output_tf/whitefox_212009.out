@@ -1,0 +1,5 @@
+[Thu 11 Dec 15:30:45 GMT 2025] Starting WhiteFox job on node: gpuvm13.doc.ic.ac.uk
+SLURM job ID: 212009
+
+Running WhiteFox with config: xilo_xla/config/generator.toml
+/homes/mtr25/.cache/pypoetry/virtualenvs/whitefox-meeCY0OQ-py3.12/bin/python: Error while finding module specification for 'AgentZola.WhiteFox.generation.main' (ModuleNotFoundError: No module named 'AgentZola')

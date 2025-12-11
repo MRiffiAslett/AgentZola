@@ -8,7 +8,7 @@ authors = [
 readme = "README.md"
 
 # Match your wheel's Python version tag: cp312 → Python 3.12
-packages = [{ include = "whitefox" }]
+package-mode= false
 # (adjust if your package directory name differs)
 
 [tool.poetry.dependencies]
