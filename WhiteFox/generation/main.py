@@ -13,7 +13,6 @@ from .generator import StarCoderGenerator
 
 
 def main():
-    """Main entry point for WhiteFox compiler fuzzer."""
     import argparse
     
     parser = argparse.ArgumentParser(
@@ -34,24 +33,20 @@ def main():
     
     args = parser.parse_args()
     
-    # Print configuration
     print("Configuration:")
     pprint(vars(args))
     
-    # Initialize generator from config file
     try:
         generator = StarCoderGenerator.from_config_file(args.config)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Parse only_optimizations if provided
     only_optimizations = None
     if args.only_opt:
         only_optimizations = [opt.strip() for opt in args.only_opt.split(",")]
         print(f"Processing only optimizations: {only_optimizations}")
     
-    # Run WhiteFox fuzzing
     try:
         generator.generate_whitefox(only_optimizations=only_optimizations)
     except KeyboardInterrupt:

@@ -29,39 +29,21 @@ RANDOM_SEED = 42
 
 
 def add_decorator(code: str, decorator: str) -> str:
-    """
-    Add decorator to the call method matching original WhiteFox logic.
-    
-    The original adds decorators to the 'call' method of the Model class.
-    """
     if "    def call" in code:
-        # The indentation is 4 spaces
         code = code.replace("    def call", f"    {decorator}\n    def call")
     else:
-        # The indentation is 2 spaces
         code = code.replace("  def call", f"  {decorator}\n  def call")
     return code
 
 
 def process_code(code: str) -> str:
-    """
-    Process code before execution.
-    
-    In the original, this handles __call__ to call conversion and other transformations.
-    For now, we'll do a simple conversion: if __call__ exists but call doesn't, create call.
-    """
-    # If code has __call__ but not call, create a call method that calls __call__
     if "__call__" in code and " def call(" not in code:
-        # Try to add a call method that delegates to __call__
-        # This is a simplified version - the original process_code may do more
         if "class Model" in code:
-            # Find the __call__ method and create a call method
             lines = code.split("\n")
             new_lines = []
             for i, line in enumerate(lines):
                 new_lines.append(line)
                 if "def __call__" in line:
-                    # Add a call method right after __call__
                     indent = len(line) - len(line.lstrip())
                     new_lines.append(" " * indent + "def call(self, *args, **kwargs):")
                     new_lines.append(" " * (indent + 4) + "return self.__call__(*args, **kwargs)")
@@ -70,19 +52,6 @@ def process_code(code: str) -> str:
 
 
 def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionResult:
-    """
-    Execute a test program in a subprocess and capture results.
-    
-    The test program should be a standard TensorFlow model/program (like in WhiteFox paper).
-    This harness executes it twice: with and without XLA optimization.
-    
-    Args:
-        test_file: Path to the test Python file.
-        timeout: Maximum execution time in seconds.
-        
-    Returns:
-        ExecutionResult with all captured information.
-    """
     result = ExecutionResult(
         test_file=test_file,
         compile_success_naive=False,
@@ -93,7 +62,6 @@ def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionR
         runtime_success_autocluster=False,
     )
     
-    # Read test code
     try:
         with open(test_file, 'r') as f:
             test_code = f.read()
@@ -103,11 +71,8 @@ def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionR
         result.compile_error_autocluster = str(e)
         return result
     
-    # Process code (convert __call__ to call if needed)
     test_code = process_code(test_code)
     
-    # Create a wrapper script that executes the test and captures results
-    # Use repr to safely escape the file path and code
     test_file_repr = repr(str(test_file))
     test_code_repr = repr(test_code)
     
@@ -118,11 +83,9 @@ import traceback
 import io
 from pathlib import Path
 
-# Capture stdout/stderr
 stdout_capture = io.StringIO()
 stderr_capture = io.StringIO()
 
-# Redirect stdout/stderr to capture logs
 import sys
 class TeeOutput:
     def __init__(self, *files):
@@ -160,7 +123,6 @@ result = {{
 }}
 
 def _serialize_output(output):
-    """Helper to serialize output for JSON."""
     import tensorflow as tf
     if isinstance(output, tf.Tensor):
         return output.numpy().tolist()
@@ -171,7 +133,6 @@ def _serialize_output(output):
 
 
 def _add_decorator(code, decorator):
-    """Add decorator to call method matching original WhiteFox."""
     if "    def call" in code:
         code = code.replace("    def call", decorator + "\\n    def call")
     else:
@@ -185,13 +146,10 @@ try:
     import random
     import os
     
-    # Set random seed matching original WhiteFox (RANDOM_SEED = 42)
     random.seed({RANDOM_SEED})
     np.random.seed({RANDOM_SEED})
     tf.random.set_seed({RANDOM_SEED})
     
-    # Execute the test code to define model, inputs, etc.
-    # Original WhiteFox expects 'm' (model) and 'input_data' to be defined
     test_globals = {{'__name__': '__main__'}}.copy()
     test_code = {test_code_repr}
     
@@ -207,7 +165,6 @@ try:
         result["compile_error_autocluster"] = error_msg
         raise
     
-    # Extract model 'm' and 'input_data' (matching original exec_wrapper)
     if 'm' not in test_globals:
         raise Exception("Model 'm' not found in test code")
     if 'input_data' not in test_globals:
@@ -216,11 +173,9 @@ try:
     m = test_globals['m']
     input_data = test_globals['input_data']
     
-    # Ensure input_data is a list/tuple for unpacking
     if not isinstance(input_data, (list, tuple)):
         input_data = [input_data]
     
-    # Run naive mode (no decorator, no XLA)
     try:
         output_naive = m(*input_data)
         result["runtime_success_naive"] = True
@@ -228,10 +183,8 @@ try:
     except Exception as e:
         result["runtime_error_naive"] = str(e) + "\\n" + traceback.format_exc()
     
-    # Run XLA mode (add @tf.function(jit_compile=True) decorator to call method)
     try:
         xla_code = _add_decorator(test_code, "@tf.function(jit_compile=True)")
-        # Re-execute with XLA decorator
         xla_globals = {{'__name__': '__main__'}}.copy()
         xla_globals.update({{
             'tf': tf,
@@ -249,12 +202,10 @@ try:
     except Exception as e:
         result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
     
-    # Run autocluster mode (set TF_XLA_FLAGS and use @tf.function)
     try:
         old_xla_flags = os.environ.get('TF_XLA_FLAGS', '')
         os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
         ac_code = _add_decorator(test_code, "@tf.function")
-        # Re-execute with autocluster
         ac_globals = {{'__name__': '__main__'}}.copy()
         ac_globals.update({{
             'tf': tf,
@@ -276,7 +227,6 @@ try:
             os.environ['TF_XLA_FLAGS'] = old_xla_flags
 
 except Exception as e:
-    # General import/execution error
     error_msg = str(e) + "\\n" + traceback.format_exc()
     if not result["compile_error_naive"]:
         result["compile_error_naive"] = error_msg
@@ -286,19 +236,16 @@ except Exception as e:
         result["compile_error_autocluster"] = error_msg
 
 finally:
-    # Capture all logs
     result["log_text"] = stdout_capture.getvalue() + stderr_capture.getvalue()
     sys.stdout = original_stdout
     sys.stderr = original_stderr
 
-# Output result as JSON
 print("WHITEFOX_RESULT_START")
 print(json.dumps(result))
 print("WHITEFOX_RESULT_END")
 """
     
     try:
-        # Run the wrapper script
         process = subprocess.run(
             [sys.executable, "-c", wrapper_script],
             capture_output=True,
@@ -306,11 +253,9 @@ print("WHITEFOX_RESULT_END")
             timeout=timeout,
         )
         
-        # Parse output
         output = process.stdout + process.stderr
         result.log_text = output
         
-        # Extract JSON result if present
         if "WHITEFOX_RESULT_START" in output and "WHITEFOX_RESULT_END" in output:
             start_idx = output.find("WHITEFOX_RESULT_START") + len("WHITEFOX_RESULT_START")
             end_idx = output.find("WHITEFOX_RESULT_END")
@@ -335,7 +280,6 @@ print("WHITEFOX_RESULT_END")
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse JSON result from {test_file}")
         
-        # Extract triggered passes from logs
         result.triggered_passes = extract_triggered_passes(result.log_text)
         
     except subprocess.TimeoutExpired:

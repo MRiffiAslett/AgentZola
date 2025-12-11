@@ -10,13 +10,11 @@ from pydantic import BaseModel, Field
 
 
 class PathsConfig(BaseModel):
-    """Configuration for file paths."""
     prompt_dir: str = Field(description="Directory containing prompt files")
     output_dir: str = Field(description="Directory for generated outputs")
     hf_home: str = Field(description="HuggingFace home directory")
     hf_cache: Optional[str] = Field(default=None, description="HuggingFace cache directory")
     log_file: str = Field(description="Log file path")
-    # WhiteFox-specific paths
     test_output_root: Optional[str] = Field(default=None, description="Root directory for generated tests per optimization")
     logs_root: Optional[str] = Field(default=None, description="Root directory for execution logs")
     bandit_state_file: Optional[str] = Field(default=None, description="Path to JSON/YAML file for WhiteFoxState persistence")
@@ -24,7 +22,6 @@ class PathsConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """Configuration for the LLM model."""
     name: str = Field(description="Model identifier for HuggingFace")
     dtype: str = Field(description="Model data type")
     max_model_len: int = Field(description="Maximum model length")
@@ -33,14 +30,12 @@ class ModelConfig(BaseModel):
 
 
 class GenerationConfig(BaseModel):
-    """Configuration for text generation parameters."""
     num_samples: int = Field(gt=0, description="Number of samples to generate per prompt")
     max_tokens: int = Field(gt=0, description="Maximum tokens to generate")
     temperature: float = Field(ge=0.0, description="Temperature for sampling")
     top_p: float = Field(ge=0.0, le=1.0, description="Top-p for sampling")
     split_size: int = Field(gt=0, description="Batch size for processing prompts")
     unit_num: int = Field(gt=0, description="Unit batch size for generation")
-    # WhiteFox-specific generation parameters
     optimizations_dir: Optional[str] = Field(default=None, description="Path to requirement prompt directory")
     optimizations: Optional[List[str]] = Field(default=None, description="Hardcoded list of optimization names to target")
     tests_per_optimization: int = Field(default=1000, description="Total tests to generate per optimization")
@@ -50,18 +45,15 @@ class GenerationConfig(BaseModel):
 
 
 class OraclesConfig(BaseModel):
-    """Configuration for oracle parameters."""
     float_rtol: float = Field(default=1e-5, description="Relative tolerance for float comparison")
     float_atol: float = Field(default=1e-8, description="Absolute tolerance for float comparison")
 
 
 class StoppingConfig(BaseModel):
-    """Configuration for stopping criteria."""
     eof_strings: List[str] = Field(description="End-of-text strings that stop generation")
 
 
 class GeneratorConfig(BaseModel):
-    """Complete configuration for the generator."""
     paths: PathsConfig
     model: ModelConfig
     generation: GenerationConfig
@@ -70,12 +62,11 @@ class GeneratorConfig(BaseModel):
 
     @classmethod
     def from_toml(cls, toml_data: dict) -> "GeneratorConfig":
-        """Create configuration from TOML dictionary."""
         oracles_data = toml_data.get("oracles", {})
         if oracles_data:
             oracles = OraclesConfig(**oracles_data)
         else:
-            oracles = OraclesConfig()  # Use defaults
+            oracles = OraclesConfig()
         
         return cls(
             paths=PathsConfig(**toml_data.get("paths", {})),

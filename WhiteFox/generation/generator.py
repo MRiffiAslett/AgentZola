@@ -74,7 +74,6 @@ class StarCoderGenerator:
         return cls(config)
     
     def _setup_environment(self) -> None:
-        """Set up environment variables for HuggingFace."""
         if self.config.paths.hf_home:
             os.environ["HF_HOME"] = os.environ.get("HF_HOME", self.config.paths.hf_home)
         
@@ -82,7 +81,6 @@ class StarCoderGenerator:
             os.environ["HF_CACHE"] = self.config.paths.hf_cache
     
     def _setup_logging(self) -> None:
-        """Configure logging."""
         logging.basicConfig(
             level=logging.INFO,
             filename=self.config.paths.log_file,
@@ -91,7 +89,6 @@ class StarCoderGenerator:
         self.logger = logging.getLogger(__name__)
     
     def _initialize_llm(self) -> LLM:
-        """Initialize the VLLM model."""
         hf_cache_dir = (
             self.config.paths.hf_cache 
             or os.environ.get("HF_CACHE") 
@@ -232,7 +229,6 @@ class StarCoderGenerator:
                 else:
                     num_not_triggered += 1
                 
-                # Read test code for oracle analysis (needed for randomness/cast detection)
                 test_code = None
                 try:
                     test_code = test_file.read_text()
@@ -273,13 +269,6 @@ class StarCoderGenerator:
         self,
         only_optimizations: Optional[List[str]] = None
     ) -> None:
-        """
-        Run WhiteFox fuzzing loop.
-        
-        Args:
-            only_optimizations: If provided, only process these optimizations
-                (list of internal names).
-        """
         self.whitefox_state = self._load_or_init_whitefox_state()
         
         output_dir = Path(self.config.paths.output_dir)
