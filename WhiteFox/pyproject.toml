@@ -6,19 +6,16 @@ authors = [
     "Max Riffi-Aslett <max.riffi3@gmail.com>"
 ]
 readme = "README.md"
-
-# Match your wheel's Python version tag: cp312 → Python 3.12
-packages = [{ include = "whitefox" }]
-# (adjust if your package directory name differs)
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
-vllm = "^0.12.0"
+# tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
+# TODO: Update tensorflow path or install via pip separately
 numpy = ">=1.24,<2.3"
 pydantic = "^2.12.5"
 tomli = "^2.3.0"
-# tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
-# TODO: Update tensorflow path or install via pip separately on the cluster
+vllm = "^0.12.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

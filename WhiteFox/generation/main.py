@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 from pprint import pprint
 
-from .generator import StarCoderGenerator
+from AgentZola.WhiteFox.generation.generator import StarCoderGenerator
 
 
 def main():

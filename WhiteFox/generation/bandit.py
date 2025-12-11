@@ -11,7 +11,7 @@ from typing import List
 
 import numpy as np
 
-from ..domain.bandit import OptimizationState, TriggeringTest
+from AgentZola.WhiteFox.domain.bandit import OptimizationState, TriggeringTest
 
 
 def select_examples_thompson_sampling(

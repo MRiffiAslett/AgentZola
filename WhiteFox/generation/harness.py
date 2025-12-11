@@ -19,8 +19,8 @@ import logging
 
 import numpy as np
 
-from ..domain.harness import ExecutionResult
-from .log_parser import extract_triggered_passes
+from AgentZola.WhiteFox.domain.harness import ExecutionResult
+from AgentZola.WhiteFox.generation.log_parser import extract_triggered_passes
 
 
 logger = logging.getLogger(__name__)
