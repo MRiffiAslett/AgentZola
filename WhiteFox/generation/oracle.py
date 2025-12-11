@@ -13,7 +13,7 @@ from enum import IntEnum, auto
 import numpy as np
 import tensorflow as tf
 
-from ..domain.harness import ExecutionResult, BugReport
+from AgentZola.WhiteFox.domain.harness import ExecutionResult, BugReport
 
 
 class ResType(IntEnum):

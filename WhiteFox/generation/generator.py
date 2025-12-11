@@ -15,18 +15,18 @@ if str(project_root) not in sys.path:
 
 from AgentZola.WhiteFox.models.generation import GeneratorConfig
 
-from .spec import load_optimization_specs
-from ..domain.bandit import (
+from AgentZola.WhiteFox.generation.spec import load_optimization_specs
+from AgentZola.WhiteFox.domain.bandit import (
     WhiteFoxState,
     OptimizationState,
 )
-from .bandit import (
+from AgentZola.WhiteFox.generation.bandit import (
     select_examples_thompson_sampling,
     update_bandit_after_generation,
 )
-from .prompts import build_base_prompt, build_feedback_prompt
-from .harness import execute_test_in_subprocess
-from .oracle import check_oracles
+from AgentZola.WhiteFox.generation.prompts import build_base_prompt, build_feedback_prompt
+from AgentZola.WhiteFox.generation.harness import execute_test_in_subprocess
+from AgentZola.WhiteFox.generation.oracle import check_oracles
 
 try:
     import tomllib

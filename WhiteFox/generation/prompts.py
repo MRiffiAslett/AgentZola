@@ -7,8 +7,8 @@ Provides base and feedback prompt templates for generating TensorFlow-XLA test p
 from pathlib import Path
 from typing import List
 
-from .spec import OptimizationSpec
-from ..domain.bandit import TriggeringTest
+from AgentZola.WhiteFox.generation.spec import OptimizationSpec
+from AgentZola.WhiteFox.domain.bandit import TriggeringTest
 
 
 BASE_PROMPT_TEMPLATE = """### Please generate one valid TensorFlow model that satisfies requirements below.
