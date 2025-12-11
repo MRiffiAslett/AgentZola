@@ -12,8 +12,13 @@ packages = [{ include = "whitefox" }]
 # (adjust if your package directory name differs)
 
 [tool.poetry.dependencies]
-python = ">=3.12,<3.13"
-tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
+python = ">=3.12,<3.14"
+vllm = "^0.12.0"
+numpy = ">=1.24,<2.3"
+pydantic = "^2.12.5"
+tomli = "^2.3.0"
+# tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
+# TODO: Update tensorflow path or install via pip separately on the cluster
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
