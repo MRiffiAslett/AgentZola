@@ -29,6 +29,9 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 # ---------- 3. Run ----------
 CMD=(poetry run python -m generation.main --config "$CONFIG_PATH")
 
+echo "PATH inside job: $PATH"
+echo -n "poetry in job: "
+
 echo "Running WhiteFox with config: $CONFIG_PATH"
 "${CMD[@]}"
 
