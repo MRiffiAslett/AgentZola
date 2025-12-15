@@ -9,24 +9,20 @@ from typing import Optional, List
 
 from vllm import LLM, SamplingParams
 
-project_root = Path(__file__).parent.parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
+from models.generation import GeneratorConfig
 
-from AgentZola.WhiteFox.models.generation import GeneratorConfig
-
-from AgentZola.WhiteFox.generation.spec import load_optimization_specs
-from AgentZola.WhiteFox.domain.bandit import (
+from generation.spec import load_optimization_specs
+from domain.bandit import (
     WhiteFoxState,
     OptimizationState,
 )
-from AgentZola.WhiteFox.generation.bandit import (
+from generation.bandit import (
     select_examples_thompson_sampling,
     update_bandit_after_generation,
 )
-from AgentZola.WhiteFox.generation.prompts import build_base_prompt, build_feedback_prompt
-from AgentZola.WhiteFox.generation.harness import execute_test_in_subprocess
-from AgentZola.WhiteFox.generation.oracle import check_oracles
+from generation.prompts import build_base_prompt, build_feedback_prompt
+from generation.harness import execute_test_in_subprocess
+from generation.oracle import check_oracles
 
 try:
     import tomllib

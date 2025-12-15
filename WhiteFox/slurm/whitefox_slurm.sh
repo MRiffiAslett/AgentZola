@@ -27,7 +27,7 @@ mkdir -p "$PROJECT_ROOT/output"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
 # ---------- 3. Run ----------
-CMD=(poetry run python -m generation.main --config "$CONFIG_PATH")
+CMD=(poetry run python generation/main.py --config "$CONFIG_PATH")
 
 echo "PATH inside job: $PATH"
 echo -n "poetry in job: "
