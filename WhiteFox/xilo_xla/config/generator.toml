@@ -9,11 +9,13 @@ log_file = "whitefox-llm-gen.log"
 # WhiteFox-specific paths
 bandit_state_file = "whitefox_state.json"
 
+
+
 [model]
 name = "ise-uiuc/Magicoder-S-DS-6.7B"
-dtype = "bfloat16"
-max_model_len = 14000
-gpu_memory_utilization = 0.9
+dtype = "float16"
+max_model_len = 4096
+gpu_memory_utilization = 0.95
 swap_space = 20
 
 [generation]

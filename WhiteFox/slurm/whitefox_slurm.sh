@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=whitefox_vllm_gpu_xla_cpu
-#SBATCH --partition=t4
+#SBATCH --partition=a30
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
 #SBATCH --time=08:00:00
+
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%j.out
