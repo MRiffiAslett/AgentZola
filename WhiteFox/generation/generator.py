@@ -114,40 +114,26 @@ class StarCoderGenerator:
     def _load_or_init_whitefox_state(self) -> WhiteFoxState:
         optimizations_dir = Path(self.config.generation.optimizations_dir)
         
-        # Resolve relative paths relative to config file location or project root
+        # Resolve relative paths
         if not optimizations_dir.is_absolute():
-            if self.config_file_path:
-                config_dir = self.config_file_path.parent
-                # If path starts with "WhiteFox/", resolve relative to project root
+            # If path starts with "WhiteFox/", resolve relative to current working directory
+            # (assuming we're running from the project root)
+            if str(optimizations_dir).startswith("WhiteFox/"):
+                optimizations_dir = (Path.cwd() / optimizations_dir).resolve()
+            elif self.config_file_path:
                 # Otherwise, resolve relative to config file directory
-                if str(optimizations_dir).startswith("WhiteFox/"):
-                    # Find project root by going up from config file until we find
-                    # a directory that contains "WhiteFox" as a subdirectory
-                    current = config_dir
-                    project_root = None
-                    while current != current.parent:
-                        if (current / "WhiteFox").exists() and (current / "WhiteFox").is_dir():
-                            project_root = current
-                            break
-                        current = current.parent
-                    
-                    if project_root:
-                        optimizations_dir = (project_root / optimizations_dir).resolve()
-                    else:
-                        # Fallback: resolve relative to config file directory
-                        optimizations_dir = (config_dir / optimizations_dir).resolve()
-                else:
-                    # Resolve relative to config file's directory
-                    optimizations_dir = (config_dir / optimizations_dir).resolve()
+                config_dir = self.config_file_path.parent
+                optimizations_dir = (config_dir / optimizations_dir).resolve()
             else:
-                # Fallback: try to resolve relative to current working directory
+                # Fallback: resolve relative to current working directory
                 optimizations_dir = optimizations_dir.resolve()
         
         if not optimizations_dir.exists():
             raise FileNotFoundError(
                 f"Optimizations directory not found: {optimizations_dir}. "
                 "Please set generation.optimizations_dir in config. "
-                f"Resolved from: {self.config.generation.optimizations_dir}"
+                f"Original path: {self.config.generation.optimizations_dir}, "
+                f"Current working directory: {Path.cwd()}"
             )
         
         optimizations_list = self.config.generation.optimizations
