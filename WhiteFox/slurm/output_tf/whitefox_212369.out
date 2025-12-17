@@ -1,0 +1,11 @@
+[Mon 15 Dec 17:53:40 GMT 2025] Starting WhiteFox job on node: gpuvm13.doc.ic.ac.uk
+SLURM job ID: 212369
+
+PATH inside job: /homes/mtr25/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+poetry in job: Running WhiteFox with config: xilo_xla/config/generator.toml
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/main.py", line 16, in <module>
+    from AgentZola.WhiteFox.generation.generator import StarCoderGenerator
+ModuleNotFoundError: No module named 'AgentZola'

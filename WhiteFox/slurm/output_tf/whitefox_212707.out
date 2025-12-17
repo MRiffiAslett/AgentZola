@@ -1,0 +1,8 @@
+[Wed 17 Dec 15:31:40 GMT 2025] Starting WhiteFox job on node: gpuvm13.doc.ic.ac.uk
+SLURM job ID: 212707
+CUDA_VISIBLE_DEVICES=0
+
+/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+2025-12-17 15:35:29.154349: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.

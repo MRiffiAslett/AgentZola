@@ -10,7 +10,7 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.12,<3.14"
-# tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
+tensorflow = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow-2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl" }
 # TODO: Update tensorflow path or install via pip separately
 numpy = ">=1.24,<2.3"
 pydantic = "^2.12.5"

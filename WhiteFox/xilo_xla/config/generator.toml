@@ -4,14 +4,10 @@
 [paths]
 prompt_dir = "prompts"
 output_dir = "generated-outputs"
-hf_home = "/JawTitan/huggingface/hub"
-hf_cache = null
+hf_home = "hf_cache"
 log_file = "whitefox-llm-gen.log"
 # WhiteFox-specific paths
-test_output_root = null  # defaults to output_dir/whitefox_tests
-logs_root = null  # defaults to output_dir/whitefox_logs
 bandit_state_file = "whitefox_state.json"
-bug_reports_dir = null  # defaults to output_dir/whitefox_bugs
 
 [model]
 name = "ise-uiuc/Magicoder-S-DS-6.7B"

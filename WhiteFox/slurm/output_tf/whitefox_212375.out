@@ -1,0 +1,83 @@
+[Mon 15 Dec 19:14:12 GMT 2025] Starting WhiteFox CPU-only job on node: gpuvm13.doc.ic.ac.uk
+SLURM job ID: 212375
+
+2025-12-15 19:14:35.089567: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: SSE3 SSE4.1 SSE4.2 AVX AVX2 AVX512F FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Configuration:
+{'config': PosixPath('xilo_xla/config/generator.toml'), 'only_opt': None}
+INFO 12-15 19:14:48 [utils.py:253] non-default args: {'download_dir': '/JawTitan/huggingface/hub', 'dtype': 'bfloat16', 'seed': None, 'max_model_len': 14000, 'swap_space': 20, 'disable_log_stats': True, 'model': 'ise-uiuc/Magicoder-S-DS-6.7B'}
+WARNING 12-15 19:14:49 [arg_utils.py:1175] `seed=None` is equivalent to `seed=0` in V1 Engine. You will no longer be allowed to pass `None` in v0.13.
+INFO 12-15 19:15:15 [model.py:637] Resolved architecture: LlamaForCausalLM
+INFO 12-15 19:15:15 [model.py:2086] Downcasting torch.float32 to torch.bfloat16.
+INFO 12-15 19:15:15 [model.py:1750] Using max model len 14000
+INFO 12-15 19:15:21 [scheduler.py:228] Chunked prefill is enabled with max_num_batched_tokens=8192.
+{"timestamp":"2025-12-15T19:15:23.472099Z","level":"ERROR","fields":{"message":"Error logging to file \"/JawTitan/huggingface/hub/xet/logs/xet_20251215T191523378+0000_695920.log\" (Permission denied (os error 13)); falling back to console logging."},"filename":"/home/runner/work/xet-core/xet-core/xet_logging/src/logging.rs","line_number":58}
+Traceback (most recent call last):
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 2076, in from_pretrained
+    resolved_vocab_files[file_id] = cached_file(
+                                    ^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/utils/hub.py", line 322, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/utils/hub.py", line 567, in cached_files
+    raise e
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/utils/hub.py", line 479, in cached_files
+    hf_hub_download(
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1007, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1168, in _hf_hub_download_to_cache_dir
+    _download_to_tmp_and_move(
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 1720, in _download_to_tmp_and_move
+    xet_get(
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/huggingface_hub/file_download.py", line 626, in xet_get
+    download_files(
+RuntimeError: Data processing error: I/O error: Permission denied (os error 13)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/main.py", line 70, in <module>
+    main()
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/main.py", line 44, in main
+    generator = StarCoderGenerator.from_config_file(args.config)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/generator.py", line 70, in from_config_file
+    return cls(config)
+           ^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/generator.py", line 50, in __init__
+    self.llm = self._initialize_llm()
+               ^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/generation/generator.py", line 94, in _initialize_llm
+    return LLM(
+           ^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/entrypoints/llm.py", line 334, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 183, in from_engine_args
+    return cls(
+           ^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/v1/engine/llm_engine.py", line 89, in __init__
+    tokenizer = init_tokenizer_from_config(self.model_config)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/tokenizers/registry.py", line 227, in init_tokenizer_from_config
+    return get_tokenizer(
+           ^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/tokenizers/registry.py", line 191, in get_tokenizer
+    tokenizer = TokenizerRegistry.get_tokenizer(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/tokenizers/registry.py", line 86, in get_tokenizer
+    return item.from_pretrained(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/vllm/tokenizers/hf.py", line 84, in from_pretrained
+    tokenizer = AutoTokenizer.from_pretrained(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 1156, in from_pretrained
+    return tokenizer_class.from_pretrained(pretrained_model_name_or_path, *inputs, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/vol/bitbucket/mtr25/AgentZola/WhiteFox/.venv/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 2096, in from_pretrained
+    raise OSError(
+OSError: Can't load tokenizer for 'ise-uiuc/Magicoder-S-DS-6.7B'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'ise-uiuc/Magicoder-S-DS-6.7B' is the correct path to a directory containing all relevant files for a LlamaTokenizerFast tokenizer.
