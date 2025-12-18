@@ -116,10 +116,28 @@ class StarCoderGenerator:
         
         # Resolve relative paths
         if not optimizations_dir.is_absolute():
-            # If path starts with "WhiteFox/", resolve relative to current working directory
-            # (assuming we're running from the project root)
+            # If path starts with "WhiteFox/", resolve relative to project root
             if str(optimizations_dir).startswith("WhiteFox/"):
-                optimizations_dir = (Path.cwd() / optimizations_dir).resolve()
+                cwd = Path.cwd()
+                project_root = None
+                
+                # If current directory is "WhiteFox", project root is its parent
+                if cwd.name == "WhiteFox":
+                    project_root = cwd.parent
+                else:
+                    # Go up until we find the directory containing WhiteFox
+                    current = cwd
+                    while current != current.parent:
+                        if (current / "WhiteFox").exists() and (current / "WhiteFox").is_dir():
+                            project_root = current
+                            break
+                        current = current.parent
+                
+                if project_root:
+                    optimizations_dir = (project_root / optimizations_dir).resolve()
+                else:
+                    # Fallback: assume we're at project root
+                    optimizations_dir = (cwd / optimizations_dir).resolve()
             elif self.config_file_path:
                 # Otherwise, resolve relative to config file directory
                 config_dir = self.config_file_path.parent
