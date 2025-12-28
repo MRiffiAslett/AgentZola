@@ -1,5 +1,0 @@
-[Fri 12 Dec 18:15:24 GMT 2025] Starting WhiteFox job on node: gpuvm14.doc.ic.ac.uk
-SLURM job ID: 212205
-
-Running WhiteFox with config: xilo_xla/config/generator.toml
-/var/spool/slurm/d/job212205/slurm_script: line 33: poetry: command not found

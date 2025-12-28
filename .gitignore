@@ -1,2 +1,9 @@
-yaco_xla
-WhiteFox/hf_cache
+# Python
+__pycache__/
+*.pyc
+
+# WhiteFox generated artifacts
+WhiteFox/generated-outputs/
+WhiteFox/slurm/output_tf/
+WhiteFox/whitefox_state.json
+
