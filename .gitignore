@@ -3,7 +3,5 @@ __pycache__/
 *.pyc
 
 # WhiteFox generated artifacts
-WhiteFox/generated-outputs/
-WhiteFox/slurm/output_tf/
-WhiteFox/whitefox_state.json
-
+WhiteFox/slurm/output_tf
+WhiteFox/logging
