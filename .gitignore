@@ -4,4 +4,7 @@ __pycache__/
 
 # WhiteFox generated artifacts
 WhiteFox/slurm/output_tf
-WhiteFox/logging
+WhiteFox/logging/
+WhiteFox/hf_cache/
+WhiteFox/xilo_xla/
+
