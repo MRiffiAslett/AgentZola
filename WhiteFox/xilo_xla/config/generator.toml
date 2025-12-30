@@ -19,17 +19,17 @@ gpu_memory_utilization = 0.95
 swap_space = 20
 
 [generation]
-num_samples = 10     # Total number of output samples to generate per prompt
+num_samples = 1     # Total number of output samples to generate per prompt
 max_tokens = 4096    # Maximum number of tokens to generate for each output
 temperature = 1.0    # Controls randomness (higher = more random)
 top_p = 1.0          # Nucleus sampling limit (1.0 = consider all tokens)
 split_size = 20      # Number of prompts processed together per batch
-unit_num = 20        # Number of samples generated per batch call (until num_samples reached)
+unit_num = 2        # Number of samples generated per batch call (until num_samples reached)
 # WhiteFox-specific generation parameters
 optimizations_dir = "WhiteFox/xilo_xla/artifacts/Prompts/test"  # Path to requirement prompt directory
-tests_per_optimization = 1000  # Total tests to generate per optimization
-tests_per_iteration = 10       # Tests to generate per iteration
-max_iterations = 100           # Maximum iterations per optimization
+tests_per_optimization = 10  # Total tests to generate per optimization
+tests_per_iteration = 3       # Tests to generate per iteration
+max_iterations = 20           # Maximum iterations per optimization
 examples_per_prompt = 3        # Number of examples to include in feedback prompt (N in Thompson Sampling)
 
 # Hardcoded list of optimizations that WhiteFox targets

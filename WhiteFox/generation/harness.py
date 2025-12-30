@@ -36,6 +36,44 @@ def add_decorator(code: str, decorator: str) -> str:
     return code
 
 
+def extract_input_variable(code: str, test_globals: dict) -> tuple:
+    """
+    Extract input variable(s) from code by finding model call.
+    
+    Looks for patterns like:
+    - y = m(x1)
+    - y = m(x)
+    - y = m.call(x1)
+    
+    Returns (input_var_name, input_value) or (None, None) if not found.
+    """
+    import re
+    
+    # Pattern: m( or m.call( followed by variable name
+    patterns = [
+        r'\bm\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m(x1) or m(x)
+        r'\bm\.call\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m.call(x1)
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, code)
+        if match:
+            var_name = match.group(1)
+            if var_name in test_globals:
+                return var_name, test_globals[var_name]
+    
+    # Fallback: look for common variable names
+    common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
+    for name in common_names:
+        if name in test_globals:
+            value = test_globals[name]
+            # Check if it looks like input data (TensorFlow tensor or numpy array)
+            if hasattr(value, 'shape') or isinstance(value, (list, tuple)):
+                return name, value
+    
+    return None, None
+
+
 def process_code(code: str) -> str:
     if "__call__" in code and " def call(" not in code:
         if "class Model" in code:
@@ -140,6 +178,36 @@ def _add_decorator(code, decorator):
     return code
 
 
+def _extract_input_variable(code, test_globals):
+    import re
+    # Patterns to find model calls: m(x1) or m.call(x1)
+    patterns = [
+        r'\\bm\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m(x1)
+        r'\\bm\\.call\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m.call(x1)
+    ]
+    for pattern in patterns:
+        try:
+            match = re.search(pattern, code)
+            if match:
+                var_name = match.group(1)
+                if var_name in test_globals:
+                    return var_name, test_globals[var_name]
+        except Exception:
+            pass
+    # Fallback: check common variable names
+    common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
+    for name in common_names:
+        if name in test_globals:
+            value = test_globals[name]
+            # Check if it looks like input data
+            try:
+                if hasattr(value, 'shape') or isinstance(value, (list, tuple, dict)):
+                    return name, value
+            except Exception:
+                pass
+    return None, None
+
+
 try:
     import tensorflow as tf
     import numpy as np
@@ -167,11 +235,16 @@ try:
     
     if 'm' not in test_globals:
         raise Exception("Model 'm' not found in test code")
-    if 'input_data' not in test_globals:
-        raise Exception("input_data not found in test code")
     
     m = test_globals['m']
-    input_data = test_globals['input_data']
+    
+    # Try to find input variable - first check for input_data, then extract from code
+    if 'input_data' in test_globals:
+        input_data = test_globals['input_data']
+    else:
+        input_var_name, input_data = _extract_input_variable(test_code, test_globals)
+        if input_data is None:
+            raise Exception("Could not find input data in test code. Looked for input_data and common variable names.")
     
     if not isinstance(input_data, (list, tuple)):
         input_data = [input_data]
@@ -193,7 +266,12 @@ try:
         }})
         exec(xla_code, xla_globals)
         m_xla = xla_globals['m']
-        input_data_xla = xla_globals['input_data']
+        if 'input_data' in xla_globals:
+            input_data_xla = xla_globals['input_data']
+        else:
+            _, input_data_xla = _extract_input_variable(xla_code, xla_globals)
+            if input_data_xla is None:
+                raise Exception("Could not find input data in XLA execution")
         if not isinstance(input_data_xla, (list, tuple)):
             input_data_xla = [input_data_xla]
         output_xla = m_xla(*input_data_xla)
@@ -214,7 +292,12 @@ try:
         }})
         exec(ac_code, ac_globals)
         m_ac = ac_globals['m']
-        input_data_ac = ac_globals['input_data']
+        if 'input_data' in ac_globals:
+            input_data_ac = ac_globals['input_data']
+        else:
+            _, input_data_ac = _extract_input_variable(ac_code, ac_globals)
+            if input_data_ac is None:
+                raise Exception("Could not find input data in autocluster execution")
         if not isinstance(input_data_ac, (list, tuple)):
             input_data_ac = [input_data_ac]
         output_ac = m_ac(*input_data_ac)
