@@ -16,7 +16,7 @@ def extract_code_from_markdown(text: str) -> str:
     Handles:
     - ```python ... ```
     - ``` ... ```
-    - Inline code that might be part of the response
+    - Stops at first non-code line after markdown block
     """
     # Remove markdown code blocks
     # Pattern: ```python ... ``` or ``` ... ```
@@ -27,20 +27,52 @@ def extract_code_from_markdown(text: str) -> str:
         # Take the last (usually largest) code block
         code = matches[-1].strip()
     else:
-        # No markdown blocks, use the text as-is but clean it
-        code = text.strip()
+        # No markdown blocks, find where code likely ends
+        # Look for common patterns that indicate end of code
+        lines = text.split('\n')
+        code_lines = []
+        in_code = False
+        
+        for line in lines:
+            stripped = line.strip()
+            # Start collecting when we see Python-like code
+            if not in_code and (stripped.startswith(('import ', 'from ', 'class ', 'def ', '#')) or 
+                               '=' in stripped or stripped.startswith('tf.') or stripped.startswith('np.')):
+                in_code = True
+            
+            if in_code:
+                # Stop at explanatory text (long lines without Python syntax)
+                if (len(stripped) > 100 and 
+                    not any(keyword in stripped for keyword in ['import', 'def', 'class', '=', '(', ')', '[', ']', 'tf.', 'np.', '#']) and
+                    not stripped.startswith('#')):
+                    break
+                # Stop at markdown-style explanations
+                if stripped and not stripped.startswith(('#', 'import', 'from', 'class', 'def', ' ', '\t')) and '=' not in stripped:
+                    # Check if it looks like explanatory text
+                    if any(word in stripped.lower() for word in ['this', 'should', 'model', 'optimization', 'tensorflow', 'xla', 'trigger']):
+                        if not any(char in stripped for char in ['(', ')', '[', ']', '=', '.']):
+                            break
+                
+                code_lines.append(line)
+        
+        code = '\n'.join(code_lines).strip()
     
     # Remove any remaining markdown artifacts
-    # Remove lines that are just markdown formatting
     lines = code.split('\n')
     cleaned_lines = []
     for line in lines:
-        # Skip lines that are just markdown headers or formatting
-        if line.strip().startswith('#') and 'Model' in line:
-            # Keep comment lines that mention Model
-            cleaned_lines.append(line)
-        elif line.strip() and not line.strip().startswith('```'):
-            cleaned_lines.append(line)
+        # Skip markdown formatting
+        if line.strip().startswith('```'):
+            continue
+        # Stop at explanatory text that's clearly not code
+        stripped = line.strip()
+        if (stripped and 
+            len(stripped) > 80 and 
+            not stripped.startswith(('#', 'import', 'from', 'class', 'def')) and
+            not any(char in stripped for char in ['(', ')', '[', ']', '=', '.']) and
+            any(word in stripped.lower() for word in ['this', 'should', 'model', 'optimization', 'tensorflow', 'xla', 'trigger', 'prototype', 'require'])):
+            break
+        cleaned_lines.append(line)
     
     code = '\n'.join(cleaned_lines)
     

@@ -25,6 +25,8 @@ from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
 from generation.code_cleaner import clean_generated_code
 from generation.logger import WhiteFoxLogger
+from generation.api_validator import validate_tensorflow_apis
+from generation.sanity_checker import run_sanity_check
 
 try:
     import tomllib
@@ -251,6 +253,9 @@ class StarCoderGenerator:
         # Clean the generated code
         cleaned_code = clean_generated_code(generated_text)
         
+        # Validate TensorFlow APIs
+        is_valid_api, api_errors = validate_tensorflow_apis(cleaned_code)
+        
         # Track what changed during cleaning
         cleaning_changes = {
             "had_markdown": "```" in generated_text,
@@ -258,7 +263,17 @@ class StarCoderGenerator:
             "had_np_import": "import numpy" in generated_text or "import numpy" in cleaned_code,
             "raw_length": len(generated_text),
             "cleaned_length": len(cleaned_code),
+            "api_valid": is_valid_api,
+            "api_errors": api_errors,
         }
+        
+        # If invalid APIs detected, add comment and log warning
+        if not is_valid_api:
+            self.logger.warning(
+                f"Invalid TensorFlow APIs detected in {optimization_name} it{iteration} sample{sample_idx}: {api_errors}"
+            )
+            # Add comment to code indicating API issues
+            cleaned_code = f"# WARNING: Invalid APIs detected: {', '.join(api_errors)}\n# Code may fail at runtime\n{cleaned_code}"
         
         # Log the code generation
         if whitefox_logger:
@@ -314,7 +329,12 @@ class StarCoderGenerator:
                     opt_state,
                     examples_per_prompt
                 )
-                prompt = build_feedback_prompt(opt_state.spec, example_tests)
+                # Build prompt with token limit to prevent overflow
+                prompt = build_feedback_prompt(
+                    opt_state.spec, 
+                    example_tests,
+                    max_model_len=self.config.model.max_model_len
+                )
                 prompt_type = "feedback"
             else:
                 example_tests = []
@@ -530,6 +550,13 @@ class StarCoderGenerator:
         self.logger.info(f"Starting WhiteFox fuzzing with {len(self.whitefox_state.optimizations)} optimizations")
         self.logger.info(f"Logging directory: {logging_dir}")
         
+        # Run sanity check at start
+        try:
+            json_file, text_file = run_sanity_check(logging_dir, self.whitefox_state)
+            self.logger.info(f"Sanity check completed: {text_file}")
+        except Exception as e:
+            self.logger.warning(f"Sanity check failed: {e}", exc_info=True)
+        
         for opt_state in self.whitefox_state.optimizations.values():
             try:
                 self._run_single_optimization(
@@ -550,6 +577,13 @@ class StarCoderGenerator:
                     e
                 )
                 self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
+        
+        # Run sanity check at end
+        try:
+            json_file, text_file = run_sanity_check(logging_dir, self.whitefox_state)
+            self.logger.info(f"Final sanity check completed: {text_file}")
+        except Exception as e:
+            self.logger.warning(f"Final sanity check failed: {e}", exc_info=True)
         
         self.logger.info("WhiteFox fuzzing complete")
 

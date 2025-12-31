@@ -67,6 +67,27 @@ All WhiteFox output files are now in the logging directory:
 2. Check `errors/optimization_processing_error*.json`
 3. Check `whitefox_state.json` - see which optimizations have been processed
 
+## Sanity Check Report
+
+A comprehensive sanity check report is automatically generated at the start and end of each run:
+- `sanity_check_report.json` - Machine-readable JSON format
+- `sanity_check_report.txt` - Human-readable text format (easy to paste in chat)
+
+The sanity check verifies:
+- Code cleaning logic (markdown extraction, import addition)
+- API validation (invalid API detection)
+- Prompt length limiting (token counting)
+- State management (triggering tests structure)
+- File structure (all required directories)
+- Recent activity (system running)
+- Code quality (sample analysis)
+
+To run manually:
+```bash
+cd WhiteFox
+python run_sanity_check.py
+```
+
 ## Log Analysis Tips
 
 1. **Find all failed compilations:**
