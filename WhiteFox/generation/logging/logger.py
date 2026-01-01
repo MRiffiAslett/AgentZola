@@ -5,10 +5,14 @@ Provides structured logging with consolidated files for easier reading.
 """
 
 import json
-import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+if 'logging' in sys.modules and not hasattr(sys.modules['logging'], 'Logger'):
+    sys.modules.pop('logging')
+import logging
 
 from domain.bandit import OptimizationState, TriggeringTest
 

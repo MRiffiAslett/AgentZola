@@ -15,7 +15,11 @@ import sys
 import os
 import random
 from pathlib import Path
+
+_temp = sys.modules.pop('generation.logging', None)
 import logging
+if _temp:
+    sys.modules['generation.logging'] = _temp
 
 import numpy as np
 

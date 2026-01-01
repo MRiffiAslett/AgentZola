@@ -1,11 +1,15 @@
 
-import logging
 import os
 import random
 import sys
 import time
 from pathlib import Path
 from typing import Optional, List
+
+_temp = sys.modules.pop('generation.logging', None)
+import logging
+if _temp:
+    sys.modules['generation.logging'] = _temp
 
 from vllm import LLM, SamplingParams
 
