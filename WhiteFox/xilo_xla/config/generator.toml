@@ -26,7 +26,7 @@ top_p = 1.0          # Nucleus sampling limit (1.0 = consider all tokens)
 split_size = 20      # Number of prompts processed together per batch
 unit_num = 2        # Number of samples generated per batch call (until num_samples reached)
 # WhiteFox-specific generation parameters
-optimizations_dir = "WhiteFox/xilo_xla/artifacts/Prompts/test"  # Path to requirement prompt directory
+optimizations_dir = "xilo_xla/artifacts/Prompts/test"  # Path to requirement prompt directory
 tests_per_optimization = 10  # Total tests to generate per optimization
 tests_per_iteration = 2       # Tests to generate per iteration (reduced to lower output)
 max_iterations = 20           # Maximum iterations per optimization
