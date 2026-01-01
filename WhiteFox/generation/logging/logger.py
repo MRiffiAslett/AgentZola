@@ -59,6 +59,25 @@ class WhiteFoxLogger:
         
         self.base_logger = base_logger or logging.getLogger(__name__)
     
+    def clear_old_logs(self) -> None:
+        """Clear all consolidated log files from previous runs."""
+        log_files = [
+            self.prompts_file,
+            self.code_before_after_file,
+            self.cleaned_code_file,
+            self.execution_results_file,
+            self.pass_analysis_file,
+            self.state_changes_file,
+            self.errors_file,
+            self.bug_reports_file,
+        ]
+        
+        for log_file in log_files:
+            if log_file.exists():
+                log_file.unlink()
+                if self.base_logger:
+                    self.base_logger.debug(f"Cleared old log file: {log_file}")
+    
     def _get_opt_key(self, optimization_name: str) -> str:
         """Get key for optimization-specific data."""
         return optimization_name

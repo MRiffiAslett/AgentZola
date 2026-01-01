@@ -92,6 +92,7 @@ class StarCoderGenerator:
         logging.basicConfig(
             level=logging.INFO,
             filename=str(log_file_path),
+            filemode='w',  # Overwrite log file on each run
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
@@ -416,10 +417,21 @@ class StarCoderGenerator:
         
         logs_root = logging_dir / "execution_logs"
         
-        output_root.mkdir(parents=True, exist_ok=True)
+        # Clear old logs and outputs at the start of each run
+        import shutil
+        
+        # Clear execution logs directory
+        if logs_root.exists():
+            shutil.rmtree(logs_root)
         logs_root.mkdir(parents=True, exist_ok=True)
         
+        # Clear generated outputs directory
+        if output_root.exists():
+            shutil.rmtree(output_root)
+        output_root.mkdir(parents=True, exist_ok=True)
+        
         whitefox_logger = WhiteFoxLogger(logging_dir, self.logger)
+        whitefox_logger.clear_old_logs()
         
         old_state_file = project_root / "whitefox_state.json"
         new_state_file = logging_dir / "whitefox_state.json"
