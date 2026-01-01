@@ -6,13 +6,30 @@ Provides structured logging with consolidated files for easier reading.
 
 import json
 import sys
+import importlib.util
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-if 'logging' in sys.modules and not hasattr(sys.modules['logging'], 'Logger'):
-    sys.modules.pop('logging')
-import logging
+print(f"[logger.py] Checking logging module state")
+_m = sys.modules.get('logging')
+print(f"[logger.py] logging in sys.modules: {_m is not None}, has Logger: {hasattr(_m, 'Logger') if _m else False}")
+if not _m or not hasattr(_m, 'Logger'):
+    print(f"[logger.py] Need to load stdlib logging")
+    if _m:
+        sys.modules.pop('logging')
+    _temp_path = sys.path[:]
+    sys.path = [p for p in sys.path if 'generation' not in p.lower() or 'AgentZola' not in p]
+    _spec = importlib.util.find_spec('logging')
+    print(f"[logger.py] Found spec: {_spec}, origin: {_spec.origin if _spec else None}")
+    logging = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(logging)
+    sys.modules['logging'] = logging
+    sys.path[:] = _temp_path
+    print(f"[logger.py] Loaded logging, has Logger: {hasattr(logging, 'Logger')}")
+else:
+    print(f"[logger.py] Using existing logging module")
+    logging = _m
 
 from domain.bandit import OptimizationState, TriggeringTest
 

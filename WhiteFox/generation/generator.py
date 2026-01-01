@@ -5,11 +5,27 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional, List
+import importlib.util
 
-_temp = sys.modules.pop('generation.logging', None)
-import logging
-if _temp:
-    sys.modules['generation.logging'] = _temp
+print(f"[generator.py] Before cleanup: logging modules in sys.modules: {[k for k in sys.modules.keys() if 'logging' in k]}")
+_temp_modules = {k: sys.modules.pop(k) for k in list(sys.modules.keys()) if k.startswith('generation.logging')}
+print(f"[generator.py] Popped generation.logging modules: {list(_temp_modules.keys())}")
+sys.modules.pop('logging', None)
+print(f"[generator.py] After cleanup: logging modules in sys.modules: {[k for k in sys.modules.keys() if 'logging' in k]}")
+
+_temp_path = sys.path[:]
+sys.path = [p for p in sys.path if 'generation' not in p.lower() or 'AgentZola' not in p]
+print(f"[generator.py] Modified sys.path, length: {len(sys.path)}")
+_spec = importlib.util.find_spec('logging')
+print(f"[generator.py] Found spec: {_spec}, origin: {_spec.origin if _spec else None}")
+logging = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(logging)
+sys.modules['logging'] = logging
+sys.path[:] = _temp_path
+print(f"[generator.py] Loaded logging, has Logger: {hasattr(logging, 'Logger')}, origin check: {'generation' not in str(_spec.origin)}")
+for k, v in _temp_modules.items():
+    sys.modules[k] = v
+print(f"[generator.py] Restored modules: {list(_temp_modules.keys())}")
 
 from vllm import LLM, SamplingParams
 
