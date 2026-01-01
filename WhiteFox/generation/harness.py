@@ -20,7 +20,7 @@ import logging
 import numpy as np
 
 from domain.harness import ExecutionResult
-from generation.log_parser import extract_triggered_passes
+from generation.logging import extract_triggered_passes
 
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,9 @@ def extract_input_variable(code: str, test_globals: dict) -> tuple:
     """
     import re
     
-    # Pattern: m( or m.call( followed by variable name
     patterns = [
-        r'\bm\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m(x1) or m(x)
-        r'\bm\.call\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m.call(x1)
+        r'\bm\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',
+        r'\bm\.call\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',
     ]
     
     for pattern in patterns:
@@ -62,12 +61,10 @@ def extract_input_variable(code: str, test_globals: dict) -> tuple:
             if var_name in test_globals:
                 return var_name, test_globals[var_name]
     
-    # Fallback: look for common variable names
     common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
     for name in common_names:
         if name in test_globals:
             value = test_globals[name]
-            # Check if it looks like input data (TensorFlow tensor or numpy array)
             if hasattr(value, 'shape') or isinstance(value, (list, tuple)):
                 return name, value
     
@@ -180,10 +177,9 @@ def _add_decorator(code, decorator):
 
 def _extract_input_variable(code, test_globals):
     import re
-    # Patterns to find model calls: m(x1) or m.call(x1)
     patterns = [
-        r'\\bm\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m(x1)
-        r'\\bm\\.call\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m.call(x1)
+        r'\\bm\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',
+        r'\\bm\\.call\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',
     ]
     for pattern in patterns:
         try:
@@ -194,12 +190,10 @@ def _extract_input_variable(code, test_globals):
                     return var_name, test_globals[var_name]
         except Exception:
             pass
-    # Fallback: check common variable names
     common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
     for name in common_names:
         if name in test_globals:
             value = test_globals[name]
-            # Check if it looks like input data
             try:
                 if hasattr(value, 'shape') or isinstance(value, (list, tuple, dict)):
                     return name, value
@@ -238,7 +232,6 @@ try:
     
     m = test_globals['m']
     
-    # Try to find input variable - first check for input_data, then extract from code
     if 'input_data' in test_globals:
         input_data = test_globals['input_data']
     else:

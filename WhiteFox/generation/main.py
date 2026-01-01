@@ -55,7 +55,6 @@ def main():
         generator.generate_whitefox(only_optimizations=only_optimizations)
     except KeyboardInterrupt:
         print("\nInterrupted by user. Saving state...")
-        # Save to logging directory
         logging_dir = generator._get_logging_dir() if hasattr(generator, '_get_logging_dir') else None
         if logging_dir:
             state_file = logging_dir / "whitefox_state.json"

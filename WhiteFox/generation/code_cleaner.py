@@ -1,12 +1,12 @@
 """
 Code cleaning and extraction utilities.
 
-Handles extraction of Python code from markdown, ensuring imports, and cleaning
-generated code from LLM outputs.
+Handles extraction of Python code from markdown, ensuring imports, cleaning
+generated code from LLM outputs, and validating TensorFlow APIs.
 """
 
 import re
-from typing import Optional
+from typing import List, Tuple
 
 
 def extract_code_from_markdown(text: str) -> str:
@@ -18,37 +18,28 @@ def extract_code_from_markdown(text: str) -> str:
     - ``` ... ```
     - Stops at first non-code line after markdown block
     """
-    # Remove markdown code blocks
-    # Pattern: ```python ... ``` or ``` ... ```
     pattern = r'```(?:python)?\s*\n?(.*?)```'
     matches = re.findall(pattern, text, re.DOTALL)
     
     if matches:
-        # Take the last (usually largest) code block
         code = matches[-1].strip()
     else:
-        # No markdown blocks, find where code likely ends
-        # Look for common patterns that indicate end of code
         lines = text.split('\n')
         code_lines = []
         in_code = False
         
         for line in lines:
             stripped = line.strip()
-            # Start collecting when we see Python-like code
             if not in_code and (stripped.startswith(('import ', 'from ', 'class ', 'def ', '#')) or 
                                '=' in stripped or stripped.startswith('tf.') or stripped.startswith('np.')):
                 in_code = True
             
             if in_code:
-                # Stop at explanatory text (long lines without Python syntax)
                 if (len(stripped) > 100 and 
                     not any(keyword in stripped for keyword in ['import', 'def', 'class', '=', '(', ')', '[', ']', 'tf.', 'np.', '#']) and
                     not stripped.startswith('#')):
                     break
-                # Stop at markdown-style explanations
                 if stripped and not stripped.startswith(('#', 'import', 'from', 'class', 'def', ' ', '\t')) and '=' not in stripped:
-                    # Check if it looks like explanatory text
                     if any(word in stripped.lower() for word in ['this', 'should', 'model', 'optimization', 'tensorflow', 'xla', 'trigger']):
                         if not any(char in stripped for char in ['(', ')', '[', ']', '=', '.']):
                             break
@@ -57,14 +48,11 @@ def extract_code_from_markdown(text: str) -> str:
         
         code = '\n'.join(code_lines).strip()
     
-    # Remove any remaining markdown artifacts
     lines = code.split('\n')
     cleaned_lines = []
     for line in lines:
-        # Skip markdown formatting
         if line.strip().startswith('```'):
             continue
-        # Stop at explanatory text that's clearly not code
         stripped = line.strip()
         if (stripped and 
             len(stripped) > 80 and 
@@ -89,12 +77,9 @@ def ensure_imports(code: str) -> str:
     """
     lines = code.split('\n')
     
-    # Check if tf is used
     uses_tf = re.search(r'\btf\.', code) or 'tf.' in code or 'tf ' in code
-    # Check if np is used
     uses_np = re.search(r'\bnp\.', code) or 'np.' in code or 'np ' in code
     
-    # Check existing imports
     has_tf_import = re.search(r'import\s+tensorflow\s+as\s+tf', code, re.IGNORECASE)
     has_np_import = re.search(r'import\s+numpy\s+as\s+np', code, re.IGNORECASE)
     
@@ -105,7 +90,6 @@ def ensure_imports(code: str) -> str:
         imports_to_add.append('import numpy as np')
     
     if imports_to_add:
-        # Find the first non-comment, non-empty line or insert at the beginning
         insert_idx = 0
         for i, line in enumerate(lines):
             stripped = line.strip()
@@ -113,7 +97,6 @@ def ensure_imports(code: str) -> str:
                 insert_idx = i
                 break
         
-        # Insert imports
         for imp in reversed(imports_to_add):
             lines.insert(insert_idx, imp)
         
@@ -133,14 +116,60 @@ def clean_generated_code(raw_text: str) -> str:
     
     Returns cleaned code ready for execution.
     """
-    # Step 1: Extract from markdown
     code = extract_code_from_markdown(raw_text)
     
-    # Step 2: Ensure imports
     code = ensure_imports(code)
     
-    # Step 3: Final cleanup - remove trailing whitespace, ensure newline at end
     code = code.rstrip() + '\n'
     
     return code
 
+
+INVALID_APIS = {
+    'tf.distribute.experimental.collective_all_reduce_strategy',
+    'tf.distribute.experimental.CollectiveAllReduceStrategy',
+    'tf.distribute.CollectiveCommunicator',
+    'tf.raw_ops.AllReduce',
+    'tf.raw_ops.AllGather',
+    'tf.distribute.get_replica_context().values',
+    'tf.distribute.HParams',
+}
+
+INVALID_PATTERNS = [
+    r'tf\.distribute\.experimental\.collective_all_reduce_strategy',
+    r'tf\.distribute\.experimental\.CollectiveAllReduceStrategy',
+    r'tf\.distribute\.CollectiveCommunicator',
+    r'tf\.raw_ops\.AllReduce',
+    r'tf\.raw_ops\.AllGather',
+    r'\.collective_all_reduce_strategy',
+    r'CollectiveAllReduceStrategy',
+    r'CollectiveCommunicator',
+]
+
+
+def validate_tensorflow_apis(code: str) -> Tuple[bool, List[str]]:
+    """
+    Validate that code doesn't use invalid TensorFlow APIs.
+    
+    Returns:
+        (is_valid, list_of_errors)
+    """
+    errors = []
+    
+    for invalid_api in INVALID_APIS:
+        if invalid_api in code:
+            errors.append(f"Invalid API detected: {invalid_api}")
+    
+    for pattern in INVALID_PATTERNS:
+        matches = re.findall(pattern, code, re.IGNORECASE)
+        if matches:
+            errors.append(f"Invalid API pattern detected: {pattern} (found: {matches[0]})")
+    
+    if re.search(r'\.reduce\(\)\s*$', code, re.MULTILINE):
+        errors.append("StrategyBase.reduce() called without required 'axis' argument")
+    
+    if '_default_device' in code and 'OneDeviceStrategy' in code:
+        errors.append("OneDeviceStrategy._default_device doesn't exist")
+    
+    is_valid = len(errors) == 0
+    return is_valid, errors
