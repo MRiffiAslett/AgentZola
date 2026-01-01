@@ -169,14 +169,9 @@ class SanityChecker:
         return report
     
     def save_report(self, report: Dict[str, Any]) -> Path:
-        """Save report with timestamp."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_file = self.logging_dir / f"sanity_check_report_{timestamp}.json"
+        """Save report (single file, overwritten on each run)."""
+        report_file = self.logging_dir / "sanity_check_report.json"
         with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2)
-        
-        latest_file = self.logging_dir / "sanity_check_report_latest.json"
-        with open(latest_file, 'w') as f:
             json.dump(report, f, indent=2)
         
         return report_file
@@ -235,13 +230,8 @@ def run_sanity_check(logging_dir: Path, state: Optional[WhiteFoxState] = None):
     json_file = checker.save_report(report)
     
     text_report = checker.format_report_for_chat(report)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    text_file = logging_dir / f"sanity_check_report_{timestamp}.txt"
+    text_file = logging_dir / "sanity_check_report.txt"
     with open(text_file, 'w') as f:
-        f.write(text_report)
-    
-    latest_text_file = logging_dir / "sanity_check_report_latest.txt"
-    with open(latest_text_file, 'w') as f:
         f.write(text_report)
     
     return json_file, text_file
