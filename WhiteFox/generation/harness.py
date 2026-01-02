@@ -272,29 +272,11 @@ try:
         result["compile_success_xla"] = True
         result["compile_success_autocluster"] = True
         initial_exec_success = True
-        if whitefox_logger:
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "exec_initial",
-                "success",
-                {"model_exists": 'm' in test_globals}
-            )
     except Exception as e:
         error_msg = str(e) + "\\n" + traceback.format_exc()
         result["compile_error_naive"] = error_msg
         result["compile_error_xla"] = error_msg
         result["compile_error_autocluster"] = error_msg
-        if whitefox_logger:
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "exec_initial",
-                "failure",
-                {"error": str(e)[:500], "error_type": type(e).__name__}
-            )
         # Don't raise - continue to try XLA execution even if initial exec failed
         # XLA execution is in its own try block and will handle errors gracefully
     
@@ -342,26 +324,8 @@ try:
         output_xla = m_xla(*input_data_xla)
         result["runtime_success_xla"] = True
         result["output_xla"] = _serialize_output(output_xla)
-        if whitefox_logger:
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "xla_exec",
-                "success",
-                {"log_text_length": len(result.get("log_text", ""))}
-            )
     except Exception as e:
         result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
-        if whitefox_logger:
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "xla_exec",
-                "failure",
-                {"error": str(e)[:500], "error_type": type(e).__name__}
-            )
     
     try:
         # TF_XLA_FLAGS already set before TensorFlow import for autocluster mode
@@ -464,7 +428,67 @@ print("WHITEFOX_RESULT_END")
         
         result.triggered_passes = extract_triggered_passes(result.log_text)
         
+        # Log diagnostic information after execution
         if whitefox_logger:
+            # Determine execution stage status
+            exec_stage_status = "failure"
+            exec_stage_details = {}
+            if result.compile_error_naive:
+                exec_stage_status = "failure"
+                exec_stage_details = {
+                    "error": result.compile_error_naive[:500] if result.compile_error_naive else "Unknown error",
+                    "error_type": "compile_error"
+                }
+            elif result.runtime_error_naive:
+                exec_stage_status = "failure"
+                exec_stage_details = {
+                    "error": result.runtime_error_naive[:500] if result.runtime_error_naive else "Unknown error",
+                    "error_type": "runtime_error"
+                }
+            elif result.compile_success_naive and result.runtime_success_naive:
+                exec_stage_status = "success"
+                exec_stage_details = {"model_executed": True}
+            
+            # Log initial execution stage
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "exec_initial",
+                exec_stage_status,
+                exec_stage_details
+            )
+            
+            # Log XLA execution stage
+            xla_stage_status = "not_run"
+            xla_stage_details = {}
+            if result.compile_success_xla:
+                if result.runtime_success_xla:
+                    xla_stage_status = "success"
+                    xla_stage_details = {"xla_executed": True, "log_text_length": len(result.log_text)}
+                elif result.runtime_error_xla:
+                    xla_stage_status = "failure"
+                    xla_stage_details = {
+                        "error": result.runtime_error_xla[:500] if result.runtime_error_xla else "Unknown error",
+                        "error_type": "xla_runtime_error"
+                    }
+            elif result.compile_error_xla:
+                xla_stage_status = "failure"
+                xla_stage_details = {
+                    "error": result.compile_error_xla[:500] if result.compile_error_xla else "Unknown error",
+                    "error_type": "xla_compile_error"
+                }
+            
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "xla_exec",
+                xla_stage_status,
+                xla_stage_details
+            )
+            
+            # Log pass detection stage
             whitefox_logger.log_diagnostic(
                 optimization_name or "unknown",
                 iteration or 0,
