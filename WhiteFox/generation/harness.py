@@ -206,11 +206,31 @@ def _extract_input_variable(code, test_globals):
     return None, None
 
 
+# Set environment variables BEFORE importing TensorFlow
+# TensorFlow reads XLA_FLAGS and TF_XLA_FLAGS at import time
+import os
+old_xla_flags_env = os.environ.get('XLA_FLAGS', '')
+old_tf_xla_flags_env = os.environ.get('TF_XLA_FLAGS', '')
+
+# Preserve existing flags and add our instrumentation flags
+xla_flags_parts = []
+if old_xla_flags_env:
+    xla_flags_parts.append(old_xla_flags_env)
+# Ensure XLA dumps are enabled to capture pass information
+if '--xla_dump_to=' not in old_xla_flags_env:
+    xla_flags_parts.append('--xla_dump_to=/tmp/xla_dump')
+if '--xla_dump_hlo_pass_re=' not in old_xla_flags_env:
+    xla_flags_parts.append('--xla_dump_hlo_pass_re=.*')
+os.environ['XLA_FLAGS'] = ' '.join(xla_flags_parts) if xla_flags_parts else ''
+
+# Set TF_XLA_FLAGS for autocluster mode (will be overridden later for XLA mode)
+if not old_tf_xla_flags_env:
+    os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2'
+
 try:
     import tensorflow as tf
     import numpy as np
     import random
-    import os
     
     random.seed({RANDOM_SEED})
     np.random.seed({RANDOM_SEED})
@@ -254,6 +274,7 @@ try:
         result["runtime_error_naive"] = str(e) + "\\n" + traceback.format_exc()
     
     try:
+        # XLA_FLAGS already set before TensorFlow import, so pass logging should work
         xla_code = _add_decorator(test_code, "@tf.function(jit_compile=True)")
         xla_globals = {{'__name__': '__main__'}}.copy()
         xla_globals.update({{
@@ -278,8 +299,7 @@ try:
         result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
     
     try:
-        old_xla_flags = os.environ.get('TF_XLA_FLAGS', '')
-        os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
+        # TF_XLA_FLAGS already set before TensorFlow import for autocluster mode
         ac_code = _add_decorator(test_code, "@tf.function")
         ac_globals = {{'__name__': '__main__'}}.copy()
         ac_globals.update({{
@@ -300,11 +320,8 @@ try:
         output_ac = m_ac(*input_data_ac)
         result["runtime_success_autocluster"] = True
         result["output_autocluster"] = _serialize_output(output_ac)
-        os.environ['TF_XLA_FLAGS'] = old_xla_flags
     except Exception as e:
         result["runtime_error_autocluster"] = str(e) + "\\n" + traceback.format_exc()
-        if 'old_xla_flags' in locals():
-            os.environ['TF_XLA_FLAGS'] = old_xla_flags
 
 except Exception as e:
     error_msg = str(e) + "\\n" + traceback.format_exc()
@@ -319,6 +336,15 @@ finally:
     result["log_text"] = stdout_capture.getvalue() + stderr_capture.getvalue()
     sys.stdout = original_stdout
     sys.stderr = original_stderr
+    # Restore original environment variables
+    if old_xla_flags_env:
+        os.environ['XLA_FLAGS'] = old_xla_flags_env
+    else:
+        os.environ.pop('XLA_FLAGS', None)
+    if old_tf_xla_flags_env:
+        os.environ['TF_XLA_FLAGS'] = old_tf_xla_flags_env
+    else:
+        os.environ.pop('TF_XLA_FLAGS', None)
 
 print("WHITEFOX_RESULT_START")
 print(json.dumps(result))
@@ -326,16 +352,19 @@ print("WHITEFOX_RESULT_END")
 """
     
     try:
+        # Ensure subprocess inherits environment variables (especially XLA_FLAGS)
+        # This is important for the custom TensorFlow build to output WHITEFOX_PASS_START markers
         process = subprocess.run(
             [sys.executable, "-c", wrapper_script],
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=os.environ.copy(),  # Explicitly pass environment
         )
         
         output = process.stdout + process.stderr
-        result.log_text = output
         
+        log_text_from_json = None
         if "WHITEFOX_RESULT_START" in output and "WHITEFOX_RESULT_END" in output:
             start_idx = output.find("WHITEFOX_RESULT_START") + len("WHITEFOX_RESULT_START")
             end_idx = output.find("WHITEFOX_RESULT_END")
@@ -357,10 +386,24 @@ print("WHITEFOX_RESULT_END")
                 result.output_naive = result_data.get("output_naive")
                 result.output_xla = result_data.get("output_xla")
                 result.output_autocluster = result_data.get("output_autocluster")
+                log_text_from_json = result_data.get("log_text", "")
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse JSON result from {test_file}")
         
+        if log_text_from_json is not None:
+            result.log_text = log_text_from_json
+        else:
+            result.log_text = output
+        
         result.triggered_passes = extract_triggered_passes(result.log_text)
+        
+        # Debug logging: check if WHITEFOX_PASS_START markers are present
+        if "WHITEFOX_PASS_START" in result.log_text:
+            logger.debug(f"Found WHITEFOX_PASS_START markers in log for {test_file}, "
+                        f"detected passes: {result.triggered_passes}")
+        elif result.runtime_success_xla:
+            logger.debug(f"No WHITEFOX_PASS_START markers found in log for {test_file} "
+                        f"despite successful XLA execution. Log length: {len(result.log_text)}")
         
     except subprocess.TimeoutExpired:
         result.runtime_error_naive = "Execution timeout"
