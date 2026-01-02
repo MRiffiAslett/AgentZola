@@ -25,6 +25,7 @@ import numpy as np
 
 from domain.harness import ExecutionResult
 from generation.logging import extract_triggered_passes
+from typing import Optional
 
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,14 @@ def process_code(code: str) -> str:
     return code
 
 
-def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionResult:
+def execute_test_in_subprocess(
+    test_file: Path, 
+    whitefox_logger=None,
+    optimization_name: Optional[str] = None,
+    iteration: Optional[int] = None,
+    sample_idx: Optional[int] = None,
+    timeout: int = 60
+) -> ExecutionResult:
     result = ExecutionResult(
         test_file=test_file,
         compile_success_naive=False,
@@ -104,10 +112,28 @@ def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionR
     try:
         with open(test_file, 'r') as f:
             test_code = f.read()
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "code_read",
+                "success",
+                {"test_file": str(test_file), "code_length": len(test_code)}
+            )
     except Exception as e:
         result.compile_error_naive = str(e)
         result.compile_error_xla = str(e)
         result.compile_error_autocluster = str(e)
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "code_read",
+                "failure",
+                {"test_file": str(test_file), "error": str(e)}
+            )
         return result
     
     test_code = process_code(test_code)
@@ -239,39 +265,60 @@ try:
     test_globals = {{'__name__': '__main__'}}.copy()
     test_code = {test_code_repr}
     
+    initial_exec_success = False
     try:
         exec(test_code, test_globals)
         result["compile_success_naive"] = True
         result["compile_success_xla"] = True
         result["compile_success_autocluster"] = True
+        initial_exec_success = True
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "exec_initial",
+                "success",
+                {"model_exists": 'm' in test_globals}
+            )
     except Exception as e:
         error_msg = str(e) + "\\n" + traceback.format_exc()
         result["compile_error_naive"] = error_msg
         result["compile_error_xla"] = error_msg
         result["compile_error_autocluster"] = error_msg
-        raise
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "exec_initial",
+                "failure",
+                {"error": str(e)[:500], "error_type": type(e).__name__}
+            )
+        # Don't raise - continue to try XLA execution even if initial exec failed
+        # XLA execution is in its own try block and will handle errors gracefully
     
     if 'm' not in test_globals:
-        raise Exception("Model 'm' not found in test code")
-    
-    m = test_globals['m']
-    
-    if 'input_data' in test_globals:
-        input_data = test_globals['input_data']
+        # Model not found - XLA execution will fail gracefully in its try block
+        pass
     else:
-        input_var_name, input_data = _extract_input_variable(test_code, test_globals)
-        if input_data is None:
-            raise Exception("Could not find input data in test code. Looked for input_data and common variable names.")
-    
-    if not isinstance(input_data, (list, tuple)):
-        input_data = [input_data]
-    
-    try:
-        output_naive = m(*input_data)
-        result["runtime_success_naive"] = True
-        result["output_naive"] = _serialize_output(output_naive)
-    except Exception as e:
-        result["runtime_error_naive"] = str(e) + "\\n" + traceback.format_exc()
+        m = test_globals['m']
+        
+        if 'input_data' in test_globals:
+            input_data = test_globals['input_data']
+        else:
+            input_var_name, input_data = _extract_input_variable(test_code, test_globals)
+        
+        if input_data is not None:
+            if not isinstance(input_data, (list, tuple)):
+                input_data = [input_data]
+            
+            try:
+                output_naive = m(*input_data)
+                result["runtime_success_naive"] = True
+                result["output_naive"] = _serialize_output(output_naive)
+            except Exception as e:
+                result["runtime_error_naive"] = str(e) + "\\n" + traceback.format_exc()
     
     try:
         # XLA_FLAGS already set before TensorFlow import, so pass logging should work
@@ -295,8 +342,26 @@ try:
         output_xla = m_xla(*input_data_xla)
         result["runtime_success_xla"] = True
         result["output_xla"] = _serialize_output(output_xla)
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "xla_exec",
+                "success",
+                {"log_text_length": len(result.get("log_text", ""))}
+            )
     except Exception as e:
         result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "xla_exec",
+                "failure",
+                {"error": str(e)[:500], "error_type": type(e).__name__}
+            )
     
     try:
         # TF_XLA_FLAGS already set before TensorFlow import for autocluster mode
@@ -333,6 +398,8 @@ except Exception as e:
         result["compile_error_autocluster"] = error_msg
 
 finally:
+    sys.stdout.flush()
+    sys.stderr.flush()
     result["log_text"] = stdout_capture.getvalue() + stderr_capture.getvalue()
     sys.stdout = original_stdout
     sys.stderr = original_stderr
@@ -390,20 +457,42 @@ print("WHITEFOX_RESULT_END")
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse JSON result from {test_file}")
         
-        if log_text_from_json is not None:
+        if log_text_from_json is not None and log_text_from_json:
             result.log_text = log_text_from_json
         else:
             result.log_text = output
         
         result.triggered_passes = extract_triggered_passes(result.log_text)
         
+        if whitefox_logger:
+            whitefox_logger.log_diagnostic(
+                optimization_name or "unknown",
+                iteration or 0,
+                sample_idx or 0,
+                "pass_detection",
+                "success" if result.triggered_passes else "no_passes",
+                {
+                    "log_text_length": len(result.log_text),
+                    "has_markers": "WHITEFOX_PASS_START" in result.log_text,
+                    "triggered_passes": list(result.triggered_passes),
+                    "log_text_from_json": log_text_from_json is not None and bool(log_text_from_json),
+                    "xla_compile_success": result.compile_success_xla,
+                    "xla_runtime_success": result.runtime_success_xla,
+                }
+            )
+        
         # Debug logging: check if WHITEFOX_PASS_START markers are present
         if "WHITEFOX_PASS_START" in result.log_text:
             logger.debug(f"Found WHITEFOX_PASS_START markers in log for {test_file}, "
                         f"detected passes: {result.triggered_passes}")
         elif result.runtime_success_xla:
-            logger.debug(f"No WHITEFOX_PASS_START markers found in log for {test_file} "
-                        f"despite successful XLA execution. Log length: {len(result.log_text)}")
+            logger.warning(f"No WHITEFOX_PASS_START markers found in log for {test_file} "
+                         f"despite successful XLA execution. Log length: {len(result.log_text)}, "
+                         f"log_text_from_json was {'set' if log_text_from_json else 'None'}")
+        elif result.compile_success_xla and not result.runtime_success_xla:
+            logger.debug(f"XLA compiled but runtime failed for {test_file}, log length: {len(result.log_text)}")
+        elif len(result.log_text) == 0:
+            logger.debug(f"Empty log_text for {test_file}, XLA never ran or logs not captured")
         
     except subprocess.TimeoutExpired:
         result.runtime_error_naive = "Execution timeout"

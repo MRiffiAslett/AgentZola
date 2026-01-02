@@ -47,6 +47,8 @@ class WhiteFoxLogger:
         self.state_changes_file = self.log_dir / "state_changes.json"
         self.errors_file = self.log_dir / "errors.json"
         self.bug_reports_file = self.log_dir / "bug_reports.json"
+        self.diagnostic_file = self.log_dir / "execution_diagnostics.json"
+        self.all_generated_code_file = self.log_dir / "all_generated_code_diagnostic.json"
         
         self.prompts_data: Dict[str, List[Dict]] = {}
         self.code_before_after_data: Dict[str, List[Dict]] = {}
@@ -56,6 +58,8 @@ class WhiteFoxLogger:
         self.state_changes_data: Dict[str, List[Dict]] = {}
         self.errors_data: List[Dict] = []
         self.bug_reports_data: List[Dict] = []
+        self.diagnostic_data: List[Dict] = []
+        self.all_generated_code_data: Dict[str, List[Dict]] = {}
         
         self.base_logger = base_logger or logging.getLogger(__name__)
     
@@ -70,6 +74,8 @@ class WhiteFoxLogger:
             self.state_changes_file,
             self.errors_file,
             self.bug_reports_file,
+            self.diagnostic_file,
+            self.all_generated_code_file,
         ]
         
         for log_file in log_files:
@@ -371,6 +377,70 @@ class WhiteFoxLogger:
         with open(self.bug_reports_file, 'w') as f:
             json.dump(self.bug_reports_data, f, indent=2)
     
+    def _write_diagnostics(self) -> None:
+        """Write diagnostic logs."""
+        with open(self.diagnostic_file, 'w') as f:
+            json.dump(self.diagnostic_data, f, indent=2)
+    
+    def _write_all_generated_code(self) -> None:
+        """Write all generated code diagnostic file."""
+        with open(self.all_generated_code_file, 'w') as f:
+            json.dump(self.all_generated_code_data, f, indent=2)
+    
+    def log_diagnostic(
+        self,
+        optimization_name: str,
+        iteration: int,
+        sample_idx: int,
+        stage: str,
+        status: str,
+        details: Dict[str, Any],
+        test_code: Optional[str] = None
+    ) -> None:
+        """Log diagnostic information for execution tracking."""
+        opt_key = self._get_opt_key(optimization_name)
+        
+        diagnostic_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "optimization": optimization_name,
+            "iteration": iteration,
+            "sample_idx": sample_idx,
+            "stage": stage,  # e.g., "code_read", "exec_initial", "xla_exec", "pass_detection"
+            "status": status,  # e.g., "success", "failure", "skipped"
+            "details": details,
+        }
+        
+        if test_code:
+            diagnostic_entry["test_code"] = test_code[:1000]  # First 1000 chars
+        
+        self.diagnostic_data.append(diagnostic_entry)
+        self._write_diagnostics()
+    
+    def log_all_generated_code(
+        self,
+        optimization_name: str,
+        iteration: int,
+        sample_idx: int,
+        raw_text: str,
+        cleaned_code: str,
+        test_file_path: Optional[str] = None
+    ) -> None:
+        """Log all generated code (raw and cleaned) for diagnosis."""
+        opt_key = self._get_opt_key(optimization_name)
+        if opt_key not in self.all_generated_code_data:
+            self.all_generated_code_data[opt_key] = []
+        
+        self.all_generated_code_data[opt_key].append({
+            "timestamp": datetime.now().isoformat(),
+            "optimization": optimization_name,
+            "iteration": iteration,
+            "sample_idx": sample_idx,
+            "test_file": test_file_path,
+            "raw_text": raw_text,
+            "cleaned_code": cleaned_code,
+        })
+        self._write_all_generated_code()
+    
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""
         self._write_prompts()
@@ -380,3 +450,5 @@ class WhiteFoxLogger:
         self._write_state_changes()
         self._write_errors()
         self._write_bug_reports()
+        self._write_diagnostics()
+        self._write_all_generated_code()

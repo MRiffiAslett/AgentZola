@@ -193,6 +193,13 @@ class StarCoderGenerator:
                 cleaned_code,
                 {"api_valid": is_valid_api, "api_errors": api_errors} if not is_valid_api else None
             )
+            whitefox_logger.log_all_generated_code(
+                optimization_name,
+                iteration,
+                sample_idx,
+                generated_text,
+                cleaned_code
+            )
         
         test_file = opt_dir / f"{optimization_name}-it{iteration}-sample{sample_idx}.py"
         test_file.write_text(cleaned_code)
@@ -289,7 +296,27 @@ class StarCoderGenerator:
                         whitefox_logger
                     )
                     
-                    result = execute_test_in_subprocess(test_file)
+                    test_code_content = test_file.read_text() if test_file.exists() else None
+                    whitefox_logger.log_diagnostic(
+                        opt_name,
+                        iteration,
+                        sample_idx,
+                        "test_file_created",
+                        "success",
+                        {"test_file": str(test_file), "code_length": len(test_code_content) if test_code_content else 0},
+                        test_code=test_code_content
+                    )
+                    
+                    whitefox_logger.log_all_generated_code(
+                        opt_name,
+                        iteration,
+                        sample_idx,
+                        generated_text,
+                        test_code_content or "",
+                        str(test_file)
+                    )
+                    
+                    result = execute_test_in_subprocess(test_file, whitefox_logger, opt_name, iteration, sample_idx)
                     
                     log_file = logs_root / opt_name / f"{test_file.stem}.log"
                     log_file.parent.mkdir(parents=True, exist_ok=True)
