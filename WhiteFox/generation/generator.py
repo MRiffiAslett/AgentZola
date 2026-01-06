@@ -37,7 +37,7 @@ from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
 from generation.code_cleaner import clean_generated_code
-from generation.logging import WhiteFoxLogger, run_sanity_check
+from generation.logging import WhiteFoxLogger
 
 import tomllib
 
@@ -451,12 +451,6 @@ class StarCoderGenerator:
         self.logger.info(f"Starting WhiteFox fuzzing with {len(self.whitefox_state.optimizations)} optimizations")
         self.logger.info(f"Logging directory: {logging_dir}")
         
-        try:
-            json_file, text_file = run_sanity_check(logging_dir, self.whitefox_state)
-            self.logger.info(f"Sanity check completed: {text_file}")
-        except Exception as e:
-            self.logger.warning(f"Sanity check failed: {e}", exc_info=True)
-        
         for opt_state in self.whitefox_state.optimizations.values():
             try:
                 self._run_single_optimization(
@@ -476,12 +470,6 @@ class StarCoderGenerator:
                     e
                 )
                 self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
-        
-        try:
-            json_file, text_file = run_sanity_check(logging_dir, self.whitefox_state)
-            self.logger.info(f"Final sanity check completed: {text_file}")
-        except Exception as e:
-            self.logger.warning(f"Final sanity check failed: {e}", exc_info=True)
         
         whitefox_logger.flush()
         

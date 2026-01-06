@@ -99,32 +99,6 @@ class WhiteFoxLogger:
                 if self.base_logger:
                     self.base_logger.debug(f"Cleared old log file: {log_file}")
         
-        # Clear old timestamped sanity check reports (keep only the current format)
-        for pattern in [
-            "sanity_check_report_*.json",
-            "sanity_check_report_*.txt",
-            "sanity_check_report_*.log",
-            "sanity_check_report_latest.json",
-            "sanity_check_report_latest.txt",
-            "sanity_check_report_latest.log",
-        ]:
-            for old_file in self.log_dir.glob(pattern):
-                old_file.unlink()
-                if self.base_logger:
-                    self.base_logger.debug(f"Cleared old sanity check file: {old_file}")
-        
-        # Also clear the current format files (they'll be recreated fresh)
-        current_sanity_files = [
-            self.log_dir / "sanity_check_report.json",
-            self.log_dir / "sanity_check_report.txt",
-            self.log_dir / "sanity_check_report.log",
-        ]
-        for sanity_file in current_sanity_files:
-            if sanity_file.exists():
-                sanity_file.unlink()
-                if self.base_logger:
-                    self.base_logger.debug(f"Cleared sanity check file: {sanity_file}")
-        
         # Clear in-memory data structures to ensure fresh start
         self.prompts_data.clear()
         self.code_before_after_data.clear()
