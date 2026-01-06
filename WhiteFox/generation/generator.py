@@ -36,7 +36,7 @@ from generation.bandit import (
 from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
-from generation.code_cleaner import clean_generated_code, validate_tensorflow_apis
+from generation.code_cleaner import clean_generated_code
 from generation.logging import WhiteFoxLogger, run_sanity_check
 
 import tomllib
@@ -182,8 +182,6 @@ class StarCoderGenerator:
         
         cleaned_code = clean_generated_code(generated_text)
         
-        is_valid_api, api_errors = validate_tensorflow_apis(cleaned_code)
-        
         if whitefox_logger:
             whitefox_logger.log_generated_code(
                 optimization_name,
@@ -191,7 +189,7 @@ class StarCoderGenerator:
                 sample_idx,
                 generated_text,
                 cleaned_code,
-                {"api_valid": is_valid_api, "api_errors": api_errors} if not is_valid_api else None
+                None
             )
         
         test_file = opt_dir / f"{optimization_name}-it{iteration}-sample{sample_idx}.py"
@@ -237,8 +235,7 @@ class StarCoderGenerator:
                 )
                 prompt = build_feedback_prompt(
                     opt_state.spec, 
-                    example_tests,
-                    max_model_len=self.config.model.max_model_len
+                    example_tests
                 )
                 prompt_type = "feedback"
             else:

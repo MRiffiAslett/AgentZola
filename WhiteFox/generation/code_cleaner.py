@@ -1,12 +1,11 @@
 """
 Code cleaning and extraction utilities.
 
-Handles extraction of Python code from markdown, ensuring imports, cleaning
-generated code from LLM outputs, and validating TensorFlow APIs.
+Handles extraction of Python code from markdown, ensuring imports, and cleaning
+generated code from LLM outputs.
 """
 
 import re
-from typing import List, Tuple
 
 
 def extract_code_from_markdown(text: str) -> str:
@@ -123,53 +122,3 @@ def clean_generated_code(raw_text: str) -> str:
     code = code.rstrip() + '\n'
     
     return code
-
-
-INVALID_APIS = {
-    'tf.distribute.experimental.collective_all_reduce_strategy',
-    'tf.distribute.experimental.CollectiveAllReduceStrategy',
-    'tf.distribute.CollectiveCommunicator',
-    'tf.raw_ops.AllReduce',
-    'tf.raw_ops.AllGather',
-    'tf.distribute.get_replica_context().values',
-    'tf.distribute.HParams',
-}
-
-INVALID_PATTERNS = [
-    r'tf\.distribute\.experimental\.collective_all_reduce_strategy',
-    r'tf\.distribute\.experimental\.CollectiveAllReduceStrategy',
-    r'tf\.distribute\.CollectiveCommunicator',
-    r'tf\.raw_ops\.AllReduce',
-    r'tf\.raw_ops\.AllGather',
-    r'\.collective_all_reduce_strategy',
-    r'CollectiveAllReduceStrategy',
-    r'CollectiveCommunicator',
-]
-
-
-def validate_tensorflow_apis(code: str) -> Tuple[bool, List[str]]:
-    """
-    Validate that code doesn't use invalid TensorFlow APIs.
-    
-    Returns:
-        (is_valid, list_of_errors)
-    """
-    errors = []
-    
-    for invalid_api in INVALID_APIS:
-        if invalid_api in code:
-            errors.append(f"Invalid API detected: {invalid_api}")
-    
-    for pattern in INVALID_PATTERNS:
-        matches = re.findall(pattern, code, re.IGNORECASE)
-        if matches:
-            errors.append(f"Invalid API pattern detected: {pattern} (found: {matches[0]})")
-    
-    if re.search(r'\.reduce\(\)\s*$', code, re.MULTILINE):
-        errors.append("StrategyBase.reduce() called without required 'axis' argument")
-    
-    if '_default_device' in code and 'OneDeviceStrategy' in code:
-        errors.append("OneDeviceStrategy._default_device doesn't exist")
-    
-    is_valid = len(errors) == 0
-    return is_valid, errors

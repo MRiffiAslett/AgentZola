@@ -12,9 +12,9 @@ bandit_state_file = "whitefox_state.json"
 
 
 [model]
-name = "ise-uiuc/Magicoder-S-DS-6.7B"
+name = "bigcode/starcoder"
 dtype = "float16"
-max_model_len = 4096
+max_model_len = 8192
 gpu_memory_utilization = 0.95
 swap_space = 20
 
@@ -28,9 +28,9 @@ unit_num = 2        # Number of samples generated per batch call (until num_samp
 # WhiteFox-specific generation parameters
 optimizations_dir = "xilo_xla/artifacts/Prompts/test"  # Path to requirement prompt directory
 tests_per_optimization = 10  # Total tests to generate per optimization
-tests_per_iteration = 2       # Tests to generate per iteration (reduced to lower output)
+tests_per_iteration = 10      # Tests to generate per iteration (10 tests per batch as per spec)
 max_iterations = 20           # Maximum iterations per optimization
-examples_per_prompt = 2        # Number of examples to include in feedback prompt (reduced to prevent prompt overflow)
+examples_per_prompt = 3        # Number of examples to include in feedback prompt (few-shot)
 
 # Hardcoded list of optimizations that WhiteFox targets
 optimizations = [

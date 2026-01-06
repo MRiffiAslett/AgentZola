@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from domain.bandit import WhiteFoxState
-from generation.code_cleaner import validate_tensorflow_apis
 from generation.prompts import estimate_tokens
 
 
@@ -102,15 +101,6 @@ class SanityChecker:
         
         return metrics
     
-    def check_api_validation(self) -> Dict[str, Any]:
-        """Quick API validation check."""
-        invalid_code = "strategy = tf.distribute.experimental.collective_all_reduce_strategy()"
-        is_valid, errors = validate_tensorflow_apis(invalid_code)
-        if is_valid or len(errors) == 0:
-            self.red_flags.append("API validation not detecting invalid APIs")
-            return {"status": "FAIL", "message": "API validation broken"}
-        return {"status": "PASS", "message": "API validation working"}
-    
     def check_prompt_limiting(self) -> Dict[str, Any]:
         """Quick prompt limiting check."""
         tokens = estimate_tokens("test")
@@ -143,13 +133,12 @@ class SanityChecker:
         """Run checks and generate concise report."""
         self.metrics = self.collect_metrics()
         
-        api_check = self.check_api_validation()
         prompt_check = self.check_prompt_limiting()
         
         self.red_flags.extend(self.identify_red_flags(self.metrics))
         
         overall_status = "PASS"
-        if self.red_flags or api_check["status"] == "FAIL":
+        if self.red_flags:
             overall_status = "FAIL"
         elif self.warnings or prompt_check["status"] == "WARN":
             overall_status = "WARN"
@@ -159,7 +148,6 @@ class SanityChecker:
             "overall_status": overall_status,
             "metrics": self.metrics,
             "checks": {
-                "api_validation": api_check,
                 "prompt_limiting": prompt_check,
             },
             "red_flags": self.red_flags,

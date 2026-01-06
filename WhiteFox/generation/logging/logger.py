@@ -198,8 +198,6 @@ class WhiteFoxLogger:
             "sample_idx": sample_idx,
             "raw_text": raw_text,
             "cleaned_code": cleaned_code,
-            "api_valid": cleaning_changes is None or cleaning_changes.get("api_valid", True),
-            "api_errors": cleaning_changes.get("api_errors", []) if cleaning_changes else [],
         })
         
         if opt_key not in self.cleaned_code_data:
@@ -525,9 +523,6 @@ class WhiteFoxLogger:
                     f.write(f"Iteration: {code_entry['iteration']} | ")
                     f.write(f"Sample: {code_entry['sample_idx']} | ")
                     f.write(f"Timestamp: {code_entry['timestamp']}\n")
-                    f.write(f"API Valid: {code_entry['api_valid']}\n")
-                    if code_entry.get('api_errors'):
-                        f.write(f"API Errors: {code_entry['api_errors']}\n")
                     f.write(f"{'-' * 80}\n\n")
                     
                     f.write("RAW TEXT (from LLM):\n")
