@@ -265,6 +265,8 @@ try:
     test_globals = {{'__name__': '__main__'}}.copy()
     test_code = {test_code_repr}
     
+    model_key = 'm'
+    input_data_key = 'input_data'
     initial_exec_success = False
     try:
         exec(test_code, test_globals)
@@ -280,14 +282,14 @@ try:
         # Don't raise - continue to try XLA execution even if initial exec failed
         # XLA execution is in its own try block and will handle errors gracefully
     
-    if 'm' not in test_globals:
+    if model_key not in test_globals:
         # Model not found - XLA execution will fail gracefully in its try block
         pass
     else:
-        m = test_globals['m']
+        m = test_globals[model_key]
         
-        if 'input_data' in test_globals:
-            input_data = test_globals['input_data']
+        if input_data_key in test_globals:
+            input_data = test_globals[input_data_key]
         else:
             input_var_name, input_data = _extract_input_variable(test_code, test_globals)
         
@@ -312,9 +314,9 @@ try:
             'random': random,
         }})
         exec(xla_code, xla_globals)
-        m_xla = xla_globals['m']
-        if 'input_data' in xla_globals:
-            input_data_xla = xla_globals['input_data']
+        m_xla = xla_globals[model_key]
+        if input_data_key in xla_globals:
+            input_data_xla = xla_globals[input_data_key]
         else:
             _, input_data_xla = _extract_input_variable(xla_code, xla_globals)
             if input_data_xla is None:
@@ -337,9 +339,9 @@ try:
             'random': random,
         }})
         exec(ac_code, ac_globals)
-        m_ac = ac_globals['m']
-        if 'input_data' in ac_globals:
-            input_data_ac = ac_globals['input_data']
+        m_ac = ac_globals[model_key]
+        if input_data_key in ac_globals:
+            input_data_ac = ac_globals[input_data_key]
         else:
             _, input_data_ac = _extract_input_variable(ac_code, ac_globals)
             if input_data_ac is None:

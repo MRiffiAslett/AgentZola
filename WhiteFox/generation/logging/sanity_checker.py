@@ -48,7 +48,7 @@ class SanityChecker:
                 if num_tests > 0:
                     metrics["optimizations_with_triggering_tests"] += 1
         
-        prompts_file = self.logging_dir / "prompts.json"
+        prompts_file = self.logging_dir / "source" / "prompts.json"
         if prompts_file.exists():
             try:
                 with open(prompts_file, 'r') as f:
@@ -61,7 +61,7 @@ class SanityChecker:
             except Exception as e:
                 self.warnings.append(f"Could not read prompts.json: {e}")
         
-        execution_file = self.logging_dir / "execution_results.json"
+        execution_file = self.logging_dir / "source" / "execution_results.json"
         if execution_file.exists():
             try:
                 with open(execution_file, 'r') as f:
@@ -79,7 +79,7 @@ class SanityChecker:
             except Exception as e:
                 self.warnings.append(f"Could not read execution_results.json: {e}")
         
-        bugs_file = self.logging_dir / "bug_reports.json"
+        bugs_file = self.logging_dir / "source" / "bug_reports.json"
         if bugs_file.exists():
             try:
                 with open(bugs_file, 'r') as f:
@@ -88,7 +88,7 @@ class SanityChecker:
             except Exception as e:
                 self.warnings.append(f"Could not read bug_reports.json: {e}")
         
-        errors_file = self.logging_dir / "errors.json"
+        errors_file = self.logging_dir / "source" / "errors.json"
         if errors_file.exists():
             try:
                 with open(errors_file, 'r') as f:

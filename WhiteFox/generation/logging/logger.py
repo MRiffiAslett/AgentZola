@@ -39,15 +39,25 @@ class WhiteFoxLogger:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
-        self.prompts_file = self.log_dir / "prompts.json"
-        self.code_before_after_file = self.log_dir / "cleaned_text_before_and_after.json"
-        self.cleaned_code_file = self.log_dir / "all_cleaned_code.json"
-        self.execution_results_file = self.log_dir / "execution_results.json"
-        self.pass_analysis_file = self.log_dir / "pass_detection_analysis.json"
-        self.state_changes_file = self.log_dir / "state_changes.json"
-        self.errors_file = self.log_dir / "errors.json"
-        self.bug_reports_file = self.log_dir / "bug_reports.json"
-        self.diagnostic_file = self.log_dir / "execution_diagnostics.json"
+        # Create source directory for JSON files
+        self.source_dir = self.log_dir / "source"
+        self.source_dir.mkdir(parents=True, exist_ok=True)
+        
+        # JSON source files
+        self.prompts_file = self.source_dir / "prompts.json"
+        self.code_before_after_file = self.source_dir / "cleaned_text_before_and_after.json"
+        self.cleaned_code_file = self.source_dir / "all_cleaned_code.json"
+        self.execution_results_file = self.source_dir / "execution_results.json"
+        self.pass_analysis_file = self.source_dir / "pass_detection_analysis.json"
+        self.state_changes_file = self.source_dir / "state_changes.json"
+        self.errors_file = self.source_dir / "errors.json"
+        self.bug_reports_file = self.source_dir / "bug_reports.json"
+        self.diagnostic_file = self.source_dir / "execution_diagnostics.json"
+        
+        # Readable text output files (in main logging directory)
+        self.prompts_text_file = self.log_dir / "prompts_readable.log"
+        self.cleaned_code_text_file = self.log_dir / "cleaned_code_readable.log"
+        self.code_before_after_text_file = self.log_dir / "code_before_after_readable.log"
         
         self.prompts_data: Dict[str, List[Dict]] = {}
         self.code_before_after_data: Dict[str, List[Dict]] = {}
@@ -63,6 +73,7 @@ class WhiteFoxLogger:
     
     def clear_old_logs(self) -> None:
         """Clear all consolidated log files from previous runs."""
+        # JSON source files
         log_files = [
             self.prompts_file,
             self.code_before_after_file,
@@ -75,7 +86,14 @@ class WhiteFoxLogger:
             self.diagnostic_file,
         ]
         
-        for log_file in log_files:
+        # Readable text files
+        text_files = [
+            self.prompts_text_file,
+            self.cleaned_code_text_file,
+            self.code_before_after_text_file,
+        ]
+        
+        for log_file in log_files + text_files:
             if log_file.exists():
                 log_file.unlink()
                 if self.base_logger:
@@ -85,8 +103,10 @@ class WhiteFoxLogger:
         for pattern in [
             "sanity_check_report_*.json",
             "sanity_check_report_*.txt",
+            "sanity_check_report_*.log",
             "sanity_check_report_latest.json",
             "sanity_check_report_latest.txt",
+            "sanity_check_report_latest.log",
         ]:
             for old_file in self.log_dir.glob(pattern):
                 old_file.unlink()
@@ -97,12 +117,24 @@ class WhiteFoxLogger:
         current_sanity_files = [
             self.log_dir / "sanity_check_report.json",
             self.log_dir / "sanity_check_report.txt",
+            self.log_dir / "sanity_check_report.log",
         ]
         for sanity_file in current_sanity_files:
             if sanity_file.exists():
                 sanity_file.unlink()
                 if self.base_logger:
                     self.base_logger.debug(f"Cleared sanity check file: {sanity_file}")
+        
+        # Clear in-memory data structures to ensure fresh start
+        self.prompts_data.clear()
+        self.code_before_after_data.clear()
+        self.cleaned_code_data.clear()
+        self.execution_results_data.clear()
+        self.pass_analysis_data.clear()
+        self.state_changes_data.clear()
+        self.errors_data.clear()
+        self.bug_reports_data.clear()
+        self.diagnostic_data.clear()
     
     def _get_opt_key(self, optimization_name: str) -> str:
         """Get key for optimization-specific data."""
@@ -341,6 +373,7 @@ class WhiteFoxLogger:
         """Write consolidated prompts file."""
         with open(self.prompts_file, 'w') as f:
             json.dump(self.prompts_data, f, indent=2)
+        self._write_prompts_readable()
     
     def _write_code_logs(self) -> None:
         """Write consolidated code logs."""
@@ -348,6 +381,8 @@ class WhiteFoxLogger:
             json.dump(self.code_before_after_data, f, indent=2, ensure_ascii=False)
         with open(self.cleaned_code_file, 'w') as f:
             json.dump(self.cleaned_code_data, f, indent=2, ensure_ascii=False)
+        self._write_code_readable()
+        self._write_code_before_after_readable()
     
     def _write_execution_results(self) -> None:
         """Write consolidated execution results."""
@@ -407,6 +442,109 @@ class WhiteFoxLogger:
         
         self.diagnostic_data.append(diagnostic_entry)
         self._write_diagnostics()
+    
+    def _write_prompts_readable(self) -> None:
+        """Write prompts in a human-readable format with actual newlines."""
+        with open(self.prompts_text_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WHITEFOX PROMPTS - READABLE FORMAT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            for opt_name, prompts_list in self.prompts_data.items():
+                f.write(f"\n{'=' * 80}\n")
+                f.write(f"OPTIMIZATION: {opt_name}\n")
+                f.write(f"{'=' * 80}\n\n")
+                
+                for prompt_entry in prompts_list:
+                    f.write(f"\n{'-' * 80}\n")
+                    f.write(f"Iteration: {prompt_entry['iteration']} | ")
+                    f.write(f"Type: {prompt_entry['prompt_type']} | ")
+                    f.write(f"Timestamp: {prompt_entry['timestamp']}\n")
+                    f.write(f"Number of Examples: {prompt_entry['num_examples']}\n")
+                    f.write(f"{'-' * 80}\n\n")
+                    
+                    f.write("PROMPT TEXT:\n")
+                    f.write("-" * 40 + "\n")
+                    # Convert escaped newlines to actual newlines
+                    prompt_text = prompt_entry['prompt']
+                    if isinstance(prompt_text, str):
+                        # Handle JSON-escaped newlines
+                        prompt_text = prompt_text.replace('\\n', '\n').replace('\\t', '\t')
+                    f.write(prompt_text)
+                    f.write("\n" + "-" * 40 + "\n")
+                    
+                    if prompt_entry.get('examples'):
+                        f.write("\nEXAMPLES USED:\n")
+                        for i, example in enumerate(prompt_entry['examples'], 1):
+                            f.write(f"  {i}. Test ID: {example['test_id']}\n")
+                            f.write(f"     File: {example['file_path']}\n")
+                            f.write(f"     Alpha: {example['alpha']}, Beta: {example['beta']}\n")
+                    f.write("\n")
+    
+    def _write_code_readable(self) -> None:
+        """Write cleaned code in a human-readable format with actual newlines."""
+        with open(self.cleaned_code_text_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WHITEFOX CLEANED CODE - READABLE FORMAT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            for opt_name, code_list in self.cleaned_code_data.items():
+                f.write(f"\n{'=' * 80}\n")
+                f.write(f"OPTIMIZATION: {opt_name}\n")
+                f.write(f"{'=' * 80}\n\n")
+                
+                for code_entry in code_list:
+                    f.write(f"\n{'-' * 80}\n")
+                    f.write(f"Iteration: {code_entry['iteration']} | ")
+                    f.write(f"Sample: {code_entry['sample_idx']}\n")
+                    f.write(f"{'-' * 80}\n\n")
+                    
+                    f.write("CLEANED CODE:\n")
+                    f.write("-" * 40 + "\n")
+                    # Convert escaped newlines to actual newlines
+                    code_text = code_entry['code']
+                    if isinstance(code_text, str):
+                        code_text = code_text.replace('\\n', '\n').replace('\\t', '\t')
+                    f.write(code_text)
+                    f.write("\n" + "-" * 40 + "\n\n")
+    
+    def _write_code_before_after_readable(self) -> None:
+        """Write before/after code comparison in a human-readable format."""
+        with open(self.code_before_after_text_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WHITEFOX CODE BEFORE/AFTER CLEANING - READABLE FORMAT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            for opt_name, code_list in self.code_before_after_data.items():
+                f.write(f"\n{'=' * 80}\n")
+                f.write(f"OPTIMIZATION: {opt_name}\n")
+                f.write(f"{'=' * 80}\n\n")
+                
+                for code_entry in code_list:
+                    f.write(f"\n{'-' * 80}\n")
+                    f.write(f"Iteration: {code_entry['iteration']} | ")
+                    f.write(f"Sample: {code_entry['sample_idx']} | ")
+                    f.write(f"Timestamp: {code_entry['timestamp']}\n")
+                    f.write(f"API Valid: {code_entry['api_valid']}\n")
+                    if code_entry.get('api_errors'):
+                        f.write(f"API Errors: {code_entry['api_errors']}\n")
+                    f.write(f"{'-' * 80}\n\n")
+                    
+                    f.write("RAW TEXT (from LLM):\n")
+                    f.write("-" * 40 + "\n")
+                    raw_text = code_entry['raw_text']
+                    if isinstance(raw_text, str):
+                        raw_text = raw_text.replace('\\n', '\n').replace('\\t', '\t')
+                    f.write(raw_text)
+                    f.write("\n" + "-" * 40 + "\n\n")
+                    
+                    f.write("CLEANED CODE:\n")
+                    f.write("-" * 40 + "\n")
+                    cleaned_code = code_entry['cleaned_code']
+                    if isinstance(cleaned_code, str):
+                        cleaned_code = cleaned_code.replace('\\n', '\n').replace('\\t', '\t')
+                    f.write(cleaned_code)
+                    f.write("\n" + "-" * 40 + "\n\n")
     
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""
