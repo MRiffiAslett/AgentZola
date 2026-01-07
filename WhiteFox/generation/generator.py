@@ -36,6 +36,7 @@ from generation.bandit import (
 from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
+from generation.code_cleaner import ensure_imports
 from generation.logging import WhiteFoxLogger
 
 import tomllib
@@ -181,18 +182,21 @@ class StarCoderGenerator:
         opt_dir = output_root / optimization_name
         opt_dir.mkdir(parents=True, exist_ok=True)
         
+        # Ensure required imports are present
+        processed_code = ensure_imports(generated_text)
+        
         if whitefox_logger:
             whitefox_logger.log_generated_code(
                 optimization_name,
                 iteration,
                 sample_idx,
                 generated_text,
-                generated_text,
+                processed_code,
                 None
             )
         
         test_file = opt_dir / f"{optimization_name}-it{iteration}-sample{sample_idx}.py"
-        test_file.write_text(generated_text)
+        test_file.write_text(processed_code)
         
         return test_file
     

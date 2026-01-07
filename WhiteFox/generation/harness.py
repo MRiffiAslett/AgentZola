@@ -33,14 +33,6 @@ logger = logging.getLogger(__name__)
 RANDOM_SEED = 42
 
 
-def add_decorator(code: str, decorator: str) -> str:
-    if "    def call" in code:
-        code = code.replace("    def call", f"    {decorator}\n    def call")
-    else:
-        code = code.replace("  def call", f"  {decorator}\n  def call")
-    return code
-
-
 def extract_input_variable(code: str, test_globals: dict) -> tuple:
     """
     Extract input variable(s) from code by finding model call.
@@ -180,14 +172,6 @@ def _serialize_output(output):
         return str(output)
 
 
-def _add_decorator(code, decorator):
-    if "    def call" in code:
-        code = code.replace("    def call", decorator + "\\n    def call")
-    else:
-        code = code.replace("  def call", decorator + "\\n  def call")
-    return code
-
-
 def _extract_input_variable(code, test_globals):
     import re
     patterns = [
@@ -289,51 +273,43 @@ try:
     
     try:
         # XLA_FLAGS already set before TensorFlow import, so pass logging should work
-        xla_code = _add_decorator(test_code, "@tf.function(jit_compile=True)")
-        xla_globals = {{'__name__': '__main__'}}.copy()
-        xla_globals.update({{
-            'tf': tf,
-            'np': np,
-            'random': random,
-        }})
-        exec(xla_code, xla_globals)
-        m_xla = xla_globals[model_key]
-        if input_data_key in xla_globals:
-            input_data_xla = xla_globals[input_data_key]
-        else:
-            _, input_data_xla = _extract_input_variable(xla_code, xla_globals)
-            if input_data_xla is None:
-                raise Exception("Could not find input data in XLA execution")
-        if not isinstance(input_data_xla, (list, tuple)):
-            input_data_xla = [input_data_xla]
-        output_xla = m_xla(*input_data_xla)
-        result["runtime_success_xla"] = True
-        result["output_xla"] = _serialize_output(output_xla)
+        if model_key in test_globals:
+            m = test_globals[model_key]
+            # Wrap the model with tf.function for XLA compilation
+            m_xla = tf.function(m, jit_compile=True)
+            
+            if input_data_key in test_globals:
+                input_data_xla = test_globals[input_data_key]
+            else:
+                _, input_data_xla = _extract_input_variable(test_code, test_globals)
+                if input_data_xla is None:
+                    raise Exception("Could not find input data in XLA execution")
+            if not isinstance(input_data_xla, (list, tuple)):
+                input_data_xla = [input_data_xla]
+            output_xla = m_xla(*input_data_xla)
+            result["runtime_success_xla"] = True
+            result["output_xla"] = _serialize_output(output_xla)
     except Exception as e:
         result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
     
     try:
         # TF_XLA_FLAGS already set before TensorFlow import for autocluster mode
-        ac_code = _add_decorator(test_code, "@tf.function")
-        ac_globals = {{'__name__': '__main__'}}.copy()
-        ac_globals.update({{
-            'tf': tf,
-            'np': np,
-            'random': random,
-        }})
-        exec(ac_code, ac_globals)
-        m_ac = ac_globals[model_key]
-        if input_data_key in ac_globals:
-            input_data_ac = ac_globals[input_data_key]
-        else:
-            _, input_data_ac = _extract_input_variable(ac_code, ac_globals)
-            if input_data_ac is None:
-                raise Exception("Could not find input data in autocluster execution")
-        if not isinstance(input_data_ac, (list, tuple)):
-            input_data_ac = [input_data_ac]
-        output_ac = m_ac(*input_data_ac)
-        result["runtime_success_autocluster"] = True
-        result["output_autocluster"] = _serialize_output(output_ac)
+        if model_key in test_globals:
+            m = test_globals[model_key]
+            # Wrap the model with tf.function for autocluster
+            m_ac = tf.function(m)
+            
+            if input_data_key in test_globals:
+                input_data_ac = test_globals[input_data_key]
+            else:
+                _, input_data_ac = _extract_input_variable(test_code, test_globals)
+                if input_data_ac is None:
+                    raise Exception("Could not find input data in autocluster execution")
+            if not isinstance(input_data_ac, (list, tuple)):
+                input_data_ac = [input_data_ac]
+            output_ac = m_ac(*input_data_ac)
+            result["runtime_success_autocluster"] = True
+            result["output_autocluster"] = _serialize_output(output_ac)
     except Exception as e:
         result["runtime_error_autocluster"] = str(e) + "\\n" + traceback.format_exc()
 
