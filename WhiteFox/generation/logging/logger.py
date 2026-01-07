@@ -549,7 +549,7 @@ class WhiteFoxLogger:
             self.opt_stats[opt_key]['success_autocluster'] += 1
     
     def generate_run_summary(self, whitefox_state: Any) -> None:
-        """Generate run_summary.log with optimization statistics."""
+        """Generate or update run_summary.log with optimization statistics."""
         summary_file = self.log_dir / "run_summary.log"
         
         with open(summary_file, 'w') as f:
@@ -567,7 +567,7 @@ class WhiteFoxLogger:
                 f.write(f"  Success (autocluster): {stats['success_autocluster']}\n")
         
         if self.base_logger:
-            self.base_logger.info(f"Run summary written to {summary_file}")
+            self.base_logger.debug(f"Run summary updated at {summary_file}")
     
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""

@@ -463,6 +463,8 @@ class StarCoderGenerator:
                     whitefox_logger,
                     only_optimizations
                 )
+                # Update run summary after each optimization completes
+                whitefox_logger.generate_run_summary(self.whitefox_state)
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_state.spec.internal_name,
@@ -473,6 +475,8 @@ class StarCoderGenerator:
                     e
                 )
                 self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
+                # Still update summary even if optimization failed
+                whitefox_logger.generate_run_summary(self.whitefox_state)
         
         whitefox_logger.flush()
         
