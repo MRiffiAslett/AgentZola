@@ -79,8 +79,13 @@ def build_base_prompt(spec: OptimizationSpec) -> str:
     """Build base prompt using requirement text from txt file."""
     return f"""{spec.requirement_text}
 
-IMPORTANT: 1 - Generate valid python code only with public tensorflow apis. Make sure that the code is ready to be executed. Try and avoid shape mismatches."""
+Tensor shape safety: Before emitting any TensorFlow operation, explicitly reason about and validate tensor ranks, shapes, and element counts, ensuring all reshape, broadcast, split, tile, and convolution operations are mathematically compatible.
 
+Code-only output constraint: Output strictly valid, executable Python code only—do not include comments, explanations, markdown, examples, or natural-language text inside the code region.
+
+Runable code: Ensure that the code is ready to run with the neccesary import statements. Make sure to incldue  dummy data of some sort to probe the function. 
+
+"""
 
 def build_feedback_prompt(
     spec: OptimizationSpec, 
@@ -102,13 +107,20 @@ the examples shown below (no trivial renames or copy-paste)."""
     
     examples_section = "\n\n".join(examples)
     
-    prompt = f"""{feedback_instruction}
+    prompt = f"""
 
 {spec.requirement_text}
 
+Tensor shape safety: Before emitting any TensorFlow operation, explicitly reason about and validate tensor ranks, shapes, and element counts, ensuring all reshape, broadcast, split, tile, and convolution operations are mathematically compatible.
+
+Code-only output constraint: Output strictly valid, executable Python code only—do not include comments, explanations, markdown, examples, or natural-language text inside the code region.
+
+Runable code: Ensure that the code is ready to run with the neccesary import statements. Make sure to incldue  dummy data of some sort to probe the function. 
+{feedback_instruction}
+
 {examples_section}
 
-IMPORTANT: 1 - Generate valid python code only with public tensorflow apis. Make sure that the code is ready to be executed. Try and avoid shape mismatches."""
+"""
     
     return prompt
 

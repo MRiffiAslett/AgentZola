@@ -69,6 +69,9 @@ class WhiteFoxLogger:
         self.bug_reports_data: List[Dict] = []
         self.diagnostic_data: List[Dict] = []
         
+        # Statistics tracking for run summary
+        self.opt_stats: Dict[str, Dict[str, int]] = {}
+        
         self.base_logger = base_logger or logging.getLogger(__name__)
     
     def clear_old_logs(self) -> None:
@@ -109,6 +112,7 @@ class WhiteFoxLogger:
         self.errors_data.clear()
         self.bug_reports_data.clear()
         self.diagnostic_data.clear()
+        self.opt_stats.clear()
     
     def _get_opt_key(self, optimization_name: str) -> str:
         """Get key for optimization-specific data."""
@@ -240,6 +244,9 @@ class WhiteFoxLogger:
         
         self.execution_results_data[opt_key].append(log_entry)
         self._write_execution_results()
+        
+        # Track statistics for run summary
+        self._track_execution_stats(optimization_name, result, pass_triggered)
     
     def log_pass_detection_analysis(
         self,
@@ -514,6 +521,53 @@ class WhiteFoxLogger:
                         cleaned_code = cleaned_code.replace('\\n', '\n').replace('\\t', '\t')
                     f.write(cleaned_code)
                     f.write("\n" + "-" * 40 + "\n\n")
+    
+    def _track_execution_stats(
+        self,
+        optimization_name: str,
+        result: Any,
+        pass_triggered: bool
+    ) -> None:
+        """Track statistics for run summary."""
+        opt_key = self._get_opt_key(optimization_name)
+        if opt_key not in self.opt_stats:
+            self.opt_stats[opt_key] = {
+                'triggered': 0,
+                'success_naive': 0,
+                'success_xla': 0,
+                'success_autocluster': 0
+            }
+        
+        if pass_triggered:
+            self.opt_stats[opt_key]['triggered'] += 1
+        
+        if result.runtime_success_naive:
+            self.opt_stats[opt_key]['success_naive'] += 1
+        if result.runtime_success_xla:
+            self.opt_stats[opt_key]['success_xla'] += 1
+        if result.runtime_success_autocluster:
+            self.opt_stats[opt_key]['success_autocluster'] += 1
+    
+    def generate_run_summary(self, whitefox_state: Any) -> None:
+        """Generate run_summary.log with optimization statistics."""
+        summary_file = self.log_dir / "run_summary.log"
+        
+        with open(summary_file, 'w') as f:
+            for opt_name in sorted(whitefox_state.optimizations.keys()):
+                stats = self.opt_stats.get(opt_name, {
+                    'triggered': 0,
+                    'success_naive': 0,
+                    'success_xla': 0,
+                    'success_autocluster': 0
+                })
+                f.write(f"{opt_name}\n")
+                f.write(f"  Triggered: {stats['triggered']}\n")
+                f.write(f"  Success (naive): {stats['success_naive']}\n")
+                f.write(f"  Success (xla): {stats['success_xla']}\n")
+                f.write(f"  Success (autocluster): {stats['success_autocluster']}\n")
+        
+        if self.base_logger:
+            self.base_logger.info(f"Run summary written to {summary_file}")
     
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""

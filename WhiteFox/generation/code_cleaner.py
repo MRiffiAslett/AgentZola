@@ -104,21 +104,3 @@ def ensure_imports(code: str) -> str:
     return code
 
 
-def clean_generated_code(raw_text: str) -> str:
-    """
-    Clean and prepare generated code for execution.
-    
-    Steps:
-    1. Extract code from markdown blocks
-    2. Ensure required imports
-    3. Basic cleanup
-    
-    Returns cleaned code ready for execution.
-    """
-    code = extract_code_from_markdown(raw_text)
-    
-    code = ensure_imports(code)
-    
-    code = code.rstrip() + '\n'
-    
-    return code

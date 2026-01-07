@@ -36,7 +36,6 @@ from generation.bandit import (
 from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
-from generation.code_cleaner import clean_generated_code
 from generation.logging import WhiteFoxLogger
 
 import tomllib
@@ -147,7 +146,9 @@ class StarCoderGenerator:
         self.logger.info(f"Loaded {len(specs)} optimization specifications")
         
         logging_dir = self._get_logging_dir()
-        state_file = logging_dir / "whitefox_state.json"
+        source_dir = logging_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        state_file = source_dir / "whitefox_state.json"
         
         old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
         if not old_state_file.is_absolute():
@@ -180,20 +181,18 @@ class StarCoderGenerator:
         opt_dir = output_root / optimization_name
         opt_dir.mkdir(parents=True, exist_ok=True)
         
-        cleaned_code = clean_generated_code(generated_text)
-        
         if whitefox_logger:
             whitefox_logger.log_generated_code(
                 optimization_name,
                 iteration,
                 sample_idx,
                 generated_text,
-                cleaned_code,
+                generated_text,
                 None
             )
         
         test_file = opt_dir / f"{optimization_name}-it{iteration}-sample{sample_idx}.py"
-        test_file.write_text(cleaned_code)
+        test_file.write_text(generated_text)
         
         return test_file
     
@@ -387,7 +386,9 @@ class StarCoderGenerator:
             )
             
             logging_dir = self._get_logging_dir()
-            state_file = logging_dir / "whitefox_state.json"
+            source_dir = logging_dir / "source"
+            source_dir.mkdir(parents=True, exist_ok=True)
+            state_file = source_dir / "whitefox_state.json"
             self.whitefox_state.save(state_file)
             
             self.logger.info(
@@ -442,7 +443,9 @@ class StarCoderGenerator:
         whitefox_logger.clear_old_logs()
         
         old_state_file = project_root / "whitefox_state.json"
-        new_state_file = logging_dir / "whitefox_state.json"
+        source_dir = logging_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        new_state_file = source_dir / "whitefox_state.json"
         if old_state_file.exists() and not new_state_file.exists():
             import shutil
             shutil.move(str(old_state_file), str(new_state_file))
@@ -472,6 +475,9 @@ class StarCoderGenerator:
                 self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
         
         whitefox_logger.flush()
+        
+        # Generate run summary log
+        whitefox_logger.generate_run_summary(self.whitefox_state)
         
         self.logger.info("WhiteFox fuzzing complete")
 

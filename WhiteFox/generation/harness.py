@@ -76,21 +76,6 @@ def extract_input_variable(code: str, test_globals: dict) -> tuple:
     return None, None
 
 
-def process_code(code: str) -> str:
-    if "__call__" in code and " def call(" not in code:
-        if "class Model" in code:
-            lines = code.split("\n")
-            new_lines = []
-            for i, line in enumerate(lines):
-                new_lines.append(line)
-                if "def __call__" in line:
-                    indent = len(line) - len(line.lstrip())
-                    new_lines.append(" " * indent + "def call(self, *args, **kwargs):")
-                    new_lines.append(" " * (indent + 4) + "return self.__call__(*args, **kwargs)")
-            code = "\n".join(new_lines)
-    return code
-
-
 def execute_test_in_subprocess(
     test_file: Path, 
     whitefox_logger=None,
@@ -135,8 +120,6 @@ def execute_test_in_subprocess(
                 {"test_file": str(test_file), "error": str(e)}
             )
         return result
-    
-    test_code = process_code(test_code)
     
     test_file_repr = repr(str(test_file))
     test_code_repr = repr(test_code)
