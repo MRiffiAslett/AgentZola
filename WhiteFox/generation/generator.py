@@ -151,21 +151,15 @@ class StarCoderGenerator:
         source_dir.mkdir(parents=True, exist_ok=True)
         state_file = source_dir / "whitefox_state.json"
         
-        old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
-        if not old_state_file.is_absolute():
-            project_root = logging_dir.parent
-            old_state_file = project_root / old_state_file
+        # Always create a fresh state with all optimizations from specs
+        # This ensures we start with all optimizations, not just those from a previous partial run
+        state = WhiteFoxState(optimizations={})
         
-        if old_state_file.exists() and old_state_file != state_file:
-            import shutil
-            shutil.move(str(old_state_file), str(state_file))
-            self.logger.info(f"Moved state file from {old_state_file} to {state_file}")
-        
-        state = WhiteFoxState.load(state_file, specs)
-        
+        # Initialize state with all optimizations from specs
         for opt_name, spec in specs.items():
-            if opt_name not in state.optimizations:
-                state.optimizations[opt_name] = OptimizationState(spec=spec)
+            state.optimizations[opt_name] = OptimizationState(spec=spec)
+        
+        self.logger.info(f"Initialized fresh state with {len(state.optimizations)} optimizations")
         
         return state
     
@@ -405,6 +399,27 @@ class StarCoderGenerator:
         self,
         only_optimizations: Optional[List[str]] = None
     ) -> None:
+        logging_dir = self._get_logging_dir()
+        project_root = logging_dir.parent
+        source_dir = logging_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clear state file to ensure fresh start with all optimizations
+        state_file = source_dir / "whitefox_state.json"
+        old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
+        if not old_state_file.is_absolute():
+            old_state_file = project_root / old_state_file
+        
+        # Remove any existing state files to start fresh
+        import shutil
+        if state_file.exists():
+            self.logger.info(f"Removing existing state file for fresh start: {state_file}")
+            state_file.unlink()
+        if old_state_file.exists() and old_state_file != state_file:
+            self.logger.info(f"Removing old state file for fresh start: {old_state_file}")
+            old_state_file.unlink()
+        
+        # Now load or initialize fresh state with all optimizations
         self.whitefox_state = self._load_or_init_whitefox_state()
         
         output_dir = Path(self.config.paths.output_dir)
@@ -413,13 +428,10 @@ class StarCoderGenerator:
             str(output_dir / "whitefox_tests")
         )
         
-        logging_dir = self._get_logging_dir()
-        project_root = logging_dir.parent
         old_generated_outputs = project_root / "generated-outputs"
         if old_generated_outputs.exists() and old_generated_outputs.is_dir():
             generated_outputs_dst = logging_dir / "generated-outputs"
             if not generated_outputs_dst.exists():
-                import shutil
                 shutil.move(str(old_generated_outputs), str(generated_outputs_dst))
                 self.logger.info(f"Moved generated-outputs from {old_generated_outputs} to {generated_outputs_dst}")
                 output_root = generated_outputs_dst / "whitefox_tests"
@@ -431,8 +443,6 @@ class StarCoderGenerator:
         logs_root = logging_dir / "execution_logs"
         
         # Clear old logs and outputs at the start of each run
-        import shutil
-        
         # Clear execution logs directory
         if logs_root.exists():
             shutil.rmtree(logs_root)
@@ -445,15 +455,6 @@ class StarCoderGenerator:
         
         whitefox_logger = WhiteFoxLogger(logging_dir, self.logger)
         whitefox_logger.clear_old_logs()
-        
-        old_state_file = project_root / "whitefox_state.json"
-        source_dir = logging_dir / "source"
-        source_dir.mkdir(parents=True, exist_ok=True)
-        new_state_file = source_dir / "whitefox_state.json"
-        if old_state_file.exists() and not new_state_file.exists():
-            import shutil
-            shutil.move(str(old_state_file), str(new_state_file))
-            self.logger.info(f"Moved whitefox_state.json from {old_state_file} to {new_state_file}")
         
         self.logger.info(f"Starting WhiteFox fuzzing with {len(self.whitefox_state.optimizations)} optimizations")
         self.logger.info(f"Logging directory: {logging_dir}")

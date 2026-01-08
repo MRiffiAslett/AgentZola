@@ -45,27 +45,18 @@ class WhiteFoxLogger:
         
         # JSON source files
         self.prompts_file = self.source_dir / "prompts.json"
-        self.code_before_after_file = self.source_dir / "cleaned_text_before_and_after.json"
         self.cleaned_code_file = self.source_dir / "all_cleaned_code.json"
-        self.execution_results_file = self.source_dir / "execution_results.json"
         self.pass_analysis_file = self.source_dir / "pass_detection_analysis.json"
-        self.state_changes_file = self.source_dir / "state_changes.json"
-        self.errors_file = self.source_dir / "errors.json"
         self.bug_reports_file = self.source_dir / "bug_reports.json"
         self.diagnostic_file = self.source_dir / "execution_diagnostics.json"
         
         # Readable text output files (in main logging directory)
         self.prompts_text_file = self.log_dir / "prompts_readable.log"
         self.cleaned_code_text_file = self.log_dir / "cleaned_code_readable.log"
-        self.code_before_after_text_file = self.log_dir / "code_before_after_readable.log"
         
         self.prompts_data: Dict[str, List[Dict]] = {}
-        self.code_before_after_data: Dict[str, List[Dict]] = {}
         self.cleaned_code_data: Dict[str, List[Dict]] = {}
-        self.execution_results_data: Dict[str, List[Dict]] = {}
         self.pass_analysis_data: Dict[str, List[Dict]] = {}
-        self.state_changes_data: Dict[str, List[Dict]] = {}
-        self.errors_data: List[Dict] = []
         self.bug_reports_data: List[Dict] = []
         self.diagnostic_data: List[Dict] = []
         
@@ -79,12 +70,8 @@ class WhiteFoxLogger:
         # JSON source files
         log_files = [
             self.prompts_file,
-            self.code_before_after_file,
             self.cleaned_code_file,
-            self.execution_results_file,
             self.pass_analysis_file,
-            self.state_changes_file,
-            self.errors_file,
             self.bug_reports_file,
             self.diagnostic_file,
         ]
@@ -93,7 +80,6 @@ class WhiteFoxLogger:
         text_files = [
             self.prompts_text_file,
             self.cleaned_code_text_file,
-            self.code_before_after_text_file,
         ]
         
         for log_file in log_files + text_files:
@@ -104,12 +90,8 @@ class WhiteFoxLogger:
         
         # Clear in-memory data structures to ensure fresh start
         self.prompts_data.clear()
-        self.code_before_after_data.clear()
         self.cleaned_code_data.clear()
-        self.execution_results_data.clear()
         self.pass_analysis_data.clear()
-        self.state_changes_data.clear()
-        self.errors_data.clear()
         self.bug_reports_data.clear()
         self.diagnostic_data.clear()
         self.opt_stats.clear()
@@ -117,6 +99,26 @@ class WhiteFoxLogger:
     def _get_opt_key(self, optimization_name: str) -> str:
         """Get key for optimization-specific data."""
         return optimization_name
+    
+    def _get_default_stats(self) -> Dict[str, int]:
+        """Get default statistics structure for an optimization."""
+        return {
+            'generated': 0,
+            'triggered': 0,
+            'success_naive': 0,
+            'success_xla': 0,
+            'success_autocluster': 0
+        }
+    
+    def _ensure_stats_initialized(self, opt_key: str) -> None:
+        """Ensure statistics are initialized for an optimization."""
+        if opt_key not in self.opt_stats:
+            self.opt_stats[opt_key] = self._get_default_stats()
+    
+    def _ensure_opt_list_exists(self, data_dict: Dict[str, List], opt_key: str) -> None:
+        """Ensure an empty list exists for an optimization in a data dictionary."""
+        if opt_key not in data_dict:
+            data_dict[opt_key] = []
     
     def log_prompt(
         self,
@@ -128,8 +130,7 @@ class WhiteFoxLogger:
     ) -> None:
         """Log the prompt sent to the LLM (consolidated)."""
         opt_key = self._get_opt_key(optimization_name)
-        if opt_key not in self.prompts_data:
-            self.prompts_data[opt_key] = []
+        self._ensure_opt_list_exists(self.prompts_data, opt_key)
         
         log_entry = {
             "timestamp": datetime.now().isoformat(),
@@ -163,23 +164,9 @@ class WhiteFoxLogger:
         cleaned_code: str,
         cleaning_changes: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Log generated code (consolidated into before/after and cleaned code files)."""
+        """Log generated code (consolidated into cleaned code file)."""
         opt_key = self._get_opt_key(optimization_name)
-        
-        if opt_key not in self.code_before_after_data:
-            self.code_before_after_data[opt_key] = []
-        
-        self.code_before_after_data[opt_key].append({
-            "timestamp": datetime.now().isoformat(),
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "sample_idx": sample_idx,
-            "raw_text": raw_text,
-            "cleaned_code": cleaned_code,
-        })
-        
-        if opt_key not in self.cleaned_code_data:
-            self.cleaned_code_data[opt_key] = []
+        self._ensure_opt_list_exists(self.cleaned_code_data, opt_key)
         
         self.cleaned_code_data[opt_key].append({
             "optimization": optimization_name,
@@ -188,7 +175,11 @@ class WhiteFoxLogger:
             "code": cleaned_code,
         })
         
-        self._write_code_logs()
+        # Track number of tests generated
+        self._ensure_stats_initialized(opt_key)
+        self.opt_stats[opt_key]['generated'] += 1
+        
+        self._write_cleaned_code()
     
     def log_execution_result(
         self,
@@ -200,51 +191,7 @@ class WhiteFoxLogger:
         pass_triggered: bool,
         pass_log_name: str
     ) -> None:
-        """Log execution result (consolidated)."""
-        opt_key = self._get_opt_key(optimization_name)
-        if opt_key not in self.execution_results_data:
-            self.execution_results_data[opt_key] = []
-        
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "sample_idx": sample_idx,
-            "test_file": str(test_file),
-            "pass_triggered": pass_triggered,
-            "triggered_passes": list(result.triggered_passes) if hasattr(result, 'triggered_passes') else [],
-            "compile_success": {
-                "naive": result.compile_success_naive,
-                "xla": result.compile_success_xla,
-                "autocluster": result.compile_success_autocluster,
-            },
-            "runtime_success": {
-                "naive": result.runtime_success_naive,
-                "xla": result.runtime_success_xla,
-                "autocluster": result.runtime_success_autocluster,
-            },
-        }
-        
-        errors = {}
-        if result.compile_error_naive:
-            errors["compile_naive"] = result.compile_error_naive[:200]
-        if result.compile_error_xla:
-            errors["compile_xla"] = result.compile_error_xla[:200]
-        if result.compile_error_autocluster:
-            errors["compile_autocluster"] = result.compile_error_autocluster[:200]
-        if result.runtime_error_naive:
-            errors["runtime_naive"] = result.runtime_error_naive[:200]
-        if result.runtime_error_xla:
-            errors["runtime_xla"] = result.runtime_error_xla[:200]
-        if result.runtime_error_autocluster:
-            errors["runtime_autocluster"] = result.runtime_error_autocluster[:200]
-        
-        if errors:
-            log_entry["errors"] = errors
-        
-        self.execution_results_data[opt_key].append(log_entry)
-        self._write_execution_results()
-        
+        """Log execution result - tracking stats only."""
         # Track statistics for run summary
         self._track_execution_stats(optimization_name, result, pass_triggered)
     
@@ -260,8 +207,7 @@ class WhiteFoxLogger:
     ) -> None:
         """Log pass detection analysis (consolidated, minimal summary)."""
         opt_key = self._get_opt_key(optimization_name)
-        if opt_key not in self.pass_analysis_data:
-            self.pass_analysis_data[opt_key] = []
+        self._ensure_opt_list_exists(self.pass_analysis_data, opt_key)
         
         self.pass_analysis_data[opt_key].append({
             "optimization": optimization_name,
@@ -285,24 +231,8 @@ class WhiteFoxLogger:
         new_triggering_tests: List[Path],
         example_tests_used: List[TriggeringTest]
     ) -> None:
-        """Log bandit state update (consolidated, summary only)."""
-        opt_key = self._get_opt_key(optimization_name)
-        if opt_key not in self.state_changes_data:
-            self.state_changes_data[opt_key] = []
-        
-        self.state_changes_data[opt_key].append({
-            "timestamp": datetime.now().isoformat(),
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "tests_before": len(before_state.triggering_tests),
-            "tests_after": len(after_state.triggering_tests),
-            "triggered_this_iteration": num_triggered,
-            "not_triggered_this_iteration": num_not_triggered,
-            "new_tests_added": len(new_triggering_tests),
-            "examples_used": len(example_tests_used),
-        })
-        
-        self._write_state_changes()
+        """Log bandit state update - no-op (state changes logging removed)."""
+        pass
     
     def log_error(
         self,
@@ -313,24 +243,7 @@ class WhiteFoxLogger:
         context: Optional[Dict[str, Any]] = None,
         exception: Optional[Exception] = None
     ) -> None:
-        """Log errors (consolidated, only errors)."""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "error_type": error_type,
-            "error_message": error_message,
-            "context": context or {},
-        }
-        
-        if exception:
-            import traceback
-            log_entry["traceback"] = traceback.format_exc()
-            log_entry["exception_type"] = type(exception).__name__
-        
-        self.errors_data.append(log_entry)
-        self._write_errors()
-        
+        """Log errors - base logger only (errors.json logging removed)."""
         self.base_logger.error(
             f"Error: {optimization_name} it{iteration} - {error_type}: {error_message}"
         )
@@ -354,34 +267,16 @@ class WhiteFoxLogger:
             json.dump(self.prompts_data, f, indent=2)
         self._write_prompts_readable()
     
-    def _write_code_logs(self) -> None:
-        """Write consolidated code logs."""
-        with open(self.code_before_after_file, 'w') as f:
-            json.dump(self.code_before_after_data, f, indent=2, ensure_ascii=False)
+    def _write_cleaned_code(self) -> None:
+        """Write consolidated cleaned code."""
         with open(self.cleaned_code_file, 'w') as f:
             json.dump(self.cleaned_code_data, f, indent=2, ensure_ascii=False)
         self._write_code_readable()
-        self._write_code_before_after_readable()
-    
-    def _write_execution_results(self) -> None:
-        """Write consolidated execution results."""
-        with open(self.execution_results_file, 'w') as f:
-            json.dump(self.execution_results_data, f, indent=2)
     
     def _write_pass_analysis(self) -> None:
         """Write consolidated pass analysis."""
         with open(self.pass_analysis_file, 'w') as f:
             json.dump(self.pass_analysis_data, f, indent=2)
-    
-    def _write_state_changes(self) -> None:
-        """Write consolidated state changes."""
-        with open(self.state_changes_file, 'w') as f:
-            json.dump(self.state_changes_data, f, indent=2)
-    
-    def _write_errors(self) -> None:
-        """Write consolidated errors (only errors, no empty entries)."""
-        with open(self.errors_file, 'w') as f:
-            json.dump(self.errors_data, f, indent=2)
     
     def _write_bug_reports(self) -> None:
         """Write consolidated bug reports."""
@@ -487,41 +382,6 @@ class WhiteFoxLogger:
                     f.write(code_text)
                     f.write("\n" + "-" * 40 + "\n\n")
     
-    def _write_code_before_after_readable(self) -> None:
-        """Write before/after code comparison in a human-readable format."""
-        with open(self.code_before_after_text_file, 'w') as f:
-            f.write("=" * 80 + "\n")
-            f.write("WHITEFOX CODE BEFORE/AFTER CLEANING - READABLE FORMAT\n")
-            f.write("=" * 80 + "\n\n")
-            
-            for opt_name, code_list in self.code_before_after_data.items():
-                f.write(f"\n{'=' * 80}\n")
-                f.write(f"OPTIMIZATION: {opt_name}\n")
-                f.write(f"{'=' * 80}\n\n")
-                
-                for code_entry in code_list:
-                    f.write(f"\n{'-' * 80}\n")
-                    f.write(f"Iteration: {code_entry['iteration']} | ")
-                    f.write(f"Sample: {code_entry['sample_idx']} | ")
-                    f.write(f"Timestamp: {code_entry['timestamp']}\n")
-                    f.write(f"{'-' * 80}\n\n")
-                    
-                    f.write("RAW TEXT (from LLM):\n")
-                    f.write("-" * 40 + "\n")
-                    raw_text = code_entry['raw_text']
-                    if isinstance(raw_text, str):
-                        raw_text = raw_text.replace('\\n', '\n').replace('\\t', '\t')
-                    f.write(raw_text)
-                    f.write("\n" + "-" * 40 + "\n\n")
-                    
-                    f.write("CLEANED CODE:\n")
-                    f.write("-" * 40 + "\n")
-                    cleaned_code = code_entry['cleaned_code']
-                    if isinstance(cleaned_code, str):
-                        cleaned_code = cleaned_code.replace('\\n', '\n').replace('\\t', '\t')
-                    f.write(cleaned_code)
-                    f.write("\n" + "-" * 40 + "\n\n")
-    
     def _track_execution_stats(
         self,
         optimization_name: str,
@@ -530,13 +390,7 @@ class WhiteFoxLogger:
     ) -> None:
         """Track statistics for run summary."""
         opt_key = self._get_opt_key(optimization_name)
-        if opt_key not in self.opt_stats:
-            self.opt_stats[opt_key] = {
-                'triggered': 0,
-                'success_naive': 0,
-                'success_xla': 0,
-                'success_autocluster': 0
-            }
+        self._ensure_stats_initialized(opt_key)
         
         if pass_triggered:
             self.opt_stats[opt_key]['triggered'] += 1
@@ -554,13 +408,9 @@ class WhiteFoxLogger:
         
         with open(summary_file, 'w') as f:
             for opt_name in sorted(whitefox_state.optimizations.keys()):
-                stats = self.opt_stats.get(opt_name, {
-                    'triggered': 0,
-                    'success_naive': 0,
-                    'success_xla': 0,
-                    'success_autocluster': 0
-                })
+                stats = self.opt_stats.get(opt_name, self._get_default_stats())
                 f.write(f"{opt_name}\n")
+                f.write(f"  Generated: {stats['generated']}\n")
                 f.write(f"  Triggered: {stats['triggered']}\n")
                 f.write(f"  Success (naive): {stats['success_naive']}\n")
                 f.write(f"  Success (xla): {stats['success_xla']}\n")
@@ -572,10 +422,7 @@ class WhiteFoxLogger:
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""
         self._write_prompts()
-        self._write_code_logs()
-        self._write_execution_results()
+        self._write_cleaned_code()
         self._write_pass_analysis()
-        self._write_state_changes()
-        self._write_errors()
         self._write_bug_reports()
         self._write_diagnostics()

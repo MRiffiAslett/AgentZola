@@ -85,6 +85,13 @@ Code-only output constraint: Output strictly valid, executable Python code onlyâ
 
 Runable code: Ensure that the code is ready to run with the neccesary import statements. Make sure to incldue  dummy data of some sort to probe the function. 
 
+Do not produce any markdown or natural language text in the entire output.
+
+Expected Output Format for the entire output:
+```python
+<code>
+```
+
 """
 
 def build_feedback_prompt(
@@ -116,6 +123,14 @@ Tensor shape safety: Before emitting any TensorFlow operation, explicitly reason
 Code-only output constraint: Output strictly valid, executable Python code onlyâ€”do not include comments, explanations, markdown, examples, or natural-language text inside the code region.
 
 Runable code: Ensure that the code is ready to run with the neccesary import statements. Make sure to incldue  dummy data of some sort to probe the function. 
+
+Do not produce any markdown or natural language text in the entire output.
+
+Expected Output Format for the entire output:
+```python
+<code>
+```
+
 {feedback_instruction}
 
 {examples_section}
