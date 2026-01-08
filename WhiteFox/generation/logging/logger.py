@@ -51,8 +51,8 @@ class WhiteFoxLogger:
         self.diagnostic_file = self.source_dir / "execution_diagnostics.json"
         
         # Readable text output files (in main logging directory)
-        self.prompts_text_file = self.log_dir / "prompts_readable.log"
-        self.cleaned_code_text_file = self.log_dir / "cleaned_code_readable.log"
+        self.prompts_text_file = self.log_dir / "gen_prompts.log"
+        self.cleaned_code_text_file = self.log_dir / "gen_code.log"
         
         self.prompts_data: Dict[str, List[Dict]] = {}
         self.cleaned_code_data: Dict[str, List[Dict]] = {}

@@ -117,19 +117,27 @@ the examples shown below (no trivial renames or copy-paste)."""
     prompt = f"""
 
 {spec.requirement_text}
+You are a code-generation engine.
 
-Tensor shape safety: Before emitting any TensorFlow operation, explicitly reason about and validate tensor ranks, shapes, and element counts, ensuring all reshape, broadcast, split, tile, and convolution operations are mathematically compatible.
+HARD OUTPUT CONTRACT (MANDATORY):
+- Output ONLY syntactically valid Python code.
+- Do NOT include comments, explanations, markdown, backticks, tags, or any natural-language text.
+- Do NOT include leading or trailing whitespace outside the code.
+- The output will be executed directly via python.
+- Any non-code token will cause immediate failure.
 
-Code-only output constraint: Output strictly valid, executable Python code only—do not include comments, explanations, markdown, examples, or natural-language text inside the code region.
+SEMANTIC CONSTRAINTS:
+- TensorFlow 2.x only.
+- Build at least one tf.keras.Model.
+- Create dummy input tensors and execute a forward pass.
+- Ensure all operations are mathematically shape-safe.
 
-Runable code: Ensure that the code is ready to run with the neccesary import statements. Make sure to incldue  dummy data of some sort to probe the function. 
+FAILURE MODE:
+- If any rule cannot be satisfied, output nothing.
 
-Do not produce any markdown or natural language text in the entire output.
+TASK:
+Generate the program.
 
-Expected Output Format for the entire output:
-```python
-<code>
-```
 
 {feedback_instruction}
 
