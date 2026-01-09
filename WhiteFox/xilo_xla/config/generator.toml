@@ -28,8 +28,8 @@ unit_num = 2        # Number of samples generated per batch call (until num_samp
 # WhiteFox-specific generation parameters
 optimizations_dir = "xilo_xla/artifacts/Prompts/test"  # Path to requirement prompt directory
 tests_per_optimization = 10  # Total tests to generate per optimization
-tests_per_iteration = 10      # Tests to generate per iteration (10 tests per batch as per spec)
-max_iterations = 20           # Maximum iterations per optimization
+tests_per_iteration = 5      # Tests to generate per iteration (10 tests per batch as per spec)
+max_iterations = 3           # Maximum iterations per optimization
 examples_per_prompt = 3        # Number of examples to include in feedback prompt (few-shot)
 
 # Hardcoded list of optimizations that WhiteFox targets

@@ -79,18 +79,27 @@ def build_base_prompt(spec: OptimizationSpec) -> str:
     """Build base prompt using requirement text from txt file."""
     return f"""{spec.requirement_text}
 
-Tensor shape safety: Before emitting any TensorFlow operation, explicitly reason about and validate tensor ranks, shapes, and element counts, ensuring all reshape, broadcast, split, tile, and convolution operations are mathematically compatible.
+You are a code-generation engine.
 
-Code-only output constraint: Output strictly valid, executable Python code only—do not include comments, explanations, markdown, examples, or natural-language text inside the code region.
+HARD OUTPUT CONTRACT (MANDATORY):
+- Output ONLY syntactically valid Python code.
+- Do NOT include comments, explanations, markdown, backticks, tags, or any natural-language text.
+- Do NOT include leading or trailing whitespace outside the code.
+- The output will be executed directly via python.
+- Any non-code token will cause immediate failure.
 
-Runable code: Ensure that the code is ready to run with the neccesary import statements. Make sure to incldue  dummy data of some sort to probe the function. 
+SEMANTIC CONSTRAINTS:
+- TensorFlow 2.x only.
+- Build at least one tf.keras.Model.
+- Create dummy input tensors and execute a forward pass.
+- Ensure all operations are mathematically shape-safe.
 
-Do not produce any markdown or natural language text in the entire output.
+FAILURE MODE:
+- If any rule cannot be satisfied, output nothing.
 
-Expected Output Format for the entire output:
-```python
-<code>
-```
+TASK:
+Generate the program.
+
 
 """
 

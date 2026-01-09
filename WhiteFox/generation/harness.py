@@ -137,6 +137,13 @@ class TeeOutput:
     def flush(self):
         for f in self.files:
             f.flush()
+    def close(self):
+        for f in self.files:
+            if hasattr(f, 'close'):
+                try:
+                    f.close()
+                except Exception:
+                    pass  # Ignore errors when closing
 
 original_stdout = sys.stdout
 original_stderr = sys.stderr

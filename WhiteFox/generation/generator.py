@@ -133,18 +133,8 @@ class StarCoderGenerator:
     
     def _load_or_init_whitefox_state(self) -> WhiteFoxState:
         optimizations_dir = self._resolve_path(Path(self.config.generation.optimizations_dir))
-        
-        if not optimizations_dir.exists():
-            raise FileNotFoundError(
-                f"Optimizations directory not found: {optimizations_dir}. "
-                "Please set generation.optimizations_dir in config. "
-                f"Original path: {self.config.generation.optimizations_dir}, "
-                f"Current working directory: {Path.cwd()}"
-            )
-        
         optimizations_list = self.config.generation.optimizations
         specs = load_optimization_specs(optimizations_dir, optimizations_list)
-        self.logger.info(f"Loaded {len(specs)} optimization specifications")
         
         logging_dir = self._get_logging_dir()
         source_dir = logging_dir / "source"
@@ -152,15 +142,12 @@ class StarCoderGenerator:
         state_file = source_dir / "whitefox_state.json"
         
         # Always create a fresh state with all optimizations from specs
-        # This ensures we start with all optimizations, not just those from a previous partial run
         state = WhiteFoxState(optimizations={})
         
         # Initialize state with all optimizations from specs
         for opt_name, spec in specs.items():
             state.optimizations[opt_name] = OptimizationState(spec=spec)
-        
-        self.logger.info(f"Initialized fresh state with {len(state.optimizations)} optimizations")
-        
+            
         return state
     
     def _save_generated_test(
