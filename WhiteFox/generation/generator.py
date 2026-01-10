@@ -33,7 +33,7 @@ from generation.bandit import (
     select_examples_thompson_sampling,
     update_bandit_after_generation,
 )
-from generation.prompts import build_base_prompt, build_feedback_prompt
+from generation.prompts import build_base_prompt, build_feedback_prompt, parse_generated_code
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
 from generation.code_cleaner import ensure_imports
@@ -163,8 +163,11 @@ class StarCoderGenerator:
         opt_dir = output_root / optimization_name
         opt_dir.mkdir(parents=True, exist_ok=True)
         
+        # Parse generated code to extract just the Python code from the response
+        parsed_code = parse_generated_code(generated_text)
+        
         # Ensure required imports are present
-        processed_code = ensure_imports(generated_text)
+        processed_code = ensure_imports(parsed_code)
         
         if whitefox_logger:
             whitefox_logger.log_generated_code(
@@ -173,7 +176,7 @@ class StarCoderGenerator:
                 sample_idx,
                 generated_text,
                 processed_code,
-                None
+                parsed_code
             )
         
         test_file = opt_dir / f"{optimization_name}-it{iteration}-sample{sample_idx}.py"
