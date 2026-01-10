@@ -10,6 +10,29 @@ from typing import Dict, List, Optional
 from domain.bandit import TriggeringTest
 
 
+# Single-shot example for few-shot prompting
+SINGLE_SHOT_EXAMPLE = """
+<example>
+import tensorflow as tf
+
+class SimpleModel(tf.keras.Model):
+    def __init__(self):
+        super(SimpleModel, self).__init__()
+        self.dense1 = tf.keras.layers.Dense(64, activation='relu')
+        self.dense2 = tf.keras.layers.Dense(10)
+    
+    def call(self, inputs):
+        x = self.dense1(inputs)
+        return self.dense2(x)
+
+model = SimpleModel()
+x = tf.random.normal([32, 20])
+output = model(x)
+print(output.shape)
+</example>
+""".strip()
+
+
 @dataclass
 class OptimizationSpec:
     internal_name: str
@@ -75,11 +98,82 @@ def load_optimization_specs(
     return specs
 
 
-def build_base_prompt(spec: OptimizationSpec) -> str:
+def parse_generated_code(response: str) -> str:
+    """
+    Parse generated code from LLM response, handling various formats.
+    
+    Attempts to extract pure Python code from:
+    - Markdown code blocks (```python ... ```)
+    - XML-like tags (<example>...</example>)
+    - Plain code with explanations
+    
+    Args:
+        response: Raw LLM response
+        
+    Returns:
+        Cleaned Python code string
+    """
+    # Strip leading/trailing whitespace
+    response = response.strip()
+    
+    # Try to extract from markdown code blocks
+    markdown_pattern = r'```(?:python)?\s*\n(.*?)```'
+    markdown_match = re.search(markdown_pattern, response, re.DOTALL)
+    if markdown_match:
+        return markdown_match.group(1).strip()
+    
+    # Try to extract from <example> tags
+    example_pattern = r'<example>\s*\n?(.*?)</example>'
+    example_match = re.search(example_pattern, response, re.DOTALL)
+    if example_match:
+        return example_match.group(1).strip()
+    
+    # Try to extract from <code> tags
+    code_pattern = r'<code>\s*\n?(.*?)</code>'
+    code_match = re.search(code_pattern, response, re.DOTALL)
+    if code_match:
+        return code_match.group(1).strip()
+    
+    # If no special markers found, look for import tensorflow as first valid line
+    lines = response.split('\n')
+    start_idx = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('import ') or stripped.startswith('from '):
+            start_idx = i
+            break
+    
+    # Find end: stop at common explanation markers
+    end_idx = len(lines)
+    for i in range(start_idx, len(lines)):
+        line = lines[i].strip()
+        if any(line.startswith(marker) for marker in ['Note:', 'Explanation:', '---', '###']):
+            end_idx = i
+            break
+    
+    # Return the code section
+    if start_idx < len(lines):
+        return '\n'.join(lines[start_idx:end_idx]).strip()
+    
+    # Fallback: return as-is
+    return response
+
+
+def build_base_prompt(spec: OptimizationSpec, include_example: bool = True) -> str:
     """Build base prompt using requirement text from txt file."""
+    
+    example_section = ""
+    if include_example:
+        example_section = f"""
+Here is the expected output format. Your output should be wrapped in <example> tags like this:
+
+{SINGLE_SHOT_EXAMPLE}
+
+"""
+    
     return f"""
 
-You are generating a standalone TensorFlow Python program.
+You are generating a one  TensorFlow Python program.
 
 Hard requirements:
 - Output ONLY valid Python code (no comments, no markdown, no explanations).
@@ -89,23 +183,16 @@ Hard requirements:
 - Execute a real computation (model call, loss, gradient, or tensor ops).
 - Force execution via print(), .numpy(), or returned values.
 
-Variability:
-- Vary tensor shapes, ranks, and dtypes.
-- Vary APIs used (tf.math, tf.nn, tf.keras layers/models, reductions, reshapes).
-- Vary structure (no model, Sequential, functional, or subclassed model).
-
-Constraints:
-- No tf.compat.v1, no file I/O, no distributed APIs.
-
-If unsure, prioritize correctness over creativity.
 
 
+{example_section}
 
 """
 
 def build_feedback_prompt(
     spec: OptimizationSpec, 
-    example_tests: List[TriggeringTest]
+    example_tests: List[TriggeringTest],
+    include_example: bool = True
 ) -> str:
     """Build feedback prompt with successful examples."""
     feedback_instruction = """Please generate different valid TensorFlow model that satisfies requirements below.
@@ -123,6 +210,16 @@ the examples shown below (no trivial renames or copy-paste)."""
     
     examples_section = "\n\n".join(examples)
     
+    format_section = ""
+    if include_example:
+        format_section = f"""
+OUTPUT FORMAT (MANDATORY):
+Wrap your code in <example> tags like this:
+
+{SINGLE_SHOT_EXAMPLE}
+
+"""
+    
     prompt = f"""
 
 {spec.requirement_text}
@@ -130,10 +227,12 @@ You are a code-generation engine.
 
 HARD OUTPUT CONTRACT (MANDATORY):
 - Output ONLY syntactically valid Python code.
-- Do NOT include comments, explanations, markdown, backticks, tags, or any natural-language text.
+- Do NOT include comments, explanations, markdown, backticks, or any natural-language text outside the tags.
 - Do NOT include leading or trailing whitespace outside the code.
 - The output will be executed directly via python.
 - Any non-code token will cause immediate failure.
+
+{format_section}
 
 SEMANTIC CONSTRAINTS:
 - TensorFlow 2.x only.
