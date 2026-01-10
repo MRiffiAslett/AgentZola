@@ -77,28 +77,28 @@ def load_optimization_specs(
 
 def build_base_prompt(spec: OptimizationSpec) -> str:
     """Build base prompt using requirement text from txt file."""
-    return f"""{spec.requirement_text}
+    return f"""
 
-You are a code-generation engine.
+You are generating a standalone TensorFlow Python program.
 
-HARD OUTPUT CONTRACT (MANDATORY):
-- Output ONLY syntactically valid Python code.
-- Do NOT include comments, explanations, markdown, backticks, tags, or any natural-language text.
-- Do NOT include leading or trailing whitespace outside the code.
-- The output will be executed directly via python.
-- Any non-code token will cause immediate failure.
+Hard requirements:
+- Output ONLY valid Python code (no comments, no markdown, no explanations).
+- The program must run end-to-end without errors.
+- Import TensorFlow explicitly and use real TensorFlow APIs.
+- Create all inputs using mocked/synthetic data (e.g. tf.random, constants).
+- Execute a real computation (model call, loss, gradient, or tensor ops).
+- Force execution via print(), .numpy(), or returned values.
 
-SEMANTIC CONSTRAINTS:
-- TensorFlow 2.x only.
-- Build at least one tf.keras.Model.
-- Create dummy input tensors and execute a forward pass.
-- Ensure all operations are mathematically shape-safe.
+Variability:
+- Vary tensor shapes, ranks, and dtypes.
+- Vary APIs used (tf.math, tf.nn, tf.keras layers/models, reductions, reshapes).
+- Vary structure (no model, Sequential, functional, or subclassed model).
 
-FAILURE MODE:
-- If any rule cannot be satisfied, output nothing.
+Constraints:
+- No tf.compat.v1, no file I/O, no distributed APIs.
 
-TASK:
-Generate the program.
+If unsure, prioritize correctness over creativity.
+
 
 
 """
