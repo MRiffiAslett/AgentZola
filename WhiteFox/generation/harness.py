@@ -97,7 +97,13 @@ def execute_test_in_subprocess(
     test_file_repr = repr(str(test_file))
     test_code_repr = repr(test_code)
     
-    wrapper_script = f"""
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Creating wrapper script", {
+            "test_code_length": len(test_code),
+        })
+    
+    try:
+        wrapper_script = f"""
 import sys
 import json
 import traceback
@@ -324,6 +330,20 @@ print("WHITEFOX_RESULT_START")
 print(json.dumps(result))
 print("WHITEFOX_RESULT_END")
 """
+    except Exception as e:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] ERROR creating wrapper script", {
+                "error": str(e)[:500],
+            })
+        result.compile_error_naive = f"Wrapper script creation failed: {str(e)}"
+        result.compile_error_xla = f"Wrapper script creation failed: {str(e)}"
+        result.compile_error_autocluster = f"Wrapper script creation failed: {str(e)}"
+        return result
+    
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Wrapper script created successfully", {
+            "script_length": len(wrapper_script),
+        })
     
     if whitefox_logger:
         whitefox_logger.trace(f"          [HARNESS] Launching subprocess", {
