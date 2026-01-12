@@ -298,7 +298,12 @@ class WhiteFoxLogger:
         details: Dict[str, Any],
         test_code: Optional[str] = None
     ) -> None:
-        """Log diagnostic information for execution tracking."""
+        """Log diagnostic information for execution tracking.
+        
+        Only logs successes and failures (with error details).
+        Stages: "exec_initial", "xla_exec"
+        Status: "success" or "failure"
+        """
         opt_key = self._get_opt_key(optimization_name)
         
         diagnostic_entry = {
@@ -306,13 +311,10 @@ class WhiteFoxLogger:
             "optimization": optimization_name,
             "iteration": iteration,
             "sample_idx": sample_idx,
-            "stage": stage,  # e.g., "code_read", "exec_initial", "xla_exec", "pass_detection"
-            "status": status,  # e.g., "success", "failure", "skipped"
+            "stage": stage,
+            "status": status,
             "details": details,
         }
-        
-        if test_code:
-            diagnostic_entry["test_code"] = test_code[:1000]  # First 1000 chars
         
         self.diagnostic_data.append(diagnostic_entry)
         self._write_diagnostics()

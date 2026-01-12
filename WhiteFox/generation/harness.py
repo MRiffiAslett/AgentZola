@@ -74,28 +74,10 @@ def execute_test_in_subprocess(
     try:
         with open(test_file, 'r') as f:
             test_code = f.read()
-        if whitefox_logger:
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "code_read",
-                "success",
-                {"test_file": str(test_file), "code_length": len(test_code)}
-            )
     except Exception as e:
         result.compile_error_naive = str(e)
         result.compile_error_xla = str(e)
         result.compile_error_autocluster = str(e)
-        if whitefox_logger:
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "code_read",
-                "failure",
-                {"test_file": str(test_file), "error": str(e)}
-            )
         return result
     
     test_file_repr = repr(str(test_file))
@@ -375,82 +357,79 @@ print("WHITEFOX_RESULT_END")
         
         result.triggered_passes = extract_triggered_passes(result.log_text)
         
-        # Log diagnostic information after execution
+        # Log diagnostic information after execution (failures only + pass detection)
         if whitefox_logger:
-            # Determine execution stage status
-            exec_stage_status = "failure"
-            exec_stage_details = {}
+            # Log initial execution failures only
             if result.compile_error_naive:
-                exec_stage_status = "failure"
-                exec_stage_details = {
-                    "error": result.compile_error_naive[:500] if result.compile_error_naive else "Unknown error",
-                    "error_type": "compile_error"
-                }
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "exec_initial",
+                    "failure",
+                    {
+                        "error": result.compile_error_naive[:500],
+                        "error_type": "compile_error"
+                    }
+                )
             elif result.runtime_error_naive:
-                exec_stage_status = "failure"
-                exec_stage_details = {
-                    "error": result.runtime_error_naive[:500] if result.runtime_error_naive else "Unknown error",
-                    "error_type": "runtime_error"
-                }
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "exec_initial",
+                    "failure",
+                    {
+                        "error": result.runtime_error_naive[:500],
+                        "error_type": "runtime_error"
+                    }
+                )
             elif result.compile_success_naive and result.runtime_success_naive:
-                exec_stage_status = "success"
-                exec_stage_details = {"model_executed": True}
+                # Log success
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "exec_initial",
+                    "success",
+                    {}
+                )
             
-            # Log initial execution stage
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "exec_initial",
-                exec_stage_status,
-                exec_stage_details
-            )
-            
-            # Log XLA execution stage
-            xla_stage_status = "not_run"
-            xla_stage_details = {}
-            if result.compile_success_xla:
-                if result.runtime_success_xla:
-                    xla_stage_status = "success"
-                    xla_stage_details = {"xla_executed": True, "log_text_length": len(result.log_text)}
-                elif result.runtime_error_xla:
-                    xla_stage_status = "failure"
-                    xla_stage_details = {
-                        "error": result.runtime_error_xla[:500] if result.runtime_error_xla else "Unknown error",
+            # Log XLA execution failures only
+            if result.compile_error_xla:
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "xla_exec",
+                    "failure",
+                    {
+                        "error": result.compile_error_xla[:500],
+                        "error_type": "xla_compile_error"
+                    }
+                )
+            elif result.runtime_error_xla:
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "xla_exec",
+                    "failure",
+                    {
+                        "error": result.runtime_error_xla[:500],
                         "error_type": "xla_runtime_error"
                     }
-            elif result.compile_error_xla:
-                xla_stage_status = "failure"
-                xla_stage_details = {
-                    "error": result.compile_error_xla[:500] if result.compile_error_xla else "Unknown error",
-                    "error_type": "xla_compile_error"
-                }
-            
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "xla_exec",
-                xla_stage_status,
-                xla_stage_details
-            )
-            
-            # Log pass detection stage
-            whitefox_logger.log_diagnostic(
-                optimization_name or "unknown",
-                iteration or 0,
-                sample_idx or 0,
-                "pass_detection",
-                "success" if result.triggered_passes else "no_passes",
-                {
-                    "log_text_length": len(result.log_text),
-                    "has_markers": "WHITEFOX_PASS_START" in result.log_text,
-                    "triggered_passes": list(result.triggered_passes),
-                    "log_text_from_json": log_text_from_json is not None and bool(log_text_from_json),
-                    "xla_compile_success": result.compile_success_xla,
-                    "xla_runtime_success": result.runtime_success_xla,
-                }
-            )
+                )
+            elif result.compile_success_xla and result.runtime_success_xla:
+                # Log success
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "xla_exec",
+                    "success",
+                    {"triggered_passes": list(result.triggered_passes)}
+                )
         
         # Debug logging: check if WHITEFOX_PASS_START markers are present
         if "WHITEFOX_PASS_START" in result.log_text:
