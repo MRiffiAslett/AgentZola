@@ -1,4 +1,4 @@
-`"""
+"""
 Execution harness for WhiteFox.
 
 Executes generated test programs with three execution modes matching original WhiteFox:
