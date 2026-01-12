@@ -33,10 +33,10 @@ from generation.bandit import (
     select_examples_thompson_sampling,
     update_bandit_after_generation,
 )
-from generation.prompts import build_base_prompt, build_feedback_prompt, parse_generated_code
+from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
-from generation.code_cleaner import ensure_imports
+from generation.code_refiner import ensure_imports, parse_generated_code, refine_generated_code
 from generation.logging import WhiteFoxLogger
 
 import tomllib
@@ -163,11 +163,11 @@ class StarCoderGenerator:
         opt_dir = output_root / optimization_name
         opt_dir.mkdir(parents=True, exist_ok=True)
         
-        # Parse generated code to extract just the Python code from the response
-        parsed_code = parse_generated_code(generated_text)
+        # Apply complete code refinement pipeline (parse, imports, AST processing)
+        processed_code = refine_generated_code(generated_text)
         
-        # Ensure required imports are present
-        processed_code = ensure_imports(parsed_code)
+        # For logging, also keep the parsed version (before AST processing)
+        parsed_code = parse_generated_code(generated_text)
         
         if whitefox_logger:
             whitefox_logger.log_generated_code(
@@ -197,9 +197,7 @@ class StarCoderGenerator:
         
         if only_optimizations and opt_name not in only_optimizations:
             return
-        
-        self.logger.info(f"Processing optimization: {opt_name}")
-        
+                
         max_iterations = self.config.generation.max_iterations
         tests_per_iteration = self.config.generation.tests_per_iteration
         examples_per_prompt = self.config.generation.examples_per_prompt
@@ -403,7 +401,6 @@ class StarCoderGenerator:
         # Remove any existing state files to start fresh
         import shutil
         if state_file.exists():
-            self.logger.info(f"Removing existing state file for fresh start: {state_file}")
             state_file.unlink()
         if old_state_file.exists() and old_state_file != state_file:
             self.logger.info(f"Removing old state file for fresh start: {old_state_file}")

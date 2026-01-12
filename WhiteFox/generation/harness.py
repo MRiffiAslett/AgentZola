@@ -1,4 +1,4 @@
-"""
+`"""
 Execution harness for WhiteFox.
 
 Executes generated test programs with three execution modes matching original WhiteFox:
@@ -33,39 +33,24 @@ logger = logging.getLogger(__name__)
 RANDOM_SEED = 42
 
 
-def extract_input_variable(code: str, test_globals: dict) -> tuple:
+def add_decorator(code: str, decorator: str) -> str:
+    """Add a decorator to the 'call' method of a TensorFlow model.
+    
+    Args:
+        code: Source code string
+        decorator: Decorator to add (e.g., "@tf.function(jit_compile=True)")
+        
+    Returns:
+        Modified code with decorator added
     """
-    Extract input variable(s) from code by finding model call.
-    
-    Looks for patterns like:
-    - y = m(x1)
-    - y = m(x)
-    - y = m.call(x1)
-    
-    Returns (input_var_name, input_value) or (None, None) if not found.
-    """
-    import re
-    
-    patterns = [
-        r'\bm\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',
-        r'\bm\.call\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, code)
-        if match:
-            var_name = match.group(1)
-            if var_name in test_globals:
-                return var_name, test_globals[var_name]
-    
-    common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
-    for name in common_names:
-        if name in test_globals:
-            value = test_globals[name]
-            if hasattr(value, 'shape') or isinstance(value, (list, tuple)):
-                return name, value
-    
-    return None, None
+    if "    def call" in code:
+        # The indentation is 4 spaces
+        code = code.replace("    def call", f"    {decorator}\n    def call")
+    else:
+        # The indentation is 2 spaces
+        code = code.replace("  def call", f"  {decorator}\n  def call")
+    return code
+
 
 
 def execute_test_in_subprocess(
@@ -179,31 +164,13 @@ def _serialize_output(output):
         return str(output)
 
 
-def _extract_input_variable(code, test_globals):
-    import re
-    patterns = [
-        r'\\bm\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',
-        r'\\bm\\.call\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',
-    ]
-    for pattern in patterns:
-        try:
-            match = re.search(pattern, code)
-            if match:
-                var_name = match.group(1)
-                if var_name in test_globals:
-                    return var_name, test_globals[var_name]
-        except Exception:
-            pass
-    common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
-    for name in common_names:
-        if name in test_globals:
-            value = test_globals[name]
-            try:
-                if hasattr(value, 'shape') or isinstance(value, (list, tuple, dict)):
-                    return name, value
-            except Exception:
-                pass
-    return None, None
+def add_decorator_inline(code: str, decorator: str) -> str:
+    \"\"\"Add a decorator to the call method - inline version for subprocess.\"\"\"
+    if "    def call" in code:
+        code = code.replace("    def call", f"    {decorator}\\n    def call")
+    else:
+        code = code.replace("  def call", f"  {decorator}\\n  def call")
+    return code
 
 
 # Set environment variables BEFORE importing TensorFlow
@@ -223,9 +190,8 @@ if '--xla_dump_hlo_pass_re=' not in old_xla_flags_env:
     xla_flags_parts.append('--xla_dump_hlo_pass_re=.*')
 os.environ['XLA_FLAGS'] = ' '.join(xla_flags_parts) if xla_flags_parts else ''
 
-# Set TF_XLA_FLAGS for autocluster mode (will be overridden later for XLA mode)
-if not old_tf_xla_flags_env:
-    os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2'
+# Note: TF_XLA_FLAGS will be set per-mode during execution
+# Do NOT set globally here as it affects all modes
 
 try:
     import tensorflow as tf
@@ -236,89 +202,102 @@ try:
     np.random.seed({RANDOM_SEED})
     tf.random.set_seed({RANDOM_SEED})
     
-    test_globals = {{'__name__': '__main__'}}.copy()
     test_code = {test_code_repr}
-    
     model_key = 'm'
     input_data_key = 'input_data'
-    initial_exec_success = False
+    
+    # NAIVE EXECUTION (no decorators)
     try:
-        exec(test_code, test_globals)
+        test_globals_naive = {{'__name__': '__main__'}}.copy()
+        exec(test_code, test_globals_naive)
         result["compile_success_naive"] = True
-        result["compile_success_xla"] = True
-        result["compile_success_autocluster"] = True
-        initial_exec_success = True
+        
+        if model_key not in test_globals_naive:
+            raise Exception("Model 'm' not found in test code")
+        if input_data_key not in test_globals_naive:
+            raise Exception("input_data not found in test code - code processing may have failed")
+        
+        m = test_globals_naive[model_key]
+        input_data = test_globals_naive[input_data_key]
+        
+        if not isinstance(input_data, (list, tuple)):
+            input_data = [input_data]
+        
+        output_naive = m(*input_data)
+        result["runtime_success_naive"] = True
+        result["output_naive"] = _serialize_output(output_naive)
     except Exception as e:
         error_msg = str(e) + "\\n" + traceback.format_exc()
-        result["compile_error_naive"] = error_msg
-        result["compile_error_xla"] = error_msg
-        result["compile_error_autocluster"] = error_msg
-        # Don't raise - continue to try XLA execution even if initial exec failed
-        # XLA execution is in its own try block and will handle errors gracefully
-    
-    if model_key not in test_globals:
-        # Model not found - XLA execution will fail gracefully in its try block
-        pass
-    else:
-        m = test_globals[model_key]
-        
-        if input_data_key in test_globals:
-            input_data = test_globals[input_data_key]
+        if not result["compile_success_naive"]:
+            result["compile_error_naive"] = error_msg
         else:
-            input_var_name, input_data = _extract_input_variable(test_code, test_globals)
+            result["runtime_error_naive"] = error_msg
+    
+    # XLA EXECUTION (add @tf.function(jit_compile=True) decorator to source)
+    try:
+        test_code_xla = add_decorator_inline(test_code, "@tf.function(jit_compile=True)")
+        test_globals_xla = {{'__name__': '__main__'}}.copy()
+        exec(test_code_xla, test_globals_xla)
+        result["compile_success_xla"] = True
         
-        if input_data is not None:
-            if not isinstance(input_data, (list, tuple)):
-                input_data = [input_data]
-            
-            try:
-                output_naive = m(*input_data)
-                result["runtime_success_naive"] = True
-                result["output_naive"] = _serialize_output(output_naive)
-            except Exception as e:
-                result["runtime_error_naive"] = str(e) + "\\n" + traceback.format_exc()
-    
-    try:
-        # XLA_FLAGS already set before TensorFlow import, so pass logging should work
-        if model_key in test_globals:
-            m = test_globals[model_key]
-            # Wrap the model with tf.function for XLA compilation
-            m_xla = tf.function(m, jit_compile=True)
-            
-            if input_data_key in test_globals:
-                input_data_xla = test_globals[input_data_key]
-            else:
-                _, input_data_xla = _extract_input_variable(test_code, test_globals)
-                if input_data_xla is None:
-                    raise Exception("Could not find input data in XLA execution")
-            if not isinstance(input_data_xla, (list, tuple)):
-                input_data_xla = [input_data_xla]
-            output_xla = m_xla(*input_data_xla)
-            result["runtime_success_xla"] = True
-            result["output_xla"] = _serialize_output(output_xla)
+        if model_key not in test_globals_xla or input_data_key not in test_globals_xla:
+            raise Exception("Model or input_data not found in XLA execution")
+        
+        m_xla = test_globals_xla[model_key]
+        input_data_xla = test_globals_xla[input_data_key]
+        
+        if not isinstance(input_data_xla, (list, tuple)):
+            input_data_xla = [input_data_xla]
+        
+        output_xla = m_xla(*input_data_xla)
+        result["runtime_success_xla"] = True
+        result["output_xla"] = _serialize_output(output_xla)
     except Exception as e:
-        result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
+        error_msg = str(e) + "\\n" + traceback.format_exc()
+        if not result["compile_success_xla"]:
+            result["compile_error_xla"] = error_msg
+        else:
+            result["runtime_error_xla"] = error_msg
     
+    # AUTOCLUSTER EXECUTION (set env vars, add @tf.function decorator to source)
     try:
-        # TF_XLA_FLAGS already set before TensorFlow import for autocluster mode
-        if model_key in test_globals:
-            m = test_globals[model_key]
-            # Wrap the model with tf.function for autocluster
-            m_ac = tf.function(m)
-            
-            if input_data_key in test_globals:
-                input_data_ac = test_globals[input_data_key]
-            else:
-                _, input_data_ac = _extract_input_variable(test_code, test_globals)
-                if input_data_ac is None:
-                    raise Exception("Could not find input data in autocluster execution")
-            if not isinstance(input_data_ac, (list, tuple)):
-                input_data_ac = [input_data_ac]
-            output_ac = m_ac(*input_data_ac)
-            result["runtime_success_autocluster"] = True
-            result["output_autocluster"] = _serialize_output(output_ac)
+        # Set autocluster environment variables
+        os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
+        
+        test_code_ac = add_decorator_inline(test_code, "@tf.function")
+        test_globals_ac = {{'__name__': '__main__'}}.copy()
+        exec(test_code_ac, test_globals_ac)
+        result["compile_success_autocluster"] = True
+        
+        if model_key not in test_globals_ac or input_data_key not in test_globals_ac:
+            raise Exception("Model or input_data not found in autocluster execution")
+        
+        m_ac = test_globals_ac[model_key]
+        input_data_ac = test_globals_ac[input_data_key]
+        
+        if not isinstance(input_data_ac, (list, tuple)):
+            input_data_ac = [input_data_ac]
+        
+        output_ac = m_ac(*input_data_ac)
+        result["runtime_success_autocluster"] = True
+        result["output_autocluster"] = _serialize_output(output_ac)
+        
+        # Restore environment variable
+        if old_tf_xla_flags_env:
+            os.environ['TF_XLA_FLAGS'] = old_tf_xla_flags_env
+        else:
+            os.environ.pop('TF_XLA_FLAGS', None)
     except Exception as e:
-        result["runtime_error_autocluster"] = str(e) + "\\n" + traceback.format_exc()
+        error_msg = str(e) + "\\n" + traceback.format_exc()
+        if not result["compile_success_autocluster"]:
+            result["compile_error_autocluster"] = error_msg
+        else:
+            result["runtime_error_autocluster"] = error_msg
+        # Restore environment variable even on error
+        if old_tf_xla_flags_env:
+            os.environ['TF_XLA_FLAGS'] = old_tf_xla_flags_env
+        else:
+            os.environ.pop('TF_XLA_FLAGS', None)
 
 except Exception as e:
     error_msg = str(e) + "\\n" + traceback.format_exc()
