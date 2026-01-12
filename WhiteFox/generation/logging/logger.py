@@ -443,8 +443,14 @@ class WhiteFoxLogger:
     def generate_run_summary(self, whitefox_state: Any) -> None:
         """Generate or update run_summary.log with optimization statistics."""
         summary_file = self.log_dir / "run_summary.log"
+        detailed_summary_file = self.log_dir / "run_summary_detailed.log"
         
+        # Write concise summary
         with open(summary_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WHITEFOX RUN SUMMARY\n")
+            f.write("=" * 80 + "\n\n")
+            
             for opt_name in sorted(whitefox_state.optimizations.keys()):
                 stats = self.opt_stats.get(opt_name, self._get_default_stats())
                 f.write(f"{opt_name}\n")
@@ -453,9 +459,49 @@ class WhiteFoxLogger:
                 f.write(f"  Success (naive): {stats['success_naive']}\n")
                 f.write(f"  Success (xla): {stats['success_xla']}\n")
                 f.write(f"  Success (autocluster): {stats['success_autocluster']}\n")
+                f.write("\n")
+        
+        # Write detailed summary with execution mode breakdown
+        with open(detailed_summary_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WHITEFOX DETAILED RUN SUMMARY\n")
+            f.write("=" * 80 + "\n\n")
+            f.write("Format: Optimization | Created | Triggered | Naive | XLA | Autocluster\n")
+            f.write("-" * 80 + "\n\n")
+            
+            total_generated = 0
+            total_triggered = 0
+            total_naive = 0
+            total_xla = 0
+            total_ac = 0
+            
+            for opt_name in sorted(whitefox_state.optimizations.keys()):
+                stats = self.opt_stats.get(opt_name, self._get_default_stats())
+                
+                total_generated += stats['generated']
+                total_triggered += stats['triggered']
+                total_naive += stats['success_naive']
+                total_xla += stats['success_xla']
+                total_ac += stats['success_autocluster']
+                
+                f.write(f"{opt_name:40s} | ")
+                f.write(f"{stats['generated']:7d} | ")
+                f.write(f"{stats['triggered']:9d} | ")
+                f.write(f"{stats['success_naive']:5d} | ")
+                f.write(f"{stats['success_xla']:3d} | ")
+                f.write(f"{stats['success_autocluster']:11d}\n")
+            
+            f.write("-" * 80 + "\n")
+            f.write(f"{'TOTAL':40s} | ")
+            f.write(f"{total_generated:7d} | ")
+            f.write(f"{total_triggered:9d} | ")
+            f.write(f"{total_naive:5d} | ")
+            f.write(f"{total_xla:3d} | ")
+            f.write(f"{total_ac:11d}\n")
+            f.write("=" * 80 + "\n")
         
         if self.base_logger:
-            self.base_logger.debug(f"Run summary updated at {summary_file}")
+            self.base_logger.debug(f"Run summaries updated at {summary_file} and {detailed_summary_file}")
     
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""

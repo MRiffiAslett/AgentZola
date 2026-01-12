@@ -210,7 +210,12 @@ try:
     
     # NAIVE EXECUTION (no decorators)
     try:
-        test_globals_naive = {{'__name__': '__main__'}}.copy()
+        test_globals_naive = {{
+            '__name__': '__main__',
+            'tf': tf,
+            'np': np,
+            'random': random,
+        }}.copy()
         exec(test_code, test_globals_naive)
         result["compile_success_naive"] = True
         
@@ -238,7 +243,12 @@ try:
     # XLA EXECUTION (add @tf.function(jit_compile=True) decorator to source)
     try:
         test_code_xla = add_decorator_inline(test_code, "@tf.function(jit_compile=True)")
-        test_globals_xla = {{'__name__': '__main__'}}.copy()
+        test_globals_xla = {{
+            '__name__': '__main__',
+            'tf': tf,
+            'np': np,
+            'random': random,
+        }}.copy()
         exec(test_code_xla, test_globals_xla)
         result["compile_success_xla"] = True
         
@@ -267,7 +277,12 @@ try:
         os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
         
         test_code_ac = add_decorator_inline(test_code, "@tf.function")
-        test_globals_ac = {{'__name__': '__main__'}}.copy()
+        test_globals_ac = {{
+            '__name__': '__main__',
+            'tf': tf,
+            'np': np,
+            'random': random,
+        }}.copy()
         exec(test_code_ac, test_globals_ac)
         result["compile_success_autocluster"] = True
         
