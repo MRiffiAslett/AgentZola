@@ -26,25 +26,50 @@ def parse_generated_code(generated_text: str) -> str:
     
     if matches:
         # If we found code blocks, use the last one (most likely to be complete)
-        return matches[-1].strip()
+        code = matches[-1].strip()
+    else:
+        # If no code blocks found, return the text as-is but strip common prefixes/suffixes
+        text = generated_text.strip()
+        
+        # Remove common instruction prefixes that LLMs might add
+        prefixes_to_remove = [
+            "Here is the code:",
+            "Here's the code:",
+            "Here is a TensorFlow model:",
+            "Here's a TensorFlow model:",
+        ]
+        
+        for prefix in prefixes_to_remove:
+            if text.lower().startswith(prefix.lower()):
+                text = text[len(prefix):].strip()
+                break
+        
+        code = text
     
-    # If no code blocks found, return the text as-is but strip common prefixes/suffixes
-    text = generated_text.strip()
+    # Filter out non-code lines (requirement text that LLM accidentally included)
+    # Remove lines that are clearly English explanations, not Python
+    filtered_lines = []
+    for line in code.split('\n'):
+        stripped = line.strip()
+        # Skip lines that are clearly English text, not code
+        if stripped and not stripped.startswith('#'):
+            # Check if line looks like English prose (has common English words without Python syntax)
+            english_indicators = [
+                'the optimization',
+                'this optimization',
+                'the model',
+                'could return',
+                'even though',
+                'described above',
+                'because it checks',
+            ]
+            is_english = any(indicator in stripped.lower() for indicator in english_indicators)
+            if is_english and '=' not in line and 'def ' not in line and 'class ' not in line:
+                # Skip this line - it's English text, not code
+                continue
+        filtered_lines.append(line)
     
-    # Remove common instruction prefixes that LLMs might add
-    prefixes_to_remove = [
-        "Here is the code:",
-        "Here's the code:",
-        "Here is a TensorFlow model:",
-        "Here's a TensorFlow model:",
-    ]
-    
-    for prefix in prefixes_to_remove:
-        if text.lower().startswith(prefix.lower()):
-            text = text[len(prefix):].strip()
-            break
-    
-    return text
+    return '\n'.join(filtered_lines)
 
 
 def ensure_imports(code: str) -> str:

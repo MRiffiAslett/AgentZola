@@ -163,7 +163,8 @@ class TFCodeParserJIT:
             for arg_name in class_forward_required_args:
                 if arg_name not in tensors:
                     tensors.append(arg_name)
-                    tensor_inits += f"{arg_name} = 1\n"
+                    # Use tensor fallback instead of plain integer
+                    tensor_inits += f"{arg_name} = tf.constant([1.0, 2.0, 3.0, 4.0])\n"
                     diff -= 1
                     if diff == 0:
                         break
@@ -221,7 +222,7 @@ class TFCodeParserJIT:
         
         if use_default:
             # Use tensor fallback instead of plain integer
-            return f"{arg_name} = tf.constant([1.0])"
+            return f"{arg_name} = tf.constant([1.0, 2.0, 3.0, 4.0])"
         else:
             return ""
 
