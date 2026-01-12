@@ -169,9 +169,9 @@ def _serialize_output(output):
 def add_decorator_inline(code: str, decorator: str) -> str:
     \"\"\"Add a decorator to the call method - inline version for subprocess.\"\"\"
     if "    def call" in code:
-        code = code.replace("    def call", f"    {decorator}\\n    def call")
+        code = code.replace("    def call", f"    {{decorator}}\\n    def call")
     else:
-        code = code.replace("  def call", f"  {decorator}\\n  def call")
+        code = code.replace("  def call", f"  {{decorator}}\\n  def call")
     return code
 
 

@@ -220,7 +220,8 @@ class TFCodeParserJIT:
             return f"{arg_name} = 1"
         
         if use_default:
-            return f"{arg_name} = 1"
+            # Use tensor fallback instead of plain integer
+            return f"{arg_name} = tf.constant([1.0])"
         else:
             return ""
 
