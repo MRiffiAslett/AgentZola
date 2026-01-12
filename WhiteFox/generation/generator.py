@@ -197,12 +197,18 @@ class StarCoderGenerator:
         
         if only_optimizations and opt_name not in only_optimizations:
             return
+        
+        whitefox_logger.trace(f">>> Starting optimization: {opt_name}", {
+            "pass_log_name": opt_state.spec.pass_log_name,
+            "num_existing_tests": len(opt_state.triggering_tests),
+        })
                 
         max_iterations = self.config.generation.max_iterations
         tests_per_iteration = self.config.generation.tests_per_iteration
         examples_per_prompt = self.config.generation.examples_per_prompt
         
         for iteration in range(max_iterations):
+            whitefox_logger.trace(f"  >> Iteration {iteration}/{max_iterations} for {opt_name}")
             self.logger.info(
                 f"  Iteration {iteration + 1}/{max_iterations} for {opt_name}"
             )
@@ -228,6 +234,11 @@ class StarCoderGenerator:
                 prompt = build_base_prompt(opt_state.spec)
                 prompt_type = "base"
             
+            whitefox_logger.trace(f"    > Prompt built: {prompt_type}", {
+                "num_examples": len(example_tests),
+                "prompt_length": len(prompt),
+            })
+            
             whitefox_logger.log_prompt(
                 opt_name,
                 iteration,
@@ -237,8 +248,14 @@ class StarCoderGenerator:
             )
             
             try:
+                whitefox_logger.trace(f"    > Calling LLM.generate", {
+                    "num_samples": tests_per_iteration,
+                })
                 sampling_params = self._create_sampling_params(tests_per_iteration)
                 outputs = self.llm.generate([prompt], sampling_params)
+                whitefox_logger.trace(f"    > LLM.generate completed", {
+                    "num_outputs": len(outputs),
+                })
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_name,
@@ -256,12 +273,16 @@ class StarCoderGenerator:
                 for text_output in output.outputs:
                     generated_texts.append(text_output.text)
             
+            whitefox_logger.trace(f"    > Processing {len(generated_texts)} generated samples")
+            
             new_triggering_tests = []
             num_triggered = 0
             num_not_triggered = 0
             
             for sample_idx, generated_text in enumerate(generated_texts):
+                whitefox_logger.trace(f"      - Processing sample {sample_idx}/{len(generated_texts)}")
                 try:
+                    whitefox_logger.trace(f"        * Saving test file for sample {sample_idx}")
                     test_file = self._save_generated_test(
                         generated_text,
                         opt_name,
@@ -270,14 +291,26 @@ class StarCoderGenerator:
                         output_root,
                         whitefox_logger
                     )
+                    whitefox_logger.trace(f"        * Test file saved: {test_file.name}")
                     
+                    whitefox_logger.trace(f"        * Executing test in subprocess: {test_file.name}")
                     result = execute_test_in_subprocess(test_file, whitefox_logger, opt_name, iteration, sample_idx)
+                    whitefox_logger.trace(f"        * Execution completed for {test_file.name}", {
+                        "naive_success": result.runtime_success_naive,
+                        "xla_success": result.runtime_success_xla,
+                        "autocluster_success": result.runtime_success_autocluster,
+                    })
                     
                     log_file = logs_root / opt_name / f"{test_file.stem}.log"
                     log_file.parent.mkdir(parents=True, exist_ok=True)
                     log_file.write_text(result.log_text)
                     
                     pass_triggered = opt_state.spec.pass_log_name in result.triggered_passes
+                    
+                    whitefox_logger.trace(f"        * Pass detection: {pass_triggered}", {
+                        "expected_pass": opt_state.spec.pass_log_name,
+                        "triggered_passes": list(result.triggered_passes),
+                    })
                     
                     whitefox_logger.log_pass_detection_analysis(
                         opt_name,
@@ -366,6 +399,12 @@ class StarCoderGenerator:
             state_file = source_dir / "whitefox_state.json"
             self.whitefox_state.save(state_file)
             
+            whitefox_logger.trace(f"  >> Iteration {iteration} complete", {
+                "triggered": num_triggered,
+                "not_triggered": num_not_triggered,
+                "new_triggering_tests": len(new_triggering_tests),
+            })
+            
             self.logger.info(
                 f"  Iteration {iteration + 1} complete: "
                 f"{num_triggered} triggered, {num_not_triggered} not triggered, "
@@ -434,6 +473,12 @@ class StarCoderGenerator:
         
         self.logger.info(f"Starting WhiteFox fuzzing with {len(self.whitefox_state.optimizations)} optimizations")
         self.logger.info(f"Logging directory: {logging_dir}")
+        
+        whitefox_logger.trace("=== WhiteFox Generation Started ===", {
+            "num_optimizations": len(self.whitefox_state.optimizations),
+            "max_iterations": self.config.generation.max_iterations,
+            "tests_per_iteration": self.config.generation.tests_per_iteration,
+        })
         
         for opt_state in self.whitefox_state.optimizations.values():
             try:

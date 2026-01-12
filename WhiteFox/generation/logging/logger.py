@@ -53,6 +53,7 @@ class WhiteFoxLogger:
         # Readable text output files (in main logging directory)
         self.prompts_text_file = self.log_dir / "gen_prompts.log"
         self.cleaned_code_text_file = self.log_dir / "gen_code.log"
+        self.execution_trace_file = self.log_dir / "execution_trace.log"
         
         self.prompts_data: Dict[str, List[Dict]] = {}
         self.cleaned_code_data: Dict[str, List[Dict]] = {}
@@ -63,7 +64,35 @@ class WhiteFoxLogger:
         # Statistics tracking for run summary
         self.opt_stats: Dict[str, Dict[str, int]] = {}
         
+        # Initialize execution trace
+        self._init_execution_trace()
+        
         self.base_logger = base_logger or logging.getLogger(__name__)
+    
+    def _init_execution_trace(self) -> None:
+        """Initialize execution trace log."""
+        with open(self.execution_trace_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WHITEFOX EXECUTION TRACE\n")
+            f.write(f"Started: {datetime.now().isoformat()}\n")
+            f.write("=" * 80 + "\n\n")
+            f.write("This log shows each step as it executes in real-time.\n")
+            f.write("Use this to debug if WhiteFox gets stuck.\n\n")
+            f.write("-" * 80 + "\n\n")
+    
+    def trace(self, message: str, details: Optional[Dict[str, Any]] = None) -> None:
+        """Write to execution trace log immediately (unbuffered).
+        
+        This log is written in real-time so you can see progress even if
+        the process crashes or hangs.
+        """
+        with open(self.execution_trace_file, 'a') as f:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            f.write(f"[{timestamp}] {message}\n")
+            if details:
+                for key, value in details.items():
+                    f.write(f"  {key}: {value}\n")
+            f.flush()  # Ensure immediate write to disk
     
     def clear_old_logs(self) -> None:
         """Clear all consolidated log files from previous runs."""
@@ -95,6 +124,9 @@ class WhiteFoxLogger:
         self.bug_reports_data.clear()
         self.diagnostic_data.clear()
         self.opt_stats.clear()
+        
+        # Reinitialize execution trace
+        self._init_execution_trace()
     
     def _get_opt_key(self, optimization_name: str) -> str:
         """Get key for optimization-specific data."""
@@ -205,7 +237,7 @@ class WhiteFoxLogger:
         triggered_passes: set,
         expected_pass: str
     ) -> None:
-        """Log pass detection analysis (consolidated, minimal summary)."""
+        """Log pass detection analysis (written immediately)."""
         opt_key = self._get_opt_key(optimization_name)
         self._ensure_opt_list_exists(self.pass_analysis_data, opt_key)
         
@@ -218,6 +250,7 @@ class WhiteFoxLogger:
             "all_triggered_passes": list(triggered_passes),
         })
         
+        # Write immediately so logs are available even if process crashes
         self._write_pass_analysis()
     
     def log_state_update(
@@ -301,6 +334,8 @@ class WhiteFoxLogger:
         """Log diagnostic information for execution tracking.
         
         Only logs successes and failures (with error details).
+        Written immediately so available even if process crashes.
+        
         Stages: "exec_initial", "xla_exec"
         Status: "success" or "failure"
         """
@@ -317,6 +352,7 @@ class WhiteFoxLogger:
         }
         
         self.diagnostic_data.append(diagnostic_entry)
+        # Write immediately so logs are available even if process crashes
         self._write_diagnostics()
     
     def _write_prompts_readable(self) -> None:

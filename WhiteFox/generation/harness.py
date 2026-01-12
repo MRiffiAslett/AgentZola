@@ -61,6 +61,12 @@ def execute_test_in_subprocess(
     sample_idx: Optional[int] = None,
     timeout: int = 60
 ) -> ExecutionResult:
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Starting execution", {
+            "test_file": test_file.name,
+            "timeout": timeout,
+        })
+    
     result = ExecutionResult(
         test_file=test_file,
         compile_success_naive=False,
@@ -74,7 +80,15 @@ def execute_test_in_subprocess(
     try:
         with open(test_file, 'r') as f:
             test_code = f.read()
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Code read successfully", {
+                "code_length": len(test_code),
+            })
     except Exception as e:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Failed to read code", {
+                "error": str(e),
+            })
         result.compile_error_naive = str(e)
         result.compile_error_xla = str(e)
         result.compile_error_autocluster = str(e)
@@ -311,6 +325,11 @@ print(json.dumps(result))
 print("WHITEFOX_RESULT_END")
 """
     
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Launching subprocess", {
+            "timeout": timeout,
+        })
+    
     try:
         # Ensure subprocess inherits environment variables (especially XLA_FLAGS)
         # This is important for the custom TensorFlow build to output WHITEFOX_PASS_START markers
@@ -321,6 +340,11 @@ print("WHITEFOX_RESULT_END")
             timeout=timeout,
             env=os.environ.copy(),  # Explicitly pass environment
         )
+        
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Subprocess completed", {
+                "returncode": process.returncode,
+            })
         
         output = process.stdout + process.stderr
         
@@ -356,6 +380,14 @@ print("WHITEFOX_RESULT_END")
             result.log_text = output
         
         result.triggered_passes = extract_triggered_passes(result.log_text)
+        
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Parsed results", {
+                "triggered_passes": list(result.triggered_passes),
+                "naive_success": result.runtime_success_naive,
+                "xla_success": result.runtime_success_xla,
+                "ac_success": result.runtime_success_autocluster,
+            })
         
         # Log diagnostic information after execution (failures only + pass detection)
         if whitefox_logger:
@@ -445,14 +477,23 @@ print("WHITEFOX_RESULT_END")
             logger.debug(f"Empty log_text for {test_file}, XLA never ran or logs not captured")
         
     except subprocess.TimeoutExpired:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] TIMEOUT after {timeout}s")
         result.runtime_error_naive = "Execution timeout"
         result.runtime_error_xla = "Execution timeout"
         result.runtime_error_autocluster = "Execution timeout"
         logger.warning(f"Test {test_file} timed out after {timeout} seconds")
     except Exception as e:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Exception in subprocess", {
+                "error": str(e)[:200],
+            })
         result.compile_error_naive = str(e)
         result.compile_error_xla = str(e)
         result.compile_error_autocluster = str(e)
         logger.error(f"Error executing {test_file}: {e}")
+    
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Returning result")
     
     return result
