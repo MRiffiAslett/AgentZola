@@ -480,7 +480,7 @@ class StarCoderGenerator:
             "tests_per_iteration": self.config.generation.tests_per_iteration,
         })
         
-        for opt_state in self.whitefox_state.optimizations.values():
+        for opt_state in reversed(list(self.whitefox_state.optimizations.values())):
             try:
                 self._run_single_optimization(
                     opt_state,
