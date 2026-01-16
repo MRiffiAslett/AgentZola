@@ -5,7 +5,7 @@ These are schema-only definitions with no default values.
 All actual values should come from TOML configuration files.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -53,12 +53,21 @@ class StoppingConfig(BaseModel):
     eof_strings: List[str] = Field(description="End-of-text strings that stop generation")
 
 
+class PassAliasesConfig(BaseModel):
+    """Mapping from CamelCase optimization names to pass name aliases from instrumentation."""
+    pass_name_aliases: Optional[Dict[str, List[str]]] = Field(
+        default=None,
+        description="Mapping from optimization names to their pass log name aliases"
+    )
+
+
 class GeneratorConfig(BaseModel):
     paths: PathsConfig
     model: ModelConfig
     generation: GenerationConfig
     stopping: StoppingConfig
     oracles: Optional[OraclesConfig] = Field(default=None, description="Oracle configuration")
+    pass_name_aliases: Optional[PassAliasesConfig] = Field(default=None, description="Pass name aliases configuration")
 
     @classmethod
     def from_toml(cls, toml_data: dict) -> "GeneratorConfig":
@@ -68,11 +77,19 @@ class GeneratorConfig(BaseModel):
         else:
             oracles = OraclesConfig()
         
+        pass_aliases_data = toml_data.get("pass_name_aliases", {})
+        if pass_aliases_data:
+            # The TOML table is already a dict mapping optimization names to alias lists
+            pass_aliases = PassAliasesConfig(pass_name_aliases=pass_aliases_data)
+        else:
+            pass_aliases = PassAliasesConfig()
+        
         return cls(
             paths=PathsConfig(**toml_data.get("paths", {})),
             model=ModelConfig(**toml_data.get("model", {})),
             generation=GenerationConfig(**toml_data.get("generation", {})),
             stopping=StoppingConfig(**toml_data.get("stopping", {})),
             oracles=oracles,
+            pass_name_aliases=pass_aliases,
         )
 

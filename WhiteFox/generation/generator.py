@@ -134,7 +134,11 @@ class StarCoderGenerator:
     def _load_or_init_whitefox_state(self) -> WhiteFoxState:
         optimizations_dir = self._resolve_path(Path(self.config.generation.optimizations_dir))
         optimizations_list = self.config.generation.optimizations
-        specs = load_optimization_specs(optimizations_dir, optimizations_list)
+        # Use pass name aliases from config if available
+        pass_name_aliases = None
+        if self.config.pass_name_aliases and self.config.pass_name_aliases.pass_name_aliases:
+            pass_name_aliases = self.config.pass_name_aliases.pass_name_aliases
+        specs = load_optimization_specs(optimizations_dir, optimizations_list, pass_name_aliases)
         
         logging_dir = self._get_logging_dir()
         source_dir = logging_dir / "source"
@@ -199,7 +203,8 @@ class StarCoderGenerator:
             return
         
         whitefox_logger.trace(f">>> Starting optimization: {opt_name}", {
-            "pass_log_name": opt_state.spec.pass_log_name,
+            "pass_log_name": opt_state.spec.pass_log_name,  # First alias for backward compatibility
+            "pass_log_names": opt_state.spec.pass_log_names,  # All aliases
             "num_existing_tests": len(opt_state.triggering_tests),
         })
                 
@@ -305,10 +310,10 @@ class StarCoderGenerator:
                     log_file.parent.mkdir(parents=True, exist_ok=True)
                     log_file.write_text(result.log_text)
                     
-                    pass_triggered = opt_state.spec.pass_log_name in result.triggered_passes
+                    pass_triggered = opt_state.spec.matches_any_pass(result.triggered_passes)
                     
                     whitefox_logger.trace(f"        * Pass detection: {pass_triggered}", {
-                        "expected_pass": opt_state.spec.pass_log_name,
+                        "expected_passes": opt_state.spec.pass_log_names,
                         "triggered_passes": list(result.triggered_passes),
                     })
                     
@@ -316,10 +321,11 @@ class StarCoderGenerator:
                         opt_name,
                         iteration,
                         sample_idx,
-                        opt_state.spec.pass_log_name,
+                        opt_state.spec.pass_log_name,  # Use first alias for backward compatibility
                         result.log_text,
                         result.triggered_passes,
-                        opt_state.spec.pass_log_name
+                        opt_state.spec.pass_log_name,
+                        expected_passes=opt_state.spec.pass_log_names  # Pass all aliases for better logging
                     )
                     
                     whitefox_logger.log_execution_result(

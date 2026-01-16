@@ -51,94 +51,22 @@ def parse_generated_code(generated_text: str) -> str:
     filtered_lines = []
     for line in code.split('\n'):
         stripped = line.strip()
-        
-        # Skip empty lines (preserve them)
-        if not stripped:
-            filtered_lines.append(line)
-            continue
-            
-        # Preserve comments
-        if stripped.startswith('#'):
-            filtered_lines.append(line)
-            continue
-        
-        # Skip lines with ellipsis that are not part of valid Python syntax
-        # Common in LLM output like: "...from some_module import ..."
-        if '...' in stripped:
-            # Check if it's actual Ellipsis literal in valid Python or prose
-            # Valid: "..." as the only token, or in docstrings
-            is_valid_ellipsis = (
-                stripped == '...' or  # Standalone ellipsis
-                (stripped.startswith('"""') or stripped.startswith("'''"))  # In docstring
-            )
-            if not is_valid_ellipsis:
-                # Check if it's prose with ellipsis
-                if ' ... ' in stripped or stripped.startswith('...'):
-                    # Looks like prose with ellipsis, skip it
-                    continue
-        
-        # Skip markdown table syntax
-        if stripped.startswith('|') and '|' in stripped[1:]:
-            continue
-        
-        # Skip lines with backticks (markdown code references)
-        # These often cause unterminated string literal errors
-        if '`' in stripped and not (stripped.startswith("'") or stripped.startswith('"')):
-            # Check if it's in a comment or likely prose
-            if not stripped.startswith('#'):
-                # This is likely prose with code references like "Where `input_shape` is..."
+        # Skip lines that are clearly English text, not code
+        if stripped and not stripped.startswith('#'):
+            # Check if line looks like English prose (has common English words without Python syntax)
+            english_indicators = [
+                'the optimization',
+                'this optimization',
+                'the model',
+                'could return',
+                'even though',
+                'described above',
+                'because it checks',
+            ]
+            is_english = any(indicator in stripped.lower() for indicator in english_indicators)
+            if is_english and '=' not in line and 'def ' not in line and 'class ' not in line:
+                # Skip this line - it's English text, not code
                 continue
-        
-        # Skip lines that are clearly English prose
-        # These patterns catch common documentation text
-        prose_indicators = [
-            'where `',  # "Where `input_shape` is..."
-            'this example',  # "This example illustrates..."
-            'this test',  # "This test accepts..."
-            'the optimization',
-            'this optimization',
-            'could return',
-            'even though',
-            'described above',
-            'because it checks',
-            'cpu and gpu',
-            'memory of',
-            ' api ',
-            'description',
-            'note that',
-            'note:',
-            'example:',
-            'usage:',
-            'the shape',
-            'the tensor',
-            'accepts a',
-            'argument that',
-            'used to',
-        ]
-        
-        is_prose = any(indicator in stripped.lower() for indicator in prose_indicators)
-        
-        # Also check for sentences (starts with capital, contains spaces, ends with period)
-        # but allow valid Python that might look sentence-like
-        # Check if line has Python keywords or operators that indicate it's code
-        has_code_indicators = any(indicator in stripped for indicator in [
-            'def ', 'class ', 'import ', 'from ', 'return ', 
-            ' = ', '(', '[', '{', ')', ']', '}',
-            'if ', 'else:', 'elif ', 'for ', 'while ',
-            'try:', 'except ', 'finally:', 'with ',
-            '@', 'lambda ', 'yield ', 'async ', 'await '
-        ])
-        
-        if (is_prose or (
-            len(stripped) > 20 and
-            stripped[0].isupper() and
-            ' ' in stripped and
-            not has_code_indicators and
-            not stripped.endswith(':')
-        )):
-            # Skip this line - it's prose, not code
-            continue
-        
         filtered_lines.append(line)
     
     return '\n'.join(filtered_lines)
@@ -207,4 +135,3 @@ def refine_generated_code(generated_text: str) -> str:
     processed_code = process_code(code_with_imports)
     
     return processed_code
-

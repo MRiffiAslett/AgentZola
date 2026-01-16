@@ -235,18 +235,28 @@ class WhiteFoxLogger:
         pass_log_name: str,
         log_text: str,
         triggered_passes: set,
-        expected_pass: str
+        expected_pass: str,
+        expected_passes: Optional[List[str]] = None
     ) -> None:
         """Log pass detection analysis (written immediately)."""
         opt_key = self._get_opt_key(optimization_name)
         self._ensure_opt_list_exists(self.pass_analysis_data, opt_key)
         
+        # Use provided expected_passes list or fall back to single expected_pass
+        if expected_passes is None:
+            expected_passes = [expected_pass]
+        
+        # Check if any expected pass was triggered
+        expected_passes_set = set(expected_passes)
+        triggered = bool(expected_passes_set & triggered_passes)
+        
         self.pass_analysis_data[opt_key].append({
             "optimization": optimization_name,
             "iteration": iteration,
             "sample_idx": sample_idx,
-            "expected_pass": expected_pass,
-            "triggered": expected_pass in triggered_passes,
+            "expected_pass": expected_pass,  # Keep for backward compatibility
+            "expected_passes": expected_passes,  # Log all aliases
+            "triggered": triggered,
             "all_triggered_passes": list(triggered_passes),
         })
         

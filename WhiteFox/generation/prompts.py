@@ -2,42 +2,52 @@
 Prompt templates and optimization specifications for WhiteFox generation.
 """
 
-import re
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from domain.bandit import TriggeringTest
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class OptimizationSpec:
     internal_name: str
-    pass_log_name: str
+    pass_log_names: List[str]  # List of possible pass names from instrumentation
     requirement_prompt_path: Path
     requirement_text: str
-
-
-def camel_to_kebab(name: str) -> str:
-    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1-\2', name)
-    s2 = re.sub('([a-z0-9])([A-Z])', r'\1-\2', s1)
-    return s2.lower()
-
-
-PASS_NAME_OVERRIDES: Dict[str, str] = {
-    "BroadcastCanonicalizer": "broadcast_canonicalizer",
-    "DotDecomposer": "dot_decomposer",
-    "StochasticConvertDecomposer": "stochastic_convert_decomposer",
-    "TreeReductionRewriter": "tree_reduction_rewriter",
-    "ZeroSizedHloElimination": "zero_sized_hlo_elimination",
-}
+    
+    @property
+    def pass_log_name(self) -> str:
+        """Backward compatibility: return the first pass log name."""
+        return self.pass_log_names[0] if self.pass_log_names else ""
+    
+    def matches_any_pass(self, triggered_passes: set) -> bool:
+        """Check if any of the pass log names match the triggered passes."""
+        return bool(set(self.pass_log_names) & triggered_passes)
 
 
 def load_optimization_specs(
     req_dir: Path, 
-    optimizations: Optional[List[str]] = None
+    optimizations: Optional[List[str]] = None,
+    pass_name_aliases: Optional[Dict[str, List[str]]] = None
 ) -> Dict[str, OptimizationSpec]:
+    """
+    Load optimization specs from requirement directory.
+    
+    Args:
+        req_dir: Directory containing requirement .txt files
+        optimizations: Optional list of optimization names to load (if None, loads all .txt files)
+        pass_name_aliases: Optional mapping from optimization names to pass log name aliases.
+                          Pass name aliases should be loaded from config file. If None, optimization
+                          names will be used as-is.
+    """
     specs = {}
+    
+    # Use config mapping if provided, otherwise use optimization names as-is
+    aliases_mapping = pass_name_aliases or {}
     
     if not req_dir.exists():
         raise FileNotFoundError(f"Requirement directory not found: {req_dir}")
@@ -49,11 +59,17 @@ def load_optimization_specs(
                 raise FileNotFoundError(f"Requirement file not found: {txt_file}")
             
             requirement_text = txt_file.read_text()
-            pass_log_name = PASS_NAME_OVERRIDES.get(opt_name, camel_to_kebab(opt_name))
+            pass_log_names = aliases_mapping.get(opt_name)
+            if pass_log_names is None:
+                logger.warning(
+                    f"Optimization '{opt_name}' not found in pass name aliases mapping. "
+                    f"Using optimization name as-is. Consider adding it to the mapping."
+                )
+                pass_log_names = [opt_name]
             
             spec = OptimizationSpec(
                 internal_name=opt_name,
-                pass_log_name=pass_log_name,
+                pass_log_names=pass_log_names,
                 requirement_prompt_path=txt_file,
                 requirement_text=requirement_text,
             )
@@ -62,11 +78,17 @@ def load_optimization_specs(
         for txt_file in sorted(req_dir.glob("*.txt")):
             internal_name = txt_file.stem
             requirement_text = txt_file.read_text()
-            pass_log_name = PASS_NAME_OVERRIDES.get(internal_name, camel_to_kebab(internal_name))
+            pass_log_names = aliases_mapping.get(internal_name)
+            if pass_log_names is None:
+                logger.warning(
+                    f"Optimization '{internal_name}' not found in pass name aliases mapping. "
+                    f"Using optimization name as-is. Consider adding it to the mapping."
+                )
+                pass_log_names = [internal_name]
             
             spec = OptimizationSpec(
                 internal_name=internal_name,
-                pass_log_name=pass_log_name,
+                pass_log_names=pass_log_names,
                 requirement_prompt_path=txt_file,
                 requirement_text=requirement_text,
             )

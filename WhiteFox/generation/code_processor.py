@@ -20,26 +20,12 @@ class MultilineAssignTransformer(ast.NodeTransformer):
     """Transform multiline assignments into separate single assignments.
     
     Example: a, b = x, y  =>  a = x; b = y
-    Also handles: m = x, y  =>  m = x (take first value)
     """
     def visit_Assign(self, node):
-        # Handle tuple unpacking: a, b = x, y
         if isinstance(node.targets[0], ast.Tuple) and isinstance(node.value, ast.Tuple):
             if len(node.targets[0].elts) == len(node.value.elts):
                 return [ast.Assign(targets=[t], value=v) 
                        for t, v in zip(node.targets[0].elts, node.value.elts)]
-        
-        # Handle problematic tuple assignment to single variable: m = x, y
-        # This is common when LLM generates: m = Model(), extra_stuff
-        # We take only the first element
-        if (isinstance(node.targets[0], ast.Name) and 
-            isinstance(node.value, ast.Tuple) and 
-            len(node.value.elts) > 1):
-            # Check if target is 'm' specifically (the model variable)
-            if node.targets[0].id == 'm':
-                # Replace with assignment to just the first element
-                return ast.Assign(targets=node.targets, value=node.value.elts[0])
-        
         return node
 
 
@@ -121,27 +107,15 @@ class TFCodeParserJIT:
                 if isinstance(value, ast.Call):
                     # Check if this is class initialization
                     if isinstance(value.func, ast.Name) and value.func.id == class_name:
-                        # Check if this assigns to 'm' specifically
-                        try:
-                            target_name = node.targets[0].id if isinstance(node.targets[0], ast.Name) else None
-                        except Exception:
-                            target_name = None
-                        
-                        if target_name == 'm':
-                            if len(value.args) >= len(class_init_required_args) and len(value.args) <= len(class_init_args):
-                                class_init_code = "m = " + astunparse.unparse(value) + "\n"
-                            else:
-                                class_init_code = ""
-                            continue
+                        if len(value.args) >= len(class_init_required_args) and len(value.args) <= len(class_init_args):
+                            class_init_code = "m = " + astunparse.unparse(value) + "\n"
+                        else:
+                            class_init_code = ""
+                        continue
 
                     try:
                         tgt = node.targets[0].id
                     except Exception:
-                        continue
-                    
-                    # Skip if this is an assignment to 'm' that's not a class instantiation
-                    # This prevents overwriting the model with execution results
-                    if tgt == 'm':
                         continue
 
                     init_code = astunparse.unparse(node)
@@ -180,12 +154,6 @@ class TFCodeParserJIT:
         else:
             class_init_code = class_init_args_code
             class_init_code += f"\nm = {class_name}({', '.join(class_init_required_args)})\n"
-        
-        # Ensure m is properly instantiated as a single model, not a tuple
-        # This handles cases where LLM might generate m = Model(), extra_stuff
-        class_init_code += "\n# Ensure m is the model instance only\n"
-        class_init_code += "if isinstance(m, tuple):\n"
-        class_init_code += "    m = m[0]  # Take first element if it's a tuple\n"
         
         class_code += "\n" + class_init_code
 
@@ -279,19 +247,10 @@ def process_code(code: str) -> str:
     
     try:
         class_code, class_name, tensors, tensor_inits = parser.split_func_tensor(code)
-        
-        # Add validation that 'm' is callable after the auto-recovery
-        validation_code = """
-# Final validation that m is callable
-if not callable(m):
-    raise TypeError(f"Model 'm' is not callable after recovery: {type(m)}. Original value: {m}")
-"""
-        
-        code = class_code + "\n" + validation_code + "\n" + tensor_inits + "\n" + f"input_data = [{', '.join(tensors)}]\n"
+        code = class_code + "\n" + tensor_inits + "\n" + f"input_data = [{', '.join(tensors)}]\n"
     except Exception:
         # If processing fails, return code as-is
         # This ensures we don't break on edge cases
         pass
     
     return code
-
