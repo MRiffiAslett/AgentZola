@@ -15,12 +15,17 @@ import sys
 import os
 import random
 from pathlib import Path
+
+_temp = sys.modules.pop('generation.logging', None)
 import logging
+if _temp:
+    sys.modules['generation.logging'] = _temp
 
 import numpy as np
 
 from domain.harness import ExecutionResult
-from generation.log_parser import extract_triggered_passes
+from generation.logging import extract_triggered_passes
+from typing import Optional
 
 
 logger = logging.getLogger(__name__)
@@ -29,67 +34,39 @@ RANDOM_SEED = 42
 
 
 def add_decorator(code: str, decorator: str) -> str:
+    """Add a decorator to the 'call' method of a TensorFlow model.
+    
+    Args:
+        code: Source code string
+        decorator: Decorator to add (e.g., "@tf.function(jit_compile=True)")
+        
+    Returns:
+        Modified code with decorator added
+    """
     if "    def call" in code:
+        # The indentation is 4 spaces
         code = code.replace("    def call", f"    {decorator}\n    def call")
     else:
+        # The indentation is 2 spaces
         code = code.replace("  def call", f"  {decorator}\n  def call")
     return code
 
 
-def extract_input_variable(code: str, test_globals: dict) -> tuple:
-    """
-    Extract input variable(s) from code by finding model call.
-    
-    Looks for patterns like:
-    - y = m(x1)
-    - y = m(x)
-    - y = m.call(x1)
-    
-    Returns (input_var_name, input_value) or (None, None) if not found.
-    """
-    import re
-    
-    # Pattern: m( or m.call( followed by variable name
-    patterns = [
-        r'\bm\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m(x1) or m(x)
-        r'\bm\.call\s*\(\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m.call(x1)
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, code)
-        if match:
-            var_name = match.group(1)
-            if var_name in test_globals:
-                return var_name, test_globals[var_name]
-    
-    # Fallback: look for common variable names
-    common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
-    for name in common_names:
-        if name in test_globals:
-            value = test_globals[name]
-            # Check if it looks like input data (TensorFlow tensor or numpy array)
-            if hasattr(value, 'shape') or isinstance(value, (list, tuple)):
-                return name, value
-    
-    return None, None
 
-
-def process_code(code: str) -> str:
-    if "__call__" in code and " def call(" not in code:
-        if "class Model" in code:
-            lines = code.split("\n")
-            new_lines = []
-            for i, line in enumerate(lines):
-                new_lines.append(line)
-                if "def __call__" in line:
-                    indent = len(line) - len(line.lstrip())
-                    new_lines.append(" " * indent + "def call(self, *args, **kwargs):")
-                    new_lines.append(" " * (indent + 4) + "return self.__call__(*args, **kwargs)")
-            code = "\n".join(new_lines)
-    return code
-
-
-def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionResult:
+def execute_test_in_subprocess(
+    test_file: Path, 
+    whitefox_logger=None,
+    optimization_name: Optional[str] = None,
+    iteration: Optional[int] = None,
+    sample_idx: Optional[int] = None,
+    timeout: int = 60
+) -> ExecutionResult:
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Starting execution", {
+            "test_file": test_file.name,
+            "timeout": timeout,
+        })
+    
     result = ExecutionResult(
         test_file=test_file,
         compile_success_naive=False,
@@ -103,18 +80,30 @@ def execute_test_in_subprocess(test_file: Path, timeout: int = 60) -> ExecutionR
     try:
         with open(test_file, 'r') as f:
             test_code = f.read()
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Code read successfully", {
+                "code_length": len(test_code),
+            })
     except Exception as e:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Failed to read code", {
+                "error": str(e),
+            })
         result.compile_error_naive = str(e)
         result.compile_error_xla = str(e)
         result.compile_error_autocluster = str(e)
         return result
     
-    test_code = process_code(test_code)
-    
     test_file_repr = repr(str(test_file))
     test_code_repr = repr(test_code)
     
-    wrapper_script = f"""
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Creating wrapper script", {
+            "test_code_length": len(test_code),
+        })
+    
+    try:
+        wrapper_script = f"""
 import sys
 import json
 import traceback
@@ -135,6 +124,13 @@ class TeeOutput:
     def flush(self):
         for f in self.files:
             f.flush()
+    def close(self):
+        for f in self.files:
+            if hasattr(f, 'close'):
+                try:
+                    f.close()
+                except Exception:
+                    pass  # Ignore errors when closing
 
 original_stdout = sys.stdout
 original_stderr = sys.stderr
@@ -170,144 +166,155 @@ def _serialize_output(output):
         return str(output)
 
 
-def _add_decorator(code, decorator):
+def add_decorator_inline(code: str, decorator: str) -> str:
+    \"\"\"Add a decorator to the call method - inline version for subprocess.\"\"\"
     if "    def call" in code:
-        code = code.replace("    def call", decorator + "\\n    def call")
+        code = code.replace("    def call", f"    {{decorator}}\\n    def call")
     else:
-        code = code.replace("  def call", decorator + "\\n  def call")
+        code = code.replace("  def call", f"  {{decorator}}\\n  def call")
     return code
 
 
-def _extract_input_variable(code, test_globals):
-    import re
-    # Patterns to find model calls: m(x1) or m.call(x1)
-    patterns = [
-        r'\\bm\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m(x1)
-        r'\\bm\\.call\\s*\\(\\s*([a-zA-Z_][a-zA-Z0-9_]*)',  # m.call(x1)
-    ]
-    for pattern in patterns:
-        try:
-            match = re.search(pattern, code)
-            if match:
-                var_name = match.group(1)
-                if var_name in test_globals:
-                    return var_name, test_globals[var_name]
-        except Exception:
-            pass
-    # Fallback: check common variable names
-    common_names = ['x1', 'x', 'input_data', 'inputs', 'input']
-    for name in common_names:
-        if name in test_globals:
-            value = test_globals[name]
-            # Check if it looks like input data
-            try:
-                if hasattr(value, 'shape') or isinstance(value, (list, tuple, dict)):
-                    return name, value
-            except Exception:
-                pass
-    return None, None
+# Set environment variables BEFORE importing TensorFlow
+# TensorFlow reads XLA_FLAGS and TF_XLA_FLAGS at import time
+import os
+old_xla_flags_env = os.environ.get('XLA_FLAGS', '')
+old_tf_xla_flags_env = os.environ.get('TF_XLA_FLAGS', '')
 
+# Preserve existing flags and add our instrumentation flags
+xla_flags_parts = []
+if old_xla_flags_env:
+    xla_flags_parts.append(old_xla_flags_env)
+# Ensure XLA dumps are enabled to capture pass information
+if '--xla_dump_to=' not in old_xla_flags_env:
+    xla_flags_parts.append('--xla_dump_to=/tmp/xla_dump')
+if '--xla_dump_hlo_pass_re=' not in old_xla_flags_env:
+    xla_flags_parts.append('--xla_dump_hlo_pass_re=.*')
+os.environ['XLA_FLAGS'] = ' '.join(xla_flags_parts) if xla_flags_parts else ''
+
+# Note: TF_XLA_FLAGS will be set per-mode during execution
+# Do NOT set globally here as it affects all modes
 
 try:
     import tensorflow as tf
     import numpy as np
     import random
-    import os
     
     random.seed({RANDOM_SEED})
     np.random.seed({RANDOM_SEED})
     tf.random.set_seed({RANDOM_SEED})
     
-    test_globals = {{'__name__': '__main__'}}.copy()
     test_code = {test_code_repr}
+    model_key = 'm'
+    input_data_key = 'input_data'
     
+    # NAIVE EXECUTION (no decorators)
     try:
-        exec(test_code, test_globals)
+        test_globals_naive = {{
+            '__name__': '__main__',
+            'tf': tf,
+            'np': np,
+            'random': random,
+        }}.copy()
+        exec(test_code, test_globals_naive)
         result["compile_success_naive"] = True
-        result["compile_success_xla"] = True
-        result["compile_success_autocluster"] = True
-    except Exception as e:
-        error_msg = str(e) + "\\n" + traceback.format_exc()
-        result["compile_error_naive"] = error_msg
-        result["compile_error_xla"] = error_msg
-        result["compile_error_autocluster"] = error_msg
-        raise
-    
-    if 'm' not in test_globals:
-        raise Exception("Model 'm' not found in test code")
-    
-    m = test_globals['m']
-    
-    # Try to find input variable - first check for input_data, then extract from code
-    if 'input_data' in test_globals:
-        input_data = test_globals['input_data']
-    else:
-        input_var_name, input_data = _extract_input_variable(test_code, test_globals)
-        if input_data is None:
-            raise Exception("Could not find input data in test code. Looked for input_data and common variable names.")
-    
-    if not isinstance(input_data, (list, tuple)):
-        input_data = [input_data]
-    
-    try:
+        
+        if model_key not in test_globals_naive:
+            raise Exception("Model 'm' not found in test code")
+        if input_data_key not in test_globals_naive:
+            raise Exception("input_data not found in test code - code processing may have failed")
+        
+        m = test_globals_naive[model_key]
+        input_data = test_globals_naive[input_data_key]
+        
+        if not isinstance(input_data, (list, tuple)):
+            input_data = [input_data]
+        
         output_naive = m(*input_data)
         result["runtime_success_naive"] = True
         result["output_naive"] = _serialize_output(output_naive)
     except Exception as e:
-        result["runtime_error_naive"] = str(e) + "\\n" + traceback.format_exc()
+        error_msg = str(e) + "\\n" + traceback.format_exc()
+        if not result["compile_success_naive"]:
+            result["compile_error_naive"] = error_msg
+        else:
+            result["runtime_error_naive"] = error_msg
     
+    # XLA EXECUTION (add @tf.function(jit_compile=True) decorator to source)
     try:
-        xla_code = _add_decorator(test_code, "@tf.function(jit_compile=True)")
-        xla_globals = {{'__name__': '__main__'}}.copy()
-        xla_globals.update({{
+        test_code_xla = add_decorator_inline(test_code, "@tf.function(jit_compile=True)")
+        test_globals_xla = {{
+            '__name__': '__main__',
             'tf': tf,
             'np': np,
             'random': random,
-        }})
-        exec(xla_code, xla_globals)
-        m_xla = xla_globals['m']
-        if 'input_data' in xla_globals:
-            input_data_xla = xla_globals['input_data']
-        else:
-            _, input_data_xla = _extract_input_variable(xla_code, xla_globals)
-            if input_data_xla is None:
-                raise Exception("Could not find input data in XLA execution")
+        }}.copy()
+        exec(test_code_xla, test_globals_xla)
+        result["compile_success_xla"] = True
+        
+        if model_key not in test_globals_xla or input_data_key not in test_globals_xla:
+            raise Exception("Model or input_data not found in XLA execution")
+        
+        m_xla = test_globals_xla[model_key]
+        input_data_xla = test_globals_xla[input_data_key]
+        
         if not isinstance(input_data_xla, (list, tuple)):
             input_data_xla = [input_data_xla]
+        
         output_xla = m_xla(*input_data_xla)
         result["runtime_success_xla"] = True
         result["output_xla"] = _serialize_output(output_xla)
     except Exception as e:
-        result["runtime_error_xla"] = str(e) + "\\n" + traceback.format_exc()
+        error_msg = str(e) + "\\n" + traceback.format_exc()
+        if not result["compile_success_xla"]:
+            result["compile_error_xla"] = error_msg
+        else:
+            result["runtime_error_xla"] = error_msg
     
+    # AUTOCLUSTER EXECUTION (set env vars, add @tf.function decorator to source)
     try:
-        old_xla_flags = os.environ.get('TF_XLA_FLAGS', '')
+        # Set autocluster environment variables
         os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
-        ac_code = _add_decorator(test_code, "@tf.function")
-        ac_globals = {{'__name__': '__main__'}}.copy()
-        ac_globals.update({{
+        
+        test_code_ac = add_decorator_inline(test_code, "@tf.function")
+        test_globals_ac = {{
+            '__name__': '__main__',
             'tf': tf,
             'np': np,
             'random': random,
-        }})
-        exec(ac_code, ac_globals)
-        m_ac = ac_globals['m']
-        if 'input_data' in ac_globals:
-            input_data_ac = ac_globals['input_data']
-        else:
-            _, input_data_ac = _extract_input_variable(ac_code, ac_globals)
-            if input_data_ac is None:
-                raise Exception("Could not find input data in autocluster execution")
+        }}.copy()
+        exec(test_code_ac, test_globals_ac)
+        result["compile_success_autocluster"] = True
+        
+        if model_key not in test_globals_ac or input_data_key not in test_globals_ac:
+            raise Exception("Model or input_data not found in autocluster execution")
+        
+        m_ac = test_globals_ac[model_key]
+        input_data_ac = test_globals_ac[input_data_key]
+        
         if not isinstance(input_data_ac, (list, tuple)):
             input_data_ac = [input_data_ac]
+        
         output_ac = m_ac(*input_data_ac)
         result["runtime_success_autocluster"] = True
         result["output_autocluster"] = _serialize_output(output_ac)
-        os.environ['TF_XLA_FLAGS'] = old_xla_flags
+        
+        # Restore environment variable
+        if old_tf_xla_flags_env:
+            os.environ['TF_XLA_FLAGS'] = old_tf_xla_flags_env
+        else:
+            os.environ.pop('TF_XLA_FLAGS', None)
     except Exception as e:
-        result["runtime_error_autocluster"] = str(e) + "\\n" + traceback.format_exc()
-        if 'old_xla_flags' in locals():
-            os.environ['TF_XLA_FLAGS'] = old_xla_flags
+        error_msg = str(e) + "\\n" + traceback.format_exc()
+        if not result["compile_success_autocluster"]:
+            result["compile_error_autocluster"] = error_msg
+        else:
+            result["runtime_error_autocluster"] = error_msg
+        # Restore environment variable even on error
+        if old_tf_xla_flags_env:
+            os.environ['TF_XLA_FLAGS'] = old_tf_xla_flags_env
+        else:
+            os.environ.pop('TF_XLA_FLAGS', None)
 
 except Exception as e:
     error_msg = str(e) + "\\n" + traceback.format_exc()
@@ -319,26 +326,64 @@ except Exception as e:
         result["compile_error_autocluster"] = error_msg
 
 finally:
+    sys.stdout.flush()
+    sys.stderr.flush()
     result["log_text"] = stdout_capture.getvalue() + stderr_capture.getvalue()
     sys.stdout = original_stdout
     sys.stderr = original_stderr
+    # Restore original environment variables
+    if old_xla_flags_env:
+        os.environ['XLA_FLAGS'] = old_xla_flags_env
+    else:
+        os.environ.pop('XLA_FLAGS', None)
+    if old_tf_xla_flags_env:
+        os.environ['TF_XLA_FLAGS'] = old_tf_xla_flags_env
+    else:
+        os.environ.pop('TF_XLA_FLAGS', None)
 
 print("WHITEFOX_RESULT_START")
 print(json.dumps(result))
 print("WHITEFOX_RESULT_END")
 """
+    except Exception as e:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] ERROR creating wrapper script", {
+                "error": str(e)[:500],
+            })
+        result.compile_error_naive = f"Wrapper script creation failed: {str(e)}"
+        result.compile_error_xla = f"Wrapper script creation failed: {str(e)}"
+        result.compile_error_autocluster = f"Wrapper script creation failed: {str(e)}"
+        return result
+    
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Wrapper script created successfully", {
+            "script_length": len(wrapper_script),
+        })
+    
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Launching subprocess", {
+            "timeout": timeout,
+        })
     
     try:
+        # Ensure subprocess inherits environment variables (especially XLA_FLAGS)
+        # This is important for the custom TensorFlow build to output WHITEFOX_PASS_START markers
         process = subprocess.run(
             [sys.executable, "-c", wrapper_script],
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=os.environ.copy(),  # Explicitly pass environment
         )
         
-        output = process.stdout + process.stderr
-        result.log_text = output
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Subprocess completed", {
+                "returncode": process.returncode,
+            })
         
+        output = process.stdout + process.stderr
+        
+        log_text_from_json = None
         if "WHITEFOX_RESULT_START" in output and "WHITEFOX_RESULT_END" in output:
             start_idx = output.find("WHITEFOX_RESULT_START") + len("WHITEFOX_RESULT_START")
             end_idx = output.find("WHITEFOX_RESULT_END")
@@ -360,20 +405,130 @@ print("WHITEFOX_RESULT_END")
                 result.output_naive = result_data.get("output_naive")
                 result.output_xla = result_data.get("output_xla")
                 result.output_autocluster = result_data.get("output_autocluster")
+                log_text_from_json = result_data.get("log_text", "")
             except json.JSONDecodeError:
                 logger.warning(f"Failed to parse JSON result from {test_file}")
         
+        if log_text_from_json is not None and log_text_from_json:
+            result.log_text = log_text_from_json
+        else:
+            result.log_text = output
+        
         result.triggered_passes = extract_triggered_passes(result.log_text)
         
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Parsed results", {
+                "triggered_passes": list(result.triggered_passes),
+                "naive_success": result.runtime_success_naive,
+                "xla_success": result.runtime_success_xla,
+                "ac_success": result.runtime_success_autocluster,
+            })
+        
+        # Log diagnostic information after execution (failures only + pass detection)
+        if whitefox_logger:
+            # Log initial execution failures only
+            if result.compile_error_naive:
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "exec_initial",
+                    "failure",
+                    {
+                        "error": result.compile_error_naive[:500],
+                        "error_type": "compile_error"
+                    }
+                )
+            elif result.runtime_error_naive:
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "exec_initial",
+                    "failure",
+                    {
+                        "error": result.runtime_error_naive[:500],
+                        "error_type": "runtime_error"
+                    }
+                )
+            elif result.compile_success_naive and result.runtime_success_naive:
+                # Log success
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "exec_initial",
+                    "success",
+                    {}
+                )
+            
+            # Log XLA execution failures only
+            if result.compile_error_xla:
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "xla_exec",
+                    "failure",
+                    {
+                        "error": result.compile_error_xla[:500],
+                        "error_type": "xla_compile_error"
+                    }
+                )
+            elif result.runtime_error_xla:
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "xla_exec",
+                    "failure",
+                    {
+                        "error": result.runtime_error_xla[:500],
+                        "error_type": "xla_runtime_error"
+                    }
+                )
+            elif result.compile_success_xla and result.runtime_success_xla:
+                # Log success
+                whitefox_logger.log_diagnostic(
+                    optimization_name or "unknown",
+                    iteration or 0,
+                    sample_idx or 0,
+                    "xla_exec",
+                    "success",
+                    {"triggered_passes": list(result.triggered_passes)}
+                )
+        
+        # Debug logging: check if WHITEFOX_PASS_START markers are present
+        if "WHITEFOX_PASS_START" in result.log_text:
+            logger.debug(f"Found WHITEFOX_PASS_START markers in log for {test_file}, "
+                        f"detected passes: {result.triggered_passes}")
+        elif result.runtime_success_xla:
+            logger.warning(f"No WHITEFOX_PASS_START markers found in log for {test_file} "
+                         f"despite successful XLA execution. Log length: {len(result.log_text)}, "
+                         f"log_text_from_json was {'set' if log_text_from_json else 'None'}")
+        elif result.compile_success_xla and not result.runtime_success_xla:
+            logger.debug(f"XLA compiled but runtime failed for {test_file}, log length: {len(result.log_text)}")
+        elif len(result.log_text) == 0:
+            logger.debug(f"Empty log_text for {test_file}, XLA never ran or logs not captured")
+        
     except subprocess.TimeoutExpired:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] TIMEOUT after {timeout}s")
         result.runtime_error_naive = "Execution timeout"
         result.runtime_error_xla = "Execution timeout"
         result.runtime_error_autocluster = "Execution timeout"
         logger.warning(f"Test {test_file} timed out after {timeout} seconds")
     except Exception as e:
+        if whitefox_logger:
+            whitefox_logger.trace(f"          [HARNESS] Exception in subprocess", {
+                "error": str(e)[:200],
+            })
         result.compile_error_naive = str(e)
         result.compile_error_xla = str(e)
         result.compile_error_autocluster = str(e)
         logger.error(f"Error executing {test_file}: {e}")
+    
+    if whitefox_logger:
+        whitefox_logger.trace(f"          [HARNESS] Returning result")
     
     return result
