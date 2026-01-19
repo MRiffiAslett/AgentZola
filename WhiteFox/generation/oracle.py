@@ -208,6 +208,9 @@ def check_oracles(
         if fail_str in FAIL_MAPPING:
             res_type = FAIL_MAPPING[fail_str]
             
+            if res_type == ResType.AllFail:
+                return bug_reports
+            
             error_details = {
                 "Naive Fail": result.runtime_error_naive or result.compile_error_naive if fail[0] else None,
                 "XLA Fail": result.runtime_error_xla or result.compile_error_xla if fail[1] else None,
