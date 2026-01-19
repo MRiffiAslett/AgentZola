@@ -17,7 +17,6 @@ class PathsConfig(BaseModel):
     log_file: str = Field(description="Log file path")
     test_output_root: Optional[str] = Field(default=None, description="Root directory for generated tests per optimization")
     logs_root: Optional[str] = Field(default=None, description="Root directory for execution logs")
-    bandit_state_file: Optional[str] = Field(default=None, description="Path to JSON/YAML file for WhiteFoxState persistence")
     bug_reports_dir: Optional[str] = Field(default=None, description="Directory for bug reports")
 
 
@@ -42,6 +41,8 @@ class GenerationConfig(BaseModel):
     tests_per_iteration: int = Field(default=10, description="Tests to generate per iteration")
     max_iterations: int = Field(default=100, description="Maximum iterations per optimization")
     examples_per_prompt: int = Field(default=3, description="Number of examples to include in feedback prompt (N in Thompson Sampling)")
+    max_parallel_executions: int = Field(default=4, description="Maximum number of parallel test executions")
+    execution_timeout: int = Field(default=5, description="Timeout in seconds for each test execution")
 
 
 class OraclesConfig(BaseModel):

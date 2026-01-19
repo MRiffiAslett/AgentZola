@@ -6,8 +6,6 @@ prompt_dir = "prompts"
 output_dir = "generated-outputs"
 hf_home = "hf_cache"
 log_file = "whitefox-llm-gen.log"
-# WhiteFox-specific paths
-bandit_state_file = "whitefox_state.json"
 
 
 
@@ -31,6 +29,9 @@ tests_per_optimization = 10  # Total tests to generate per optimization
 tests_per_iteration = 5      # Tests to generate per iteration (10 tests per batch as per spec)
 max_iterations = 15           # Maximum iterations per optimization
 examples_per_prompt = 3        # Number of examples to include in feedback prompt (few-shot)
+# Parallel execution settings for performance optimization
+max_parallel_executions = 8   # Number of tests to execute in parallel (adjust based on CPU cores)
+execution_timeout = 5         # Timeout in seconds for each test execution
 
 # Hardcoded list of optimizations that WhiteFox targets
 optimizations = [

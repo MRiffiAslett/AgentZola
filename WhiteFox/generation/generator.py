@@ -4,8 +4,9 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict, Any
 import importlib.util
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 _temp_modules = {k: sys.modules.pop(k) for k in list(sys.modules.keys()) if k.startswith('generation.logging')}
 sys.modules.pop('logging', None)
@@ -40,6 +41,74 @@ from generation.code_refiner import ensure_imports, parse_generated_code, refine
 from generation.logging import WhiteFoxLogger
 
 import tomllib
+
+
+def _execute_single_test_worker(
+    test_file: Path,
+    opt_name: str,
+    iteration: int,
+    sample_idx: int,
+    timeout: int,
+    logs_root: Path,
+    pass_log_names: List[str]
+) -> Tuple[int, Dict[str, Any]]:
+    """
+    Worker function for parallel test execution.
+    Returns (sample_idx, result_dict) for easier tracking.
+    """
+    try:
+        from generation.harness import execute_test_in_subprocess
+        from generation.oracle import check_oracles
+        from domain.requirement import OptimizationSpec
+        
+        # Execute test - whitefox_logger is None for parallel workers
+        result = execute_test_in_subprocess(
+            test_file, 
+            whitefox_logger=None,
+            optimization_name=opt_name,
+            iteration=iteration,
+            sample_idx=sample_idx,
+            timeout=timeout
+        )
+        
+        # Write log file
+        log_file = logs_root / opt_name / f"{test_file.stem}.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.write_text(result.log_text)
+        
+        # Check if pass was triggered
+        pass_triggered = any(
+            pass_name in result.triggered_passes 
+            for pass_name in pass_log_names
+        )
+        
+        # Read test code for oracle checking
+        test_code = None
+        try:
+            test_code = test_file.read_text()
+        except Exception:
+            pass
+        
+        # Check oracles
+        bug_reports = check_oracles(result, test_code=test_code)
+        
+        return sample_idx, {
+            "test_file": test_file,
+            "result": result,
+            "pass_triggered": pass_triggered,
+            "bug_reports": bug_reports,
+            "success": True,
+            "error": None,
+        }
+    except Exception as e:
+        return sample_idx, {
+            "test_file": test_file,
+            "result": None,
+            "pass_triggered": False,
+            "bug_reports": [],
+            "success": False,
+            "error": str(e),
+        }
 
 
 class StarCoderGenerator:
@@ -139,11 +208,6 @@ class StarCoderGenerator:
         if self.config.pass_name_aliases and self.config.pass_name_aliases.pass_name_aliases:
             pass_name_aliases = self.config.pass_name_aliases.pass_name_aliases
         specs = load_optimization_specs(optimizations_dir, optimizations_list, pass_name_aliases)
-        
-        logging_dir = self._get_logging_dir()
-        source_dir = logging_dir / "source"
-        source_dir.mkdir(parents=True, exist_ok=True)
-        state_file = source_dir / "whitefox_state.json"
         
         # Always create a fresh state with all optimizations from specs
         state = WhiteFoxState(optimizations={})
@@ -284,10 +348,11 @@ class StarCoderGenerator:
             num_triggered = 0
             num_not_triggered = 0
             
+            # Save all test files first (fast, sequential)
+            test_files = []
             for sample_idx, generated_text in enumerate(generated_texts):
-                whitefox_logger.trace(f"      - Processing sample {sample_idx}/{len(generated_texts)}")
                 try:
-                    whitefox_logger.trace(f"        * Saving test file for sample {sample_idx}")
+                    whitefox_logger.trace(f"      - Saving test file for sample {sample_idx}")
                     test_file = self._save_generated_test(
                         generated_text,
                         opt_name,
@@ -296,88 +361,116 @@ class StarCoderGenerator:
                         output_root,
                         whitefox_logger
                     )
-                    whitefox_logger.trace(f"        * Test file saved: {test_file.name}")
-                    
-                    whitefox_logger.trace(f"        * Executing test in subprocess: {test_file.name}")
-                    result = execute_test_in_subprocess(test_file, whitefox_logger, opt_name, iteration, sample_idx)
-                    whitefox_logger.trace(f"        * Execution completed for {test_file.name}", {
-                        "naive_success": result.runtime_success_naive,
-                        "xla_success": result.runtime_success_xla,
-                        "autocluster_success": result.runtime_success_autocluster,
-                    })
-                    
-                    log_file = logs_root / opt_name / f"{test_file.stem}.log"
-                    log_file.parent.mkdir(parents=True, exist_ok=True)
-                    log_file.write_text(result.log_text)
-                    
-                    pass_triggered = opt_state.spec.matches_any_pass(result.triggered_passes)
-                    
-                    whitefox_logger.trace(f"        * Pass detection: {pass_triggered}", {
-                        "expected_passes": opt_state.spec.pass_log_names,
-                        "triggered_passes": list(result.triggered_passes),
-                    })
-                    
-                    whitefox_logger.log_pass_detection_analysis(
-                        opt_name,
-                        iteration,
-                        sample_idx,
-                        opt_state.spec.pass_log_name,  # Use first alias for backward compatibility
-                        result.log_text,
-                        result.triggered_passes,
-                        opt_state.spec.pass_log_name,
-                        expected_passes=opt_state.spec.pass_log_names  # Pass all aliases for better logging
-                    )
-                    
-                    whitefox_logger.log_execution_result(
-                        opt_name,
-                        iteration,
-                        sample_idx,
-                        test_file,
-                        result,
-                        pass_triggered,
-                        opt_state.spec.pass_log_name
-                    )
-                    
-                    if pass_triggered:
-                        num_triggered += 1
-                        is_new = True
-                        for existing_test in opt_state.triggering_tests.values():
-                            if existing_test.file_path == test_file:
-                                is_new = False
-                                break
-                        
-                        if is_new:
-                            new_triggering_tests.append(test_file)
-                    else:
-                        num_not_triggered += 1
-                    
-                    test_code = None
-                    try:
-                        test_code = test_file.read_text()
-                    except Exception:
-                        pass
-                    
-                    bug_reports = check_oracles(
-                        result,
-                        test_code=test_code
-                    )
-                    
-                    for bug_report in bug_reports:
-                        whitefox_logger.log_bug_report(bug_report)
-                        self.logger.warning(
-                            f"Bug detected: {bug_report.oracle_type} in {test_file}"
-                        )
-                
+                    test_files.append((sample_idx, test_file))
                 except Exception as e:
                     whitefox_logger.log_error(
                         opt_name,
                         iteration,
-                        "sample_processing_error",
-                        f"Error processing sample {sample_idx}: {str(e)}",
+                        "test_save_error",
+                        f"Error saving sample {sample_idx}: {str(e)}",
                         {"sample_idx": sample_idx},
                         e
                     )
-                    self.logger.error(f"Error processing sample {sample_idx} for {opt_name} it{iteration}: {e}", exc_info=True)
+                    self.logger.error(f"Error saving sample {sample_idx} for {opt_name} it{iteration}: {e}", exc_info=True)
+            
+            # Execute tests in parallel (slow I/O-bound operations)
+            max_workers = self.config.generation.max_parallel_executions
+            timeout = self.config.generation.execution_timeout
+            
+            whitefox_logger.trace(f"    > Executing {len(test_files)} tests in parallel", {
+                "max_workers": max_workers,
+                "timeout": timeout,
+            })
+            
+            execution_results = {}
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for sample_idx, test_file in test_files:
+                    future = executor.submit(
+                        _execute_single_test_worker,
+                        test_file,
+                        opt_name,
+                        iteration,
+                        sample_idx,
+                        timeout,
+                        logs_root,
+                        opt_state.spec.pass_log_names
+                    )
+                    futures[future] = (sample_idx, test_file)
+                
+                # Collect results as they complete
+                for future in as_completed(futures):
+                    sample_idx, test_file = futures[future]
+                    try:
+                        returned_idx, worker_result = future.result()
+                        
+                        execution_results[returned_idx] = worker_result
+                        
+                        whitefox_logger.trace(f"      - Test {returned_idx} completed", {
+                            "success": worker_result["success"],
+                        })
+                    except Exception as e:
+                        whitefox_logger.log_error(
+                            opt_name,
+                            iteration,
+                            "parallel_execution_error",
+                            f"Error in parallel execution for sample {sample_idx}: {str(e)}",
+                            {"sample_idx": sample_idx},
+                            e
+                        )
+                        self.logger.error(f"Error in parallel execution for sample {sample_idx}: {e}", exc_info=True)
+            
+            # Process results in order and update state
+            for sample_idx, test_file in test_files:
+                if sample_idx not in execution_results:
+                    continue
+                
+                worker_result = execution_results[sample_idx]
+                
+                if not worker_result["success"]:
+                    whitefox_logger.log_error(
+                        opt_name,
+                        iteration,
+                        "sample_processing_error",
+                        f"Error processing sample {sample_idx}: {worker_result['error']}",
+                        {"sample_idx": sample_idx},
+                        None
+                    )
+                    self.logger.error(f"Error processing sample {sample_idx} for {opt_name} it{iteration}: {worker_result['error']}")
+                    continue
+                
+                result = worker_result["result"]
+                pass_triggered = worker_result["pass_triggered"]
+                bug_reports = worker_result["bug_reports"]
+                
+                # Log results
+                whitefox_logger.trace(f"      - Processing results for sample {sample_idx}")
+                
+                whitefox_logger.trace(f"        * Pass detection: {pass_triggered}", {
+                    "expected_passes": opt_state.spec.pass_log_names,
+                    "triggered_passes": list(result.triggered_passes),
+                })
+                
+                # Update counters
+                if pass_triggered:
+                    num_triggered += 1
+                    is_new = True
+                    for existing_test in opt_state.triggering_tests.values():
+                        if existing_test.file_path == test_file:
+                            is_new = False
+                            break
+                    
+                    if is_new:
+                        new_triggering_tests.append(test_file)
+                else:
+                    num_not_triggered += 1
+                
+                # Log bug reports
+                for bug_report in bug_reports:
+                    whitefox_logger.log_bug_report(bug_report)
+                    self.logger.warning(
+                        f"Bug detected: {bug_report.oracle_type} in {test_file}"
+                    )
             
             if opt_state.triggering_tests or new_triggering_tests:
                 update_bandit_after_generation(
@@ -399,12 +492,6 @@ class StarCoderGenerator:
                 example_tests
             )
             
-            logging_dir = self._get_logging_dir()
-            source_dir = logging_dir / "source"
-            source_dir.mkdir(parents=True, exist_ok=True)
-            state_file = source_dir / "whitefox_state.json"
-            self.whitefox_state.save(state_file)
-            
             whitefox_logger.trace(f"  >> Iteration {iteration} complete", {
                 "triggered": num_triggered,
                 "not_triggered": num_not_triggered,
@@ -423,24 +510,8 @@ class StarCoderGenerator:
     ) -> None:
         logging_dir = self._get_logging_dir()
         project_root = logging_dir.parent
-        source_dir = logging_dir / "source"
-        source_dir.mkdir(parents=True, exist_ok=True)
         
-        # Clear state file to ensure fresh start with all optimizations
-        state_file = source_dir / "whitefox_state.json"
-        old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
-        if not old_state_file.is_absolute():
-            old_state_file = project_root / old_state_file
-        
-        # Remove any existing state files to start fresh
-        import shutil
-        if state_file.exists():
-            state_file.unlink()
-        if old_state_file.exists() and old_state_file != state_file:
-            self.logger.info(f"Removing old state file for fresh start: {old_state_file}")
-            old_state_file.unlink()
-        
-        # Now load or initialize fresh state with all optimizations
+        # Load or initialize fresh state with all optimizations
         self.whitefox_state = self._load_or_init_whitefox_state()
         
         output_dir = Path(self.config.paths.output_dir)
@@ -496,7 +567,7 @@ class StarCoderGenerator:
                     only_optimizations
                 )
                 # Update run summary after each optimization completes
-                whitefox_logger.generate_run_summary(self.whitefox_state)
+                whitefox_logger.generate_run_summary_detailed(self.whitefox_state)
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_state.spec.internal_name,
@@ -508,12 +579,12 @@ class StarCoderGenerator:
                 )
                 self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
                 # Still update summary even if optimization failed
-                whitefox_logger.generate_run_summary(self.whitefox_state)
+                whitefox_logger.generate_run_summary_detailed(self.whitefox_state)
         
         whitefox_logger.flush()
         
         # Generate run summary log
-        whitefox_logger.generate_run_summary(self.whitefox_state)
+        whitefox_logger.generate_run_summary_detailed(self.whitefox_state)
         
         self.logger.info("WhiteFox fuzzing complete")
 
