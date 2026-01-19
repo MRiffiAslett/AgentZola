@@ -6,5 +6,5 @@ __pycache__/
 WhiteFox/slurm/output_tf
 WhiteFox/logging/
 WhiteFox/hf_cache/
-WhiteFox/xilo_xla/
+WhiteFox/xilo_xla/artifacts/
 

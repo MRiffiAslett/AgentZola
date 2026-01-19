@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..generation.spec import OptimizationSpec
+    from ..generation.prompts import OptimizationSpec
 
 
 @dataclass

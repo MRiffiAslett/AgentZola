@@ -1,17 +1,30 @@
 
-import logging
 import os
 import random
 import sys
 import time
 from pathlib import Path
 from typing import Optional, List
+import importlib.util
+
+_temp_modules = {k: sys.modules.pop(k) for k in list(sys.modules.keys()) if k.startswith('generation.logging')}
+sys.modules.pop('logging', None)
+
+_temp_path = sys.path[:]
+sys.path = [p for p in sys.path if 'generation' not in p.lower() or 'AgentZola' not in p]
+_spec = importlib.util.find_spec('logging')
+logging = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(logging)
+sys.modules['logging'] = logging
+sys.path[:] = _temp_path
+for k, v in _temp_modules.items():
+    sys.modules[k] = v
 
 from vllm import LLM, SamplingParams
 
 from models.generation import GeneratorConfig
 
-from generation.spec import load_optimization_specs
+from generation.prompts import load_optimization_specs
 from domain.bandit import (
     WhiteFoxState,
     OptimizationState,
@@ -23,26 +36,10 @@ from generation.bandit import (
 from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
-from generation.code_cleaner import clean_generated_code
-from generation.logger import WhiteFoxLogger
-from generation.api_validator import validate_tensorflow_apis
-from generation.sanity_checker import run_sanity_check
+from generation.code_refiner import ensure_imports, parse_generated_code, refine_generated_code
+from generation.logging import WhiteFoxLogger
 
-try:
-    import tomllib
-    TOML_LOAD = tomllib.load
-except ImportError:
-    try:
-        import tomli
-        TOML_LOAD = tomli.load
-    except ImportError:
-        try:
-            import toml
-            TOML_LOAD = toml.load
-        except ImportError:
-            raise ImportError(
-                "No TOML parser found. Please install one of: tomli, toml, or use Python 3.11+"
-            )
+import tomllib
 
 
 class StarCoderGenerator:
@@ -60,12 +57,8 @@ class StarCoderGenerator:
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         
-        try:
-            with open(config_path, "rb") as f:
-                toml_data = TOML_LOAD(f)
-        except (TypeError, AttributeError):
-            with open(config_path, "r") as f:
-                toml_data = TOML_LOAD(f)
+        with open(config_path, "rb") as f:
+            toml_data = tomllib.load(f)
         
         try:
             config = GeneratorConfig.from_toml(toml_data)
@@ -81,55 +74,25 @@ class StarCoderGenerator:
         if self.config.paths.hf_cache:
             os.environ["HF_CACHE"] = self.config.paths.hf_cache
     
-    def _get_logging_dir(self) -> Optional[Path]:
+    def _get_logging_dir(self) -> Path:
         """Get the logging directory path."""
-        cwd = Path.cwd()
-        if cwd.name == "WhiteFox":
-            project_root = cwd
-        else:
-            current = cwd
-            project_root = None
-            while current != current.parent:
-                if (current / "WhiteFox").exists() and (current / "WhiteFox").is_dir():
-                    project_root = current / "WhiteFox"
-                    break
-                current = current.parent
-            
-            if not project_root:
-                project_root = Path("WhiteFox")
-        
-        return project_root / "logging"
+        generation_dir = Path(__file__).parent
+        whitefox_dir = generation_dir.parent
+        return whitefox_dir / "logging"
     
     def _setup_logging(self) -> None:
-        # Determine logging directory - use WhiteFox/logging if relative, or absolute path
         log_file_path = Path(self.config.paths.log_file or "whitefox-llm-gen.log")
+        logging_dir = self._get_logging_dir()
         
-        # If log file is relative, put it in WhiteFox/logging
         if not log_file_path.is_absolute():
-            # Find project root (directory containing WhiteFox)
-            cwd = Path.cwd()
-            project_root = None
-            if cwd.name == "WhiteFox":
-                project_root = cwd
-            else:
-                current = cwd
-                while current != current.parent:
-                    if (current / "WhiteFox").exists() and (current / "WhiteFox").is_dir():
-                        project_root = current / "WhiteFox"
-                        break
-                    current = current.parent
-            
-            if project_root:
-                log_file_path = project_root / "logging" / log_file_path.name
-            else:
-                log_file_path = Path("logging") / log_file_path.name
+            log_file_path = logging_dir / log_file_path.name
         
-        # Ensure log directory exists
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
         
         logging.basicConfig(
             level=logging.INFO,
             filename=str(log_file_path),
+            filemode='w',  # Overwrite log file on each run
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
@@ -160,81 +123,35 @@ class StarCoderGenerator:
             seed=random.randint(0, 10000)
         )
     
+    def _resolve_path(self, path: Path) -> Path:
+        """Resolve a path relative to WhiteFox directory."""
+        if path.is_absolute():
+            return path
+        
+        whitefox_dir = self._get_logging_dir().parent
+        return (whitefox_dir / path).resolve()
+    
     def _load_or_init_whitefox_state(self) -> WhiteFoxState:
-        optimizations_dir = Path(self.config.generation.optimizations_dir)
-        
-        # Resolve relative paths
-        if not optimizations_dir.is_absolute():
-            # If path starts with "WhiteFox/", resolve relative to project root
-            if str(optimizations_dir).startswith("WhiteFox/"):
-                cwd = Path.cwd()
-                project_root = None
-                
-                # If current directory is "WhiteFox", project root is its parent
-                if cwd.name == "WhiteFox":
-                    project_root = cwd.parent
-                else:
-                    # Go up until we find the directory containing WhiteFox
-                    current = cwd
-                    while current != current.parent:
-                        if (current / "WhiteFox").exists() and (current / "WhiteFox").is_dir():
-                            project_root = current
-                            break
-                        current = current.parent
-                
-                if project_root:
-                    optimizations_dir = (project_root / optimizations_dir).resolve()
-                else:
-                    # Fallback: assume we're at project root
-                    optimizations_dir = (cwd / optimizations_dir).resolve()
-            elif self.config_file_path:
-                # Otherwise, resolve relative to config file directory
-                config_dir = self.config_file_path.parent
-                optimizations_dir = (config_dir / optimizations_dir).resolve()
-            else:
-                # Fallback: resolve relative to current working directory
-                optimizations_dir = optimizations_dir.resolve()
-        
-        if not optimizations_dir.exists():
-            raise FileNotFoundError(
-                f"Optimizations directory not found: {optimizations_dir}. "
-                "Please set generation.optimizations_dir in config. "
-                f"Original path: {self.config.generation.optimizations_dir}, "
-                f"Current working directory: {Path.cwd()}"
-            )
-        
+        optimizations_dir = self._resolve_path(Path(self.config.generation.optimizations_dir))
         optimizations_list = self.config.generation.optimizations
-        specs = load_optimization_specs(optimizations_dir, optimizations_list)
-        self.logger.info(f"Loaded {len(specs)} optimization specifications")
+        # Use pass name aliases from config if available
+        pass_name_aliases = None
+        if self.config.pass_name_aliases and self.config.pass_name_aliases.pass_name_aliases:
+            pass_name_aliases = self.config.pass_name_aliases.pass_name_aliases
+        specs = load_optimization_specs(optimizations_dir, optimizations_list, pass_name_aliases)
         
-        # Try to load state from logging directory first, then fallback to config or default
         logging_dir = self._get_logging_dir()
-        state_file = None
+        source_dir = logging_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        state_file = source_dir / "whitefox_state.json"
         
-        if logging_dir:
-            state_file = logging_dir / "whitefox_state.json"
-            if not state_file.exists():
-                # Try old location as fallback
-                old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
-                # Also check in project root
-                if not old_state_file.is_absolute():
-                    project_root = logging_dir.parent
-                    old_state_file = project_root / old_state_file
-                
-                if old_state_file.exists() and old_state_file != state_file:
-                    # Move old state file to logging directory
-                    import shutil
-                    shutil.move(str(old_state_file), str(state_file))
-                    self.logger.info(f"Moved state file from {old_state_file} to {state_file}")
-        else:
-            state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
+        # Always create a fresh state with all optimizations from specs
+        state = WhiteFoxState(optimizations={})
         
-        state = WhiteFoxState.load(state_file, specs)
-        
+        # Initialize state with all optimizations from specs
         for opt_name, spec in specs.items():
-            if opt_name not in state.optimizations:
-                state.optimizations[opt_name] = OptimizationState(spec=spec)
-        
+            state.optimizations[opt_name] = OptimizationState(spec=spec)
+            
         return state
     
     def _save_generated_test(
@@ -250,44 +167,24 @@ class StarCoderGenerator:
         opt_dir = output_root / optimization_name
         opt_dir.mkdir(parents=True, exist_ok=True)
         
-        # Clean the generated code
-        cleaned_code = clean_generated_code(generated_text)
+        # Apply complete code refinement pipeline (parse, imports, AST processing)
+        processed_code = refine_generated_code(generated_text)
         
-        # Validate TensorFlow APIs
-        is_valid_api, api_errors = validate_tensorflow_apis(cleaned_code)
+        # For logging, also keep the parsed version (before AST processing)
+        parsed_code = parse_generated_code(generated_text)
         
-        # Track what changed during cleaning
-        cleaning_changes = {
-            "had_markdown": "```" in generated_text,
-            "had_tf_import": "import tensorflow" in generated_text or "import tensorflow" in cleaned_code,
-            "had_np_import": "import numpy" in generated_text or "import numpy" in cleaned_code,
-            "raw_length": len(generated_text),
-            "cleaned_length": len(cleaned_code),
-            "api_valid": is_valid_api,
-            "api_errors": api_errors,
-        }
-        
-        # If invalid APIs detected, add comment and log warning
-        if not is_valid_api:
-            self.logger.warning(
-                f"Invalid TensorFlow APIs detected in {optimization_name} it{iteration} sample{sample_idx}: {api_errors}"
-            )
-            # Add comment to code indicating API issues
-            cleaned_code = f"# WARNING: Invalid APIs detected: {', '.join(api_errors)}\n# Code may fail at runtime\n{cleaned_code}"
-        
-        # Log the code generation
         if whitefox_logger:
             whitefox_logger.log_generated_code(
                 optimization_name,
                 iteration,
                 sample_idx,
                 generated_text,
-                cleaned_code,
-                cleaning_changes
+                processed_code,
+                parsed_code
             )
         
         test_file = opt_dir / f"{optimization_name}-it{iteration}-sample{sample_idx}.py"
-        test_file.write_text(cleaned_code)
+        test_file.write_text(processed_code)
         
         return test_file
     
@@ -296,7 +193,6 @@ class StarCoderGenerator:
         opt_state: OptimizationState,
         output_root: Path,
         logs_root: Path,
-        bug_reports_dir: Path,
         whitefox_logger: WhiteFoxLogger,
         only_optimizations: Optional[List[str]] = None
     ) -> None:
@@ -306,18 +202,22 @@ class StarCoderGenerator:
         if only_optimizations and opt_name not in only_optimizations:
             return
         
-        self.logger.info(f"Processing optimization: {opt_name}")
-        
+        whitefox_logger.trace(f">>> Starting optimization: {opt_name}", {
+            "pass_log_name": opt_state.spec.pass_log_name,  # First alias for backward compatibility
+            "pass_log_names": opt_state.spec.pass_log_names,  # All aliases
+            "num_existing_tests": len(opt_state.triggering_tests),
+        })
+                
         max_iterations = self.config.generation.max_iterations
         tests_per_iteration = self.config.generation.tests_per_iteration
         examples_per_prompt = self.config.generation.examples_per_prompt
         
         for iteration in range(max_iterations):
+            whitefox_logger.trace(f"  >> Iteration {iteration}/{max_iterations} for {opt_name}")
             self.logger.info(
                 f"  Iteration {iteration + 1}/{max_iterations} for {opt_name}"
             )
             
-            # Create a copy of state before iteration for logging
             import copy
             before_state = OptimizationState(
                 spec=opt_state.spec,
@@ -329,11 +229,9 @@ class StarCoderGenerator:
                     opt_state,
                     examples_per_prompt
                 )
-                # Build prompt with token limit to prevent overflow
                 prompt = build_feedback_prompt(
                     opt_state.spec, 
-                    example_tests,
-                    max_model_len=self.config.model.max_model_len
+                    example_tests
                 )
                 prompt_type = "feedback"
             else:
@@ -341,7 +239,11 @@ class StarCoderGenerator:
                 prompt = build_base_prompt(opt_state.spec)
                 prompt_type = "base"
             
-            # Log the prompt
+            whitefox_logger.trace(f"    > Prompt built: {prompt_type}", {
+                "num_examples": len(example_tests),
+                "prompt_length": len(prompt),
+            })
+            
             whitefox_logger.log_prompt(
                 opt_name,
                 iteration,
@@ -351,8 +253,14 @@ class StarCoderGenerator:
             )
             
             try:
+                whitefox_logger.trace(f"    > Calling LLM.generate", {
+                    "num_samples": tests_per_iteration,
+                })
                 sampling_params = self._create_sampling_params(tests_per_iteration)
                 outputs = self.llm.generate([prompt], sampling_params)
+                whitefox_logger.trace(f"    > LLM.generate completed", {
+                    "num_outputs": len(outputs),
+                })
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_name,
@@ -370,12 +278,16 @@ class StarCoderGenerator:
                 for text_output in output.outputs:
                     generated_texts.append(text_output.text)
             
+            whitefox_logger.trace(f"    > Processing {len(generated_texts)} generated samples")
+            
             new_triggering_tests = []
             num_triggered = 0
             num_not_triggered = 0
             
             for sample_idx, generated_text in enumerate(generated_texts):
+                whitefox_logger.trace(f"      - Processing sample {sample_idx}/{len(generated_texts)}")
                 try:
+                    whitefox_logger.trace(f"        * Saving test file for sample {sample_idx}")
                     test_file = self._save_generated_test(
                         generated_text,
                         opt_name,
@@ -384,28 +296,38 @@ class StarCoderGenerator:
                         output_root,
                         whitefox_logger
                     )
+                    whitefox_logger.trace(f"        * Test file saved: {test_file.name}")
                     
-                    result = execute_test_in_subprocess(test_file)
+                    whitefox_logger.trace(f"        * Executing test in subprocess: {test_file.name}")
+                    result = execute_test_in_subprocess(test_file, whitefox_logger, opt_name, iteration, sample_idx)
+                    whitefox_logger.trace(f"        * Execution completed for {test_file.name}", {
+                        "naive_success": result.runtime_success_naive,
+                        "xla_success": result.runtime_success_xla,
+                        "autocluster_success": result.runtime_success_autocluster,
+                    })
                     
-                    # Save execution log to logs_root (for compatibility)
                     log_file = logs_root / opt_name / f"{test_file.stem}.log"
                     log_file.parent.mkdir(parents=True, exist_ok=True)
                     log_file.write_text(result.log_text)
                     
-                    pass_triggered = opt_state.spec.pass_log_name in result.triggered_passes
+                    pass_triggered = opt_state.spec.matches_any_pass(result.triggered_passes)
                     
-                    # Log pass detection analysis
+                    whitefox_logger.trace(f"        * Pass detection: {pass_triggered}", {
+                        "expected_passes": opt_state.spec.pass_log_names,
+                        "triggered_passes": list(result.triggered_passes),
+                    })
+                    
                     whitefox_logger.log_pass_detection_analysis(
                         opt_name,
                         iteration,
                         sample_idx,
-                        opt_state.spec.pass_log_name,
+                        opt_state.spec.pass_log_name,  # Use first alias for backward compatibility
                         result.log_text,
                         result.triggered_passes,
-                        opt_state.spec.pass_log_name
+                        opt_state.spec.pass_log_name,
+                        expected_passes=opt_state.spec.pass_log_names  # Pass all aliases for better logging
                     )
                     
-                    # Log execution result
                     whitefox_logger.log_execution_result(
                         opt_name,
                         iteration,
@@ -441,8 +363,7 @@ class StarCoderGenerator:
                     )
                     
                     for bug_report in bug_reports:
-                        bug_file = bug_reports_dir / f"{test_file.stem}-bug.json"
-                        bug_report.save(bug_file)
+                        whitefox_logger.log_bug_report(bug_report)
                         self.logger.warning(
                             f"Bug detected: {bug_report.oracle_type} in {test_file}"
                         )
@@ -458,7 +379,6 @@ class StarCoderGenerator:
                     )
                     self.logger.error(f"Error processing sample {sample_idx} for {opt_name} it{iteration}: {e}", exc_info=True)
             
-            # Log state update
             if opt_state.triggering_tests or new_triggering_tests:
                 update_bandit_after_generation(
                     opt_state,
@@ -468,7 +388,6 @@ class StarCoderGenerator:
                     new_triggering_tests
                 )
             
-            # Log state change
             whitefox_logger.log_state_update(
                 opt_name,
                 iteration,
@@ -480,13 +399,17 @@ class StarCoderGenerator:
                 example_tests
             )
             
-            # Save state to logging directory
             logging_dir = self._get_logging_dir()
-            if logging_dir:
-                state_file = logging_dir / "whitefox_state.json"
-            else:
-                state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
+            source_dir = logging_dir / "source"
+            source_dir.mkdir(parents=True, exist_ok=True)
+            state_file = source_dir / "whitefox_state.json"
             self.whitefox_state.save(state_file)
+            
+            whitefox_logger.trace(f"  >> Iteration {iteration} complete", {
+                "triggered": num_triggered,
+                "not_triggered": num_not_triggered,
+                "new_triggering_tests": len(new_triggering_tests),
+            })
             
             self.logger.info(
                 f"  Iteration {iteration + 1} complete: "
@@ -498,6 +421,26 @@ class StarCoderGenerator:
         self,
         only_optimizations: Optional[List[str]] = None
     ) -> None:
+        logging_dir = self._get_logging_dir()
+        project_root = logging_dir.parent
+        source_dir = logging_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clear state file to ensure fresh start with all optimizations
+        state_file = source_dir / "whitefox_state.json"
+        old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
+        if not old_state_file.is_absolute():
+            old_state_file = project_root / old_state_file
+        
+        # Remove any existing state files to start fresh
+        import shutil
+        if state_file.exists():
+            state_file.unlink()
+        if old_state_file.exists() and old_state_file != state_file:
+            self.logger.info(f"Removing old state file for fresh start: {old_state_file}")
+            old_state_file.unlink()
+        
+        # Now load or initialize fresh state with all optimizations
         self.whitefox_state = self._load_or_init_whitefox_state()
         
         output_dir = Path(self.config.paths.output_dir)
@@ -506,67 +449,54 @@ class StarCoderGenerator:
             str(output_dir / "whitefox_tests")
         )
         
-        # Determine logging directory - consolidate in WhiteFox/logging
-        logging_dir = self._get_logging_dir()
-        if not logging_dir:
-            logging_dir = Path("logging")
-        
-        # Move generated-outputs into logging if it exists
-        project_root = logging_dir.parent
         old_generated_outputs = project_root / "generated-outputs"
         if old_generated_outputs.exists() and old_generated_outputs.is_dir():
             generated_outputs_dst = logging_dir / "generated-outputs"
             if not generated_outputs_dst.exists():
-                import shutil
                 shutil.move(str(old_generated_outputs), str(generated_outputs_dst))
                 self.logger.info(f"Moved generated-outputs from {old_generated_outputs} to {generated_outputs_dst}")
-                # Update output_root to point to new location
                 output_root = generated_outputs_dst / "whitefox_tests"
             else:
-                # Already moved, use existing location
                 output_root = generated_outputs_dst / "whitefox_tests"
         else:
-            # Use new location in logging
             output_root = logging_dir / "generated-outputs" / "whitefox_tests"
         
-        logs_root = logging_dir / "execution_logs"  # For compatibility with existing logs
-        bug_reports_dir = logging_dir / "bug_reports"
+        logs_root = logging_dir / "execution_logs"
         
-        output_root.mkdir(parents=True, exist_ok=True)
+        # Clear old logs and outputs at the start of each run
+        # Clear execution logs directory
+        if logs_root.exists():
+            shutil.rmtree(logs_root)
         logs_root.mkdir(parents=True, exist_ok=True)
-        bug_reports_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize WhiteFox logger
+        # Clear generated outputs directory
+        if output_root.exists():
+            shutil.rmtree(output_root)
+        output_root.mkdir(parents=True, exist_ok=True)
+        
         whitefox_logger = WhiteFoxLogger(logging_dir, self.logger)
-        
-        # Move whitefox_state.json to logging if it exists in old location
-        old_state_file = project_root / "whitefox_state.json"
-        new_state_file = logging_dir / "whitefox_state.json"
-        if old_state_file.exists() and not new_state_file.exists():
-            import shutil
-            shutil.move(str(old_state_file), str(new_state_file))
-            self.logger.info(f"Moved whitefox_state.json from {old_state_file} to {new_state_file}")
+        whitefox_logger.clear_old_logs()
         
         self.logger.info(f"Starting WhiteFox fuzzing with {len(self.whitefox_state.optimizations)} optimizations")
         self.logger.info(f"Logging directory: {logging_dir}")
         
-        # Run sanity check at start
-        try:
-            json_file, text_file = run_sanity_check(logging_dir, self.whitefox_state)
-            self.logger.info(f"Sanity check completed: {text_file}")
-        except Exception as e:
-            self.logger.warning(f"Sanity check failed: {e}", exc_info=True)
+        whitefox_logger.trace("=== WhiteFox Generation Started ===", {
+            "num_optimizations": len(self.whitefox_state.optimizations),
+            "max_iterations": self.config.generation.max_iterations,
+            "tests_per_iteration": self.config.generation.tests_per_iteration,
+        })
         
-        for opt_state in self.whitefox_state.optimizations.values():
+        for opt_state in reversed(list(self.whitefox_state.optimizations.values())):
             try:
                 self._run_single_optimization(
                     opt_state,
                     output_root,
                     logs_root,
-                    bug_reports_dir,
                     whitefox_logger,
                     only_optimizations
                 )
+                # Update run summary after each optimization completes
+                whitefox_logger.generate_run_summary(self.whitefox_state)
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_state.spec.internal_name,
@@ -577,13 +507,13 @@ class StarCoderGenerator:
                     e
                 )
                 self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
+                # Still update summary even if optimization failed
+                whitefox_logger.generate_run_summary(self.whitefox_state)
         
-        # Run sanity check at end
-        try:
-            json_file, text_file = run_sanity_check(logging_dir, self.whitefox_state)
-            self.logger.info(f"Final sanity check completed: {text_file}")
-        except Exception as e:
-            self.logger.warning(f"Final sanity check failed: {e}", exc_info=True)
+        whitefox_logger.flush()
+        
+        # Generate run summary log
+        whitefox_logger.generate_run_summary(self.whitefox_state)
         
         self.logger.info("WhiteFox fuzzing complete")
 
