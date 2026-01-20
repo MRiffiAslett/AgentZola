@@ -152,10 +152,10 @@ ZeroSizedHloElimination = ["zero_sized_hlo_elimination"]
 
 # These are NOT separate passes in your doc; they're behaviors inside DynamicDimensionSimplifier.
 # So the only observable "pass=" you can match is dynamic-dimension-simplifier.
-ConcatForwarding = ["dynamic-dimension-simplifier"]
-IdentityConvertRemoving = ["dynamic-dimension-simplifier"]
-IdentityReshapeRemoving = ["dynamic-dimension-simplifier"]
-ReshapeBroadcastForwarding = ["dynamic-dimension-simplifier"]
-ReshapeReshapeForwarding = ["dynamic-dimension-simplifier"]
-SliceConcatForwarding = ["dynamic-dimension-simplifier"]
+ConcatForwarding = ["concat-forwarding"]
+IdentityConvertRemoving = ["identity-convert-removing"]
+IdentityReshapeRemoving = ["identity-reshape-removing"]
+ReshapeBroadcastForwarding = ["reshape-broadcast-forwarding"]
+ReshapeReshapeForwarding = ["reshape-reshape-forwarding"]
+SliceConcatForwarding = ["slice-concat-forwarding"]
 
