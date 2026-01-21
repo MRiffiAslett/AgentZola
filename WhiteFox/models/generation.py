@@ -5,8 +5,33 @@ These are schema-only definitions with no default values.
 All actual values should come from TOML configuration files.
 """
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
+@dataclass
+class TestExecutionTask:
+    """Task information for parallel test execution."""
+    test_file: Path
+    opt_name: str
+    iteration: int
+    sample_idx: int
+    timeout: int = 7
+
+
+@dataclass
+class TestExecutionResult:
+    """Result from parallel test execution including test metadata."""
+    task: TestExecutionTask
+    execution_result: Optional['ExecutionResult']
+    error: Optional[str] = None
+    
+    @property
+    def success(self) -> bool:
+        """Whether the test execution succeeded (no error)."""
+        return self.error is None and self.execution_result is not None
 
 
 class PathsConfig(BaseModel):
