@@ -52,7 +52,7 @@ class TestExecutionTask:
     opt_name: str
     iteration: int
     sample_idx: int
-    timeout: int = 60
+    timeout: int = 7
 
 
 @dataclass
@@ -267,7 +267,7 @@ class StarCoderGenerator:
         iteration: int,
         output_root: Path,
         whitefox_logger: WhiteFoxLogger,
-        timeout: int = 60
+        timeout: int = 7
     ) -> List[TestExecutionResult]:
         """
         Execute multiple tests in parallel using process pool.
@@ -430,7 +430,6 @@ class StarCoderGenerator:
         self,
         opt_state: OptimizationState,
         output_root: Path,
-        logs_root: Path,
         whitefox_logger: WhiteFoxLogger,
         only_optimizations: Optional[List[str]] = None
     ) -> None:
@@ -525,7 +524,7 @@ class StarCoderGenerator:
                 iteration,
                 output_root,
                 whitefox_logger,
-                timeout=60
+                timeout=7
             )
             
             # Process results sequentially to maintain state consistency
@@ -563,11 +562,6 @@ class StarCoderGenerator:
                         "xla_success": result.runtime_success_xla,
                         "autocluster_success": result.runtime_success_autocluster,
                     })
-                    
-                    # Save execution log
-                    log_file = logs_root / opt_name / f"{test_file.stem}.log"
-                    log_file.parent.mkdir(parents=True, exist_ok=True)
-                    log_file.write_text(result.log_text)
                     
                     # Check if pass was triggered
                     pass_triggered = opt_state.spec.matches_any_pass(result.triggered_passes)
@@ -723,14 +717,7 @@ class StarCoderGenerator:
         else:
             output_root = logging_dir / "generated-outputs" / "whitefox_tests"
         
-        logs_root = logging_dir / "execution_logs"
-        
-        # Clear old logs and outputs at the start of each run
-        # Clear execution logs directory
-        if logs_root.exists():
-            shutil.rmtree(logs_root)
-        logs_root.mkdir(parents=True, exist_ok=True)
-        
+        # Clear old outputs at the start of each run
         # Clear generated outputs directory
         if output_root.exists():
             shutil.rmtree(output_root)
@@ -753,7 +740,6 @@ class StarCoderGenerator:
                 self._run_single_optimization(
                     opt_state,
                     output_root,
-                    logs_root,
                     whitefox_logger,
                     only_optimizations
                 )
