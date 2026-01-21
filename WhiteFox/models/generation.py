@@ -16,7 +16,6 @@ class PathsConfig(BaseModel):
     hf_cache: Optional[str] = Field(default=None, description="HuggingFace cache directory")
     log_file: str = Field(description="Log file path")
     test_output_root: Optional[str] = Field(default=None, description="Root directory for generated tests per optimization")
-    logs_root: Optional[str] = Field(default=None, description="Root directory for execution logs")
     bandit_state_file: Optional[str] = Field(default=None, description="Path to JSON/YAML file for WhiteFoxState persistence")
     bug_reports_dir: Optional[str] = Field(default=None, description="Directory for bug reports")
 
