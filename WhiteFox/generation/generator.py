@@ -4,8 +4,11 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict, Any
 import importlib.util
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 
 _temp_modules = {k: sys.modules.pop(k) for k in list(sys.modules.keys()) if k.startswith('generation.logging')}
 sys.modules.pop('logging', None)
@@ -40,6 +43,75 @@ from generation.code_refiner import ensure_imports, parse_generated_code, refine
 from generation.logging import WhiteFoxLogger
 
 import tomllib
+
+
+@dataclass
+class TestExecutionTask:
+    """Task information for parallel test execution."""
+    test_file: Path
+    opt_name: str
+    iteration: int
+    sample_idx: int
+    timeout: int = 60
+
+
+@dataclass
+class TestExecutionResult:
+    """Result from parallel test execution including test metadata."""
+    task: TestExecutionTask
+    execution_result: Optional['ExecutionResult']
+    error: Optional[str] = None
+    
+    @property
+    def success(self) -> bool:
+        """Whether the test execution succeeded (no error)."""
+        return self.error is None and self.execution_result is not None
+
+
+def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
+    """
+    Worker function for parallel test execution.
+    
+    This function must be at module level to be picklable for multiprocessing.
+    It handles all errors internally and returns a TestExecutionResult.
+    
+    Args:
+        task: TestExecutionTask containing test file and metadata
+        
+    Returns:
+        TestExecutionResult with execution result or error
+    """
+    try:
+        # Import here to avoid circular imports and ensure clean process state
+        from generation.harness import execute_test_in_subprocess
+        from domain.harness import ExecutionResult
+        
+        # Execute the test (logger=None since we can't serialize the logger)
+        result = execute_test_in_subprocess(
+            task.test_file,
+            whitefox_logger=None,  # Can't pass logger across processes
+            optimization_name=task.opt_name,
+            iteration=task.iteration,
+            sample_idx=task.sample_idx,
+            timeout=task.timeout
+        )
+        
+        return TestExecutionResult(
+            task=task,
+            execution_result=result,
+            error=None
+        )
+    
+    except Exception as e:
+        # Capture any error that occurs during test execution
+        import traceback
+        error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+        
+        return TestExecutionResult(
+            task=task,
+            execution_result=None,
+            error=error_msg
+        )
 
 
 class StarCoderGenerator:
@@ -188,6 +260,172 @@ class StarCoderGenerator:
         
         return test_file
     
+    def _execute_tests_parallel(
+        self,
+        generated_texts: List[str],
+        opt_name: str,
+        iteration: int,
+        output_root: Path,
+        whitefox_logger: WhiteFoxLogger,
+        timeout: int = 60
+    ) -> List[TestExecutionResult]:
+        """
+        Execute multiple tests in parallel using process pool.
+        
+        This method:
+        1. Creates test files for all generated texts
+        2. Submits them to a process pool for parallel execution
+        3. Collects results as they complete
+        4. Returns all results (including errors) for sequential processing
+        
+        Args:
+            generated_texts: List of generated code texts
+            opt_name: Optimization name
+            iteration: Current iteration number
+            output_root: Root directory for test outputs
+            whitefox_logger: Logger instance
+            timeout: Timeout per test execution in seconds
+            
+        Returns:
+            List of TestExecutionResult objects, one per generated text
+        """
+        # Determine number of workers
+        max_workers = self.config.generation.parallel_test_workers
+        if max_workers is None:
+            max_workers = multiprocessing.cpu_count()
+        
+        whitefox_logger.trace(
+            f"    > Starting parallel test execution with {max_workers} workers",
+            {"num_tests": len(generated_texts)}
+        )
+        
+        # Phase 1: Create all test files (sequential - fast operation)
+        tasks = []
+        for sample_idx, generated_text in enumerate(generated_texts):
+            try:
+                whitefox_logger.trace(f"      - Saving test file for sample {sample_idx}/{len(generated_texts)}")
+                test_file = self._save_generated_test(
+                    generated_text,
+                    opt_name,
+                    iteration,
+                    sample_idx,
+                    output_root,
+                    whitefox_logger
+                )
+                
+                task = TestExecutionTask(
+                    test_file=test_file,
+                    opt_name=opt_name,
+                    iteration=iteration,
+                    sample_idx=sample_idx,
+                    timeout=timeout
+                )
+                tasks.append(task)
+                
+            except Exception as e:
+                # If test file creation fails, create error result
+                whitefox_logger.log_error(
+                    opt_name,
+                    iteration,
+                    "test_file_creation_error",
+                    f"Failed to create test file for sample {sample_idx}: {str(e)}",
+                    {"sample_idx": sample_idx},
+                    e
+                )
+                self.logger.error(
+                    f"Failed to create test file for {opt_name} it{iteration} sample{sample_idx}: {e}",
+                    exc_info=True
+                )
+        
+        if not tasks:
+            whitefox_logger.trace("    > No tasks to execute (all test file creations failed)")
+            return []
+        
+        whitefox_logger.trace(
+            f"    > Created {len(tasks)} test files, submitting to process pool",
+            {"num_tasks": len(tasks)}
+        )
+        
+        # Phase 2: Execute tests in parallel
+        results = []
+        completed_count = 0
+        
+        try:
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks
+                future_to_task = {
+                    executor.submit(_execute_test_worker, task): task
+                    for task in tasks
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_task):
+                    task = future_to_task[future]
+                    completed_count += 1
+                    
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        
+                        if result.success:
+                            whitefox_logger.trace(
+                                f"      - Test {completed_count}/{len(tasks)} completed: "
+                                f"{task.opt_name}-it{task.iteration}-sample{task.sample_idx}"
+                            )
+                        else:
+                            whitefox_logger.trace(
+                                f"      - Test {completed_count}/{len(tasks)} FAILED: "
+                                f"{task.opt_name}-it{task.iteration}-sample{task.sample_idx}",
+                                {"error": result.error[:200] if result.error else "Unknown"}
+                            )
+                    
+                    except Exception as e:
+                        # Future itself raised an exception (shouldn't happen with our error handling)
+                        whitefox_logger.trace(
+                            f"      - Test {completed_count}/{len(tasks)} EXCEPTION: "
+                            f"{task.opt_name}-it{task.iteration}-sample{task.sample_idx}",
+                            {"error": str(e)[:200]}
+                        )
+                        
+                        # Create error result
+                        results.append(TestExecutionResult(
+                            task=task,
+                            execution_result=None,
+                            error=f"Future exception: {type(e).__name__}: {str(e)}"
+                        ))
+        
+        except Exception as e:
+            # Process pool itself failed (very serious error)
+            whitefox_logger.log_error(
+                opt_name,
+                iteration,
+                "process_pool_error",
+                f"Process pool execution failed: {str(e)}",
+                {"completed": completed_count, "total": len(tasks)},
+                e
+            )
+            self.logger.error(
+                f"Process pool execution failed for {opt_name} it{iteration}: {e}",
+                exc_info=True
+            )
+            
+            # Return whatever results we have so far
+            return results
+        
+        whitefox_logger.trace(
+            f"    > Parallel execution completed",
+            {
+                "total": len(tasks),
+                "successful": sum(1 for r in results if r.success),
+                "failed": sum(1 for r in results if not r.success)
+            }
+        )
+        
+        # Sort results by sample_idx to maintain order
+        results.sort(key=lambda r: r.task.sample_idx)
+        
+        return results
+    
     def _run_single_optimization(
         self,
         opt_state: OptimizationState,
@@ -280,36 +518,58 @@ class StarCoderGenerator:
             
             whitefox_logger.trace(f"    > Processing {len(generated_texts)} generated samples")
             
+            # Execute tests in parallel
+            execution_results = self._execute_tests_parallel(
+                generated_texts,
+                opt_name,
+                iteration,
+                output_root,
+                whitefox_logger,
+                timeout=60
+            )
+            
+            # Process results sequentially to maintain state consistency
             new_triggering_tests = []
             num_triggered = 0
             num_not_triggered = 0
             
-            for sample_idx, generated_text in enumerate(generated_texts):
-                whitefox_logger.trace(f"      - Processing sample {sample_idx}/{len(generated_texts)}")
+            for exec_result in execution_results:
+                task = exec_result.task
+                sample_idx = task.sample_idx
+                test_file = task.test_file
+                
+                whitefox_logger.trace(f"      - Processing result for sample {sample_idx}/{len(generated_texts)}")
+                
                 try:
-                    whitefox_logger.trace(f"        * Saving test file for sample {sample_idx}")
-                    test_file = self._save_generated_test(
-                        generated_text,
-                        opt_name,
-                        iteration,
-                        sample_idx,
-                        output_root,
-                        whitefox_logger
-                    )
-                    whitefox_logger.trace(f"        * Test file saved: {test_file.name}")
+                    # Check if execution failed at the worker level
+                    if not exec_result.success:
+                        whitefox_logger.log_error(
+                            opt_name,
+                            iteration,
+                            "test_execution_error",
+                            f"Test execution failed for sample {sample_idx}: {exec_result.error}",
+                            {"sample_idx": sample_idx},
+                            None
+                        )
+                        self.logger.error(
+                            f"Test execution failed for {opt_name} it{iteration} sample{sample_idx}: {exec_result.error}"
+                        )
+                        continue
                     
-                    whitefox_logger.trace(f"        * Executing test in subprocess: {test_file.name}")
-                    result = execute_test_in_subprocess(test_file, whitefox_logger, opt_name, iteration, sample_idx)
+                    result = exec_result.execution_result
+                    
                     whitefox_logger.trace(f"        * Execution completed for {test_file.name}", {
                         "naive_success": result.runtime_success_naive,
                         "xla_success": result.runtime_success_xla,
                         "autocluster_success": result.runtime_success_autocluster,
                     })
                     
+                    # Save execution log
                     log_file = logs_root / opt_name / f"{test_file.stem}.log"
                     log_file.parent.mkdir(parents=True, exist_ok=True)
                     log_file.write_text(result.log_text)
                     
+                    # Check if pass was triggered
                     pass_triggered = opt_state.spec.matches_any_pass(result.triggered_passes)
                     
                     whitefox_logger.trace(f"        * Pass detection: {pass_triggered}", {
@@ -338,6 +598,7 @@ class StarCoderGenerator:
                         opt_state.spec.pass_log_name
                     )
                     
+                    # Track triggering tests
                     if pass_triggered:
                         num_triggered += 1
                         is_new = True
@@ -351,6 +612,7 @@ class StarCoderGenerator:
                     else:
                         num_not_triggered += 1
                     
+                    # Check for bugs using oracles
                     test_code = None
                     try:
                         test_code = test_file.read_text()
@@ -372,12 +634,12 @@ class StarCoderGenerator:
                     whitefox_logger.log_error(
                         opt_name,
                         iteration,
-                        "sample_processing_error",
-                        f"Error processing sample {sample_idx}: {str(e)}",
+                        "result_processing_error",
+                        f"Error processing result for sample {sample_idx}: {str(e)}",
                         {"sample_idx": sample_idx},
                         e
                     )
-                    self.logger.error(f"Error processing sample {sample_idx} for {opt_name} it{iteration}: {e}", exc_info=True)
+                    self.logger.error(f"Error processing result for {opt_name} it{iteration} sample{sample_idx}: {e}", exc_info=True)
             
             if opt_state.triggering_tests or new_triggering_tests:
                 update_bandit_after_generation(
