@@ -42,6 +42,7 @@ class GenerationConfig(BaseModel):
     tests_per_iteration: int = Field(default=10, description="Tests to generate per iteration")
     max_iterations: int = Field(default=100, description="Maximum iterations per optimization")
     examples_per_prompt: int = Field(default=3, description="Number of examples to include in feedback prompt (N in Thompson Sampling)")
+    parallel_test_workers: Optional[int] = Field(default=None, description="Number of parallel workers for test execution (None = auto-detect CPU count)")
 
 
 class OraclesConfig(BaseModel):
