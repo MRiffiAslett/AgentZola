@@ -2,11 +2,12 @@
 import os
 import random
 import sys
+import threading
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import importlib.util
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 _temp_modules = {k: sys.modules.pop(k) for k in list(sys.modules.keys()) if k.startswith('generation.logging')}
 sys.modules.pop('logging', None)
@@ -83,6 +84,9 @@ class StarCoderGenerator:
         self._setup_environment()
         self._setup_logging()
         self.llm = self._initialize_llm()
+        
+        # Thread safety for parallel optimization execution
+        self._state_lock = threading.RLock()  # Protects whitefox_state saves
         
     @classmethod
     def from_config_file(cls, config_path: Path) -> "StarCoderGenerator":
@@ -498,12 +502,78 @@ class StarCoderGenerator:
                 example_tests
             )
             
-            logging_dir = self._get_logging_dir()
-            source_dir = logging_dir / "source"
-            source_dir.mkdir(parents=True, exist_ok=True)
-            state_file = source_dir / "whitefox_state.json"
-            self.whitefox_state.save(state_file)
+            # Thread-safe state saving for parallel execution
+            with self._state_lock:
+                logging_dir = self._get_logging_dir()
+                source_dir = logging_dir / "source"
+                source_dir.mkdir(parents=True, exist_ok=True)
+                state_file = source_dir / "whitefox_state.json"
+                self.whitefox_state.save(state_file)
+    
+    def _run_optimizations_parallel(
+        self,
+        opt_states: List[OptimizationState],
+        output_root: Path,
+        whitefox_logger: WhiteFoxLogger,
+        only_optimizations: Optional[List[str]],
+        max_workers: int
+    ) -> None:
+      
+        def _worker(opt_state: OptimizationState) -> Tuple[str, Optional[Exception]]:
+            opt_name = opt_state.spec.internal_name
+            try:
+                self._run_single_optimization(
+                    opt_state,
+                    output_root,
+                    whitefox_logger,
+                    only_optimizations
+                )
+                return (opt_name, None)
+            except Exception as e:
+                whitefox_logger.log_error(
+                    opt_name,
+                    None,
+                    "optimization_processing_error",
+                    str(e),
+                    {},
+                    e
+                )
+                self.logger.error(f"Error processing {opt_name}: {e}", exc_info=True)
+                return (opt_name, e)
+        
+        completed_count = 0
+        total_count = len(opt_states)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all optimization tasks
+            future_to_opt = {
+                executor.submit(_worker, opt_state): opt_state
+                for opt_state in opt_states
+            }
             
+            # Collect results as they complete
+            for future in as_completed(future_to_opt):
+                opt_state = future_to_opt[future]
+                opt_name = opt_state.spec.internal_name
+                completed_count += 1
+                
+                try:
+                    result_name, error = future.result()
+                    if error is None:
+                        self.logger.info(
+                            f"✓ Completed optimization {completed_count}/{total_count}: {result_name}"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"✗ Failed optimization {completed_count}/{total_count}: {result_name}"
+                        )
+                except Exception as e:
+                    self.logger.error(
+                        f"✗ Exception in optimization {completed_count}/{total_count}: {opt_name} - {e}",
+                        exc_info=True
+                    )
+        
+        self.logger.info(f"Parallel optimization execution completed: {completed_count}/{total_count}")
             
     
     def generate_whitefox(
@@ -551,26 +621,45 @@ class StarCoderGenerator:
         
         whitefox_logger = WhiteFoxLogger(logging_dir, self.logger)
         whitefox_logger.clear_old_logs()
-    
         
-        for opt_state in reversed(list(self.whitefox_state.optimizations.values())):
-            try:
-                self._run_single_optimization(
-                    opt_state,
-                    output_root,
-                    whitefox_logger,
-                    only_optimizations
-                )
-            except Exception as e:
-                whitefox_logger.log_error(
-                    opt_state.spec.internal_name,
-                    None,
-                    "optimization_processing_error",
-                    str(e),
-                    {},
-                    e
-                )
-                self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
+        opt_states_to_process = [
+            opt_state for opt_state in reversed(list(self.whitefox_state.optimizations.values()))
+            if not only_optimizations or opt_state.spec.internal_name in only_optimizations
+        ]
+        
+        parallel_optimizations = self.config.generation.parallel_optimizations
+        
+        if parallel_optimizations <= 1:
+            # Sequential execution (backward compatible)
+            self.logger.info("Running optimizations sequentially")
+            for opt_state in opt_states_to_process:
+                try:
+                    self._run_single_optimization(
+                        opt_state,
+                        output_root,
+                        whitefox_logger,
+                        only_optimizations
+                    )
+                except Exception as e:
+                    whitefox_logger.log_error(
+                        opt_state.spec.internal_name,
+                        None,
+                        "optimization_processing_error",
+                        str(e),
+                        {},
+                        e
+                    )
+                    self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
+        else:
+            # Parallel execution with thread pool
+            self.logger.info(f"Running optimizations in parallel with {parallel_optimizations} workers")
+            self._run_optimizations_parallel(
+                opt_states_to_process,
+                output_root,
+                whitefox_logger,
+                only_optimizations,
+                parallel_optimizations
+            )
         
         whitefox_logger.flush()
         
