@@ -7,6 +7,7 @@ Provides structured logging with consolidated files for easier reading.
 import json
 import sys
 import importlib.util
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -62,6 +63,9 @@ class WhiteFoxLogger:
         self.opt_stats: Dict[str, Dict[str, int]] = {}
         
         self.base_logger = base_logger or logging.getLogger(__name__)
+        
+        # Thread safety locks for parallel optimization execution
+        self._lock = threading.RLock()  # Reentrant lock for nested calls
     
     def trace(self, message: str, details: Optional[Dict[str, Any]] = None) -> None:
         """No-op trace method for backward compatibility."""
@@ -129,31 +133,32 @@ class WhiteFoxLogger:
         example_tests: Optional[List[TriggeringTest]] = None
     ) -> None:
         """Log the prompt sent to the LLM (consolidated)."""
-        opt_key = self._get_opt_key(optimization_name)
-        self._ensure_opt_list_exists(self.prompts_data, opt_key)
-        
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "prompt_type": prompt_type,
-            "prompt": prompt_text,
-            "num_examples": len(example_tests) if example_tests else 0,
-            "examples": []
-        }
-        
-        if example_tests:
-            for test in example_tests:
-                example_info = {
-                    "test_id": test.test_id,
-                    "file_path": str(test.file_path),
-                    "alpha": test.alpha,
-                    "beta": test.beta,
-                }
-                log_entry["examples"].append(example_info)
-        
-        self.prompts_data[opt_key].append(log_entry)
-        self._write_prompts()
+        with self._lock:
+            opt_key = self._get_opt_key(optimization_name)
+            self._ensure_opt_list_exists(self.prompts_data, opt_key)
+            
+            log_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "optimization": optimization_name,
+                "iteration": iteration,
+                "prompt_type": prompt_type,
+                "prompt": prompt_text,
+                "num_examples": len(example_tests) if example_tests else 0,
+                "examples": []
+            }
+            
+            if example_tests:
+                for test in example_tests:
+                    example_info = {
+                        "test_id": test.test_id,
+                        "file_path": str(test.file_path),
+                        "alpha": test.alpha,
+                        "beta": test.beta,
+                    }
+                    log_entry["examples"].append(example_info)
+            
+            self.prompts_data[opt_key].append(log_entry)
+            self._write_prompts()
     
     def log_generated_code(
         self,
@@ -165,21 +170,22 @@ class WhiteFoxLogger:
         cleaning_changes: Optional[Dict[str, Any]] = None
     ) -> None:
         """Log generated code (consolidated into cleaned code file)."""
-        opt_key = self._get_opt_key(optimization_name)
-        self._ensure_opt_list_exists(self.cleaned_code_data, opt_key)
-        
-        self.cleaned_code_data[opt_key].append({
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "sample_idx": sample_idx,
-            "code": cleaned_code,
-        })
-        
-        # Track number of tests generated
-        self._ensure_stats_initialized(opt_key)
-        self.opt_stats[opt_key]['generated'] += 1
-        
-        self._write_cleaned_code()
+        with self._lock:
+            opt_key = self._get_opt_key(optimization_name)
+            self._ensure_opt_list_exists(self.cleaned_code_data, opt_key)
+            
+            self.cleaned_code_data[opt_key].append({
+                "optimization": optimization_name,
+                "iteration": iteration,
+                "sample_idx": sample_idx,
+                "code": cleaned_code,
+            })
+            
+            # Track number of tests generated
+            self._ensure_stats_initialized(opt_key)
+            self.opt_stats[opt_key]['generated'] += 1
+            
+            self._write_cleaned_code()
     
     def log_execution_result(
         self,
@@ -239,15 +245,16 @@ class WhiteFoxLogger:
     
     def log_bug_report(self, bug_report: Any) -> None:
         """Log bug report (consolidated)."""
-        self.bug_reports_data.append({
-            "timestamp": datetime.now().isoformat(),
-            "test_id": bug_report.test_id,
-            "oracle_type": bug_report.oracle_type,
-            "details": bug_report.details,
-            "test_file": str(bug_report.test_file),
-            "logs_file": str(bug_report.logs_file),
-        })
-        self._write_bug_reports()
+        with self._lock:
+            self.bug_reports_data.append({
+                "timestamp": datetime.now().isoformat(),
+                "test_id": bug_report.test_id,
+                "oracle_type": bug_report.oracle_type,
+                "details": bug_report.details,
+                "test_file": str(bug_report.test_file),
+                "logs_file": str(bug_report.logs_file),
+            })
+            self._write_bug_reports()
     
     def _write_prompts(self) -> None:
         """Write consolidated prompts file."""
@@ -289,21 +296,22 @@ class WhiteFoxLogger:
         Stages: "exec_initial", "xla_exec"
         Status: "success" or "failure"
         """
-        opt_key = self._get_opt_key(optimization_name)
-        
-        diagnostic_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "optimization": optimization_name,
-            "iteration": iteration,
-            "sample_idx": sample_idx,
-            "stage": stage,
-            "status": status,
-            "details": details,
-        }
-        
-        self.diagnostic_data.append(diagnostic_entry)
-        # Write immediately so logs are available even if process crashes
-        self._write_diagnostics()
+        with self._lock:
+            opt_key = self._get_opt_key(optimization_name)
+            
+            diagnostic_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "optimization": optimization_name,
+                "iteration": iteration,
+                "sample_idx": sample_idx,
+                "stage": stage,
+                "status": status,
+                "details": details,
+            }
+            
+            self.diagnostic_data.append(diagnostic_entry)
+            # Write immediately so logs are available even if process crashes
+            self._write_diagnostics()
     
     def _write_prompts_readable(self) -> None:
         """Write prompts in a human-readable format with actual newlines."""
@@ -377,68 +385,71 @@ class WhiteFoxLogger:
         pass_triggered: bool
     ) -> None:
         """Track statistics for run summary."""
-        opt_key = self._get_opt_key(optimization_name)
-        self._ensure_stats_initialized(opt_key)
-        
-        if pass_triggered:
-            self.opt_stats[opt_key]['triggered'] += 1
-        
-        if result.runtime_success_naive:
-            self.opt_stats[opt_key]['success_naive'] += 1
-        if result.runtime_success_xla:
-            self.opt_stats[opt_key]['success_xla'] += 1
-        if result.runtime_success_autocluster:
-            self.opt_stats[opt_key]['success_autocluster'] += 1
+        with self._lock:
+            opt_key = self._get_opt_key(optimization_name)
+            self._ensure_stats_initialized(opt_key)
+            
+            if pass_triggered:
+                self.opt_stats[opt_key]['triggered'] += 1
+            
+            if result.runtime_success_naive:
+                self.opt_stats[opt_key]['success_naive'] += 1
+            if result.runtime_success_xla:
+                self.opt_stats[opt_key]['success_xla'] += 1
+            if result.runtime_success_autocluster:
+                self.opt_stats[opt_key]['success_autocluster'] += 1
     
     def generate_run_summary(self, whitefox_state: Any) -> None:
         """Generate or update run_summary_detailed.log with optimization statistics."""
-        detailed_summary_file = self.log_dir / "run_summary_detailed.log"
-        
-        # Write detailed summary with execution mode breakdown
-        with open(detailed_summary_file, 'w') as f:
-            f.write("=" * 80 + "\n")
-            f.write("WHITEFOX DETAILED RUN SUMMARY\n")
-            f.write("=" * 80 + "\n\n")
-            f.write("Format: Optimization | Created | Triggered | Naive | XLA | Autocluster\n")
-            f.write("-" * 80 + "\n\n")
+        with self._lock:
+            detailed_summary_file = self.log_dir / "run_summary_detailed.log"
             
-            total_generated = 0
-            total_triggered = 0
-            total_naive = 0
-            total_xla = 0
-            total_ac = 0
-            
-            for opt_name in sorted(whitefox_state.optimizations.keys()):
-                stats = self.opt_stats.get(opt_name, self._get_default_stats())
+            # Write detailed summary with execution mode breakdown
+            with open(detailed_summary_file, 'w') as f:
+                f.write("=" * 80 + "\n")
+                f.write("WHITEFOX DETAILED RUN SUMMARY\n")
+                f.write("=" * 80 + "\n\n")
+                f.write("Format: Optimization | Created | Triggered | Naive | XLA | Autocluster\n")
+                f.write("-" * 80 + "\n\n")
                 
-                total_generated += stats['generated']
-                total_triggered += stats['triggered']
-                total_naive += stats['success_naive']
-                total_xla += stats['success_xla']
-                total_ac += stats['success_autocluster']
+                total_generated = 0
+                total_triggered = 0
+                total_naive = 0
+                total_xla = 0
+                total_ac = 0
                 
-                f.write(f"{opt_name:40s} | ")
-                f.write(f"{stats['generated']:7d} | ")
-                f.write(f"{stats['triggered']:9d} | ")
-                f.write(f"{stats['success_naive']:5d} | ")
-                f.write(f"{stats['success_xla']:3d} | ")
-                f.write(f"{stats['success_autocluster']:11d}\n")
+                for opt_name in sorted(whitefox_state.optimizations.keys()):
+                    stats = self.opt_stats.get(opt_name, self._get_default_stats())
+                    
+                    total_generated += stats['generated']
+                    total_triggered += stats['triggered']
+                    total_naive += stats['success_naive']
+                    total_xla += stats['success_xla']
+                    total_ac += stats['success_autocluster']
+                    
+                    f.write(f"{opt_name:40s} | ")
+                    f.write(f"{stats['generated']:7d} | ")
+                    f.write(f"{stats['triggered']:9d} | ")
+                    f.write(f"{stats['success_naive']:5d} | ")
+                    f.write(f"{stats['success_xla']:3d} | ")
+                    f.write(f"{stats['success_autocluster']:11d}\n")
+                
+                f.write("-" * 80 + "\n")
+                f.write(f"{'TOTAL':40s} | ")
+                f.write(f"{total_generated:7d} | ")
+                f.write(f"{total_triggered:9d} | ")
+                f.write(f"{total_naive:5d} | ")
+                f.write(f"{total_xla:3d} | ")
+                f.write(f"{total_ac:11d}\n")
+                f.write("=" * 80 + "\n")
             
-            f.write("-" * 80 + "\n")
-            f.write(f"{'TOTAL':40s} | ")
-            f.write(f"{total_generated:7d} | ")
-            f.write(f"{total_triggered:9d} | ")
-            f.write(f"{total_naive:5d} | ")
-            f.write(f"{total_xla:3d} | ")
-            f.write(f"{total_ac:11d}\n")
-            f.write("=" * 80 + "\n")
-        
-        if self.base_logger:
-            self.base_logger.debug(f"Run summary updated at {detailed_summary_file}")
+            if self.base_logger:
+                self.base_logger.debug(f"Run summary updated at {detailed_summary_file}")
     
     def flush(self) -> None:
         """Flush all consolidated logs to disk."""
-        self._write_prompts()
-        self._write_cleaned_code()
-        self._write_bug_reports()
-        self._write_diagnostics()
+        with self._lock:
+            self._write_prompts()
+            self._write_cleaned_code()
+            self._write_bug_reports()
+            self._write_diagnostics()
