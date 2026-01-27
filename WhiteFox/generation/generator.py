@@ -225,13 +225,16 @@ class StarCoderGenerator:
         iteration: int,
         output_root: Path,
         whitefox_logger: WhiteFoxLogger,
-        timeout: int = 7
+        timeout: Optional[int] = None
     ) -> List[TestExecutionResult]:
         
         max_workers = self.config.generation.parallel_test_workers
         if max_workers is None:
             max_workers = multiprocessing.cpu_count()
-  
+        
+        # Use timeout from config if not explicitly provided
+        if timeout is None:
+            timeout = self.config.generation.test_timeout
         
         # Phase 1: Create all test files (sequential - fast operation)
         tasks = []
@@ -390,7 +393,7 @@ class StarCoderGenerator:
                 iteration,
                 output_root,
                 whitefox_logger,
-                timeout=7
+                timeout=None  # Use timeout from config
             )
             
             # Process results sequentially to maintain state consistency
@@ -509,6 +512,11 @@ class StarCoderGenerator:
                 source_dir.mkdir(parents=True, exist_ok=True)
                 state_file = source_dir / "whitefox_state.json"
                 self.whitefox_state.save(state_file)
+        
+        # Generate/update run summary after this optimization completes
+        # This ensures we have partial results even if the job doesn't finish
+        with self._state_lock:
+            whitefox_logger.generate_run_summary(self.whitefox_state)
     
     def _run_optimizations_parallel(
         self,
@@ -572,6 +580,11 @@ class StarCoderGenerator:
                         f"✗ Exception in optimization {completed_count}/{total_count}: {opt_name} - {e}",
                         exc_info=True
                     )
+                
+                # Update run summary after each optimization completes (even if it failed)
+                # This ensures we have partial results if the job is interrupted
+                with self._state_lock:
+                    whitefox_logger.generate_run_summary(self.whitefox_state)
         
         self.logger.info(f"Parallel optimization execution completed: {completed_count}/{total_count}")
             
@@ -640,6 +653,7 @@ class StarCoderGenerator:
                         whitefox_logger,
                         only_optimizations
                     )
+                    # Note: run summary is generated inside _run_single_optimization
                 except Exception as e:
                     whitefox_logger.log_error(
                         opt_state.spec.internal_name,
@@ -650,6 +664,9 @@ class StarCoderGenerator:
                         e
                     )
                     self.logger.error(f"Error processing {opt_state.spec.internal_name}: {e}", exc_info=True)
+                    # Generate summary even after error so we capture partial results
+                    with self._state_lock:
+                        whitefox_logger.generate_run_summary(self.whitefox_state)
         else:
             # Parallel execution with thread pool
             self.logger.info(f"Running optimizations in parallel with {parallel_optimizations} workers")
