@@ -1,3 +1,29 @@
+/* Copyright 2022 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/service/change_op_data_type.h"
+
+#include <optional>
+
+#include "xla/service/hlo_creation_utils.h"
+
+#ifdef XLA_ONEDNN
+#include "xla/service/cpu/onednn_contraction_rewriter.h"
+#include "xla/xla.pb.h"
+#endif  // XLA_ONEDNN
+
 namespace xla {
 namespace {
 std::optional<PrimitiveType> GetUniformOperandType(
@@ -14,7 +40,7 @@ std::optional<PrimitiveType> GetUniformOperandType(
 }
 }  // namespace
 
-StatusOr<bool> ChangeOpDataType::Run(
+absl::StatusOr<bool> ChangeOpDataType::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
@@ -38,6 +64,17 @@ StatusOr<bool> ChangeOpDataType::Run(
       if (it == to_type_map_.end()) {
         continue;
       }
+
+#ifdef XLA_ONEDNN
+      // TODO(penporn): Move this logic outside of this pass.
+      const DebugOptions& debug_options = module->config().debug_options();
+      if ((debug_options.xla_cpu_use_onednn() ||
+           debug_options.xla_cpu_experimental_onednn_custom_call()) &&
+          cpu::OneDnnContractionRewriter::ShouldRewriteInstr(instr, true)) {
+        continue;
+      }
+#endif  // XLA_ONEDNN
+
       const PrimitiveType to_type = it->second;
       absl::InlinedVector<HloInstruction*, 8> new_operands;
       for (HloInstruction* operand : instr->mutable_operands()) {

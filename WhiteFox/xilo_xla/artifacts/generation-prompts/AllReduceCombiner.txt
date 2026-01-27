@@ -1,0 +1,85 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of the TensorFlow Model for `ReshapeReshapeForwarding` Optimization
+
+The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when a model contains a sequence of two reshape operations where the first reshape changes the shape of a tensor, and the second reshape changes it back to the original shape.
+
+#### Model Pattern:
+```python
+import tensorflow as tf
+
+# Input tensor of any shape
+input_tensor = tf.random.normal([8, 16])
+
+# First reshape operation changing the shape
+t1 = tf.reshape(input_tensor, [4, 32])
+
+# Second reshape operation restoring the original shape
+t2 = tf.reshape(t1, [8, 16])
+```
+
+**Characteristics:**
+- The model must contain two consecutive reshape operations.
+- The output shape of the second reshape must match the input shape of the tensor fed into the first reshape.
+- The intermediate shapes can be arbitrary but must be valid given the size of the original input tensor.
+
+---
+
+### Characteristics of the TensorFlow Model for `AllReduceCombiner` Optimization
+
+The `AllReduceCombiner` optimization is triggered in a TensorFlow model that involves multiple `AllReduce` operations which can be combined into a single `AllReduce` operation, based on specific criteria such as the operation being performed (like sum, max) and the shapes of the tensors involved.
+
+#### Model Pattern:
+```python
+import tensorflow as tf
+
+# Input tensors
+input_tensor1 = tf.random.normal([8, 16])
+input_tensor2 = tf.random.normal([8, 16])
+
+# AllReduce operations on different tensors
+ar1 = tf.raw_ops.AllReduce(input_tensor1, reduction="Add", group_assignment=[list(range(8))])
+ar2 = tf.raw_ops.AllReduce(input_tensor2, reduction="Add", group_assignment=[list(range(8))])
+```
+
+**Characteristics:**
+- The model contains multiple `AllReduce` operations.
+- All `AllReduce` operations must use the same type of reduction (e.g., sum, max).
+- The tensors involved in these `AllReduce` operations should be compatible for a combined operation, meaning they have the same shape or can be combined into a tuple structure.
+- There should be no layout constraints on the `AllReduce` operations that would prevent them from being combined.
+
+These characteristics define when the specific optimizations are applicable in the TensorFlow XLA environment.
