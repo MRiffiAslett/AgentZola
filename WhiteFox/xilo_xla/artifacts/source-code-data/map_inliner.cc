@@ -1,3 +1,38 @@
+/* Copyright 2017 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/service/map_inliner.h"
+
+#include <cstdint>
+#include <vector>
+
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/dfs_hlo_visitor_with_default.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
+
 namespace xla {
 
 // MapInlinerVisitor traverses the HLO computation and inlines maps.
@@ -7,14 +42,14 @@ class MapInlinerVisitor : public DfsHloVisitorWithDefault {
       : computation_(computation) {}
 
   // Default visitor action is to do nothing and return OK.
-  Status DefaultAction(HloInstruction* /*hlo_instruction*/) override {
-    return OkStatus();
+  absl::Status DefaultAction(HloInstruction* /*hlo_instruction*/) override {
+    return absl::OkStatus();
   }
 
-  Status HandleMap(HloInstruction* map) override;
+  absl::Status HandleMap(HloInstruction* map) override;
 
   // Runs the visitor on a computation.
-  StatusOr<bool> Run(HloComputation* computation);
+  absl::StatusOr<bool> Run(HloComputation* computation);
 
  private:
   // Current HloComputation instance the MapInlinerVisitor is traversing.
@@ -24,14 +59,14 @@ class MapInlinerVisitor : public DfsHloVisitorWithDefault {
   bool changed_ = false;
 };
 
-StatusOr<bool> MapInlinerVisitor::Run(HloComputation* computation) {
+absl::StatusOr<bool> MapInlinerVisitor::Run(HloComputation* computation) {
   changed_ = false;
   computation_ = computation;
   TF_RETURN_IF_ERROR(computation->root_instruction()->Accept(this));
   return changed_;
 }
 
-Status MapInlinerVisitor::HandleMap(HloInstruction* map) {
+absl::Status MapInlinerVisitor::HandleMap(HloInstruction* map) {
   HloComputation* function = map->to_apply();
   HloInstruction& root = *function->root_instruction();
   // Only inlining functions that are simply a single operation until a better
@@ -39,7 +74,7 @@ Status MapInlinerVisitor::HandleMap(HloInstruction* map) {
   if (hlo_query::AllOperandsAreParameters(root)) {
     if (root.opcode() == HloOpcode::kFusion) {
       // Cloning not supported for these instructions.
-      return OkStatus();
+      return absl::OkStatus();
     }
     VLOG(10) << "inlining map({X ... Y}, op) => : op(X ... Y) with function "
              << root.ToShortString();
@@ -63,6 +98,7 @@ Status MapInlinerVisitor::HandleMap(HloInstruction* map) {
           computation_->ReplaceInstruction(map, placed_instruction));
     } else {
       std::vector<HloInstruction*> params;
+      params.reserve(root.operands().size());
       for (int64_t o = 0; o < root.operands().size(); o++) {
         params.push_back(map->operands()[root.operand(o)->parameter_number()]);
       }
@@ -72,13 +108,13 @@ Status MapInlinerVisitor::HandleMap(HloInstruction* map) {
           computation_->ReplaceInstruction(map, placed_instruction));
     }
     changed_ = true;
-    return OkStatus();
+    return absl::OkStatus();
   }
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-StatusOr<bool> MapInliner::Run(
+absl::StatusOr<bool> MapInliner::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   MapInlinerVisitor visitor(/*computation=*/nullptr);
