@@ -1,6 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=whitefox_tfxla
 #SBATCH --partition=a40
+#SBATCH --gres=gpu:1                  # Request 1 GPU (required for LLM inference)
+#SBATCH --cpus-per-task=8             # CPUs for parallel test execution
+#SBATCH --mem=64G                     # Memory allocation (64GB to avoid OOM)
 #SBATCH --time=48:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -61,6 +64,9 @@ mkdir -p "$PROJECT_ROOT/output"
 # Optional XLA / TF instrumentation
 export XLA_FLAGS="--xla_dump_to=/tmp/xla_dump"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
+
+# Disable tokenizers parallelism to avoid fork warnings
+export TOKENIZERS_PARALLELISM=false
 
 # Better CUDA allocator to reduce fragmentation
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
