@@ -1,0 +1,90 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding`
+
+The TensorFlow model needs to have a specific sequence of reshape operations to trigger the `ReshapeReshapeForwarding` optimization in TensorFlow XLA. The characteristics of such a model are:
+
+1. **Sequential Reshape Operations**: There are two consecutive reshape operations applied to a tensor.
+2. **Back-to-original Shape Reshape**: The second reshape operation reverts the tensor back to its original shape, which was before the first reshape operation.
+
+Here is a TensorFlow Python example that fits this pattern:
+
+```python
+import tensorflow as tf
+
+# Input tensor of arbitrary shape.
+input_tensor = tf.random.normal([8, 16])
+
+# First reshape operation changing the shape.
+t1 = tf.reshape(input_tensor, [4, 32])
+
+# Second reshape operation reverting to the original shape of input_tensor.
+t2 = tf.reshape(t1, tf.shape(input_tensor))
+
+# t2 is now eligible for optimization by ReshapeReshapeForwarding.
+```
+
+### Characteristics of TensorFlow Model for `SimplifyFpConversions`
+
+The TensorFlow model must have the following characteristics to trigger the `SimplifyFpConversions` optimization pass in TensorFlow XLA:
+
+1. **Floating-Point Type Conversions**: There must be a chain of type conversion operations where all the conversions are between different floating-point types (e.g., `float32` to `float64`).
+
+2. **Redundant Conversions**: The sequence of conversions should at least involve two conversions, and it should end in a conversion that results in either the same type as the original input type or requires a final conversion to match the final type.
+
+Here is a TensorFlow Python example demonstrating this scenario:
+
+```python
+import tensorflow as tf
+
+# Input tensor of floating-point type
+input_tensor = tf.constant([1.0, 2.0], dtype=tf.float32)
+
+# Convert float32 to float64
+step1 = tf.cast(input_tensor, tf.float64)
+
+# Additional conversion in float64
+# (This step can be more complex in practical scenarios)
+step2 = tf.cast(step1, tf.float64)
+
+# Convert back to float32 or continue in float64
+output_tensor = tf.cast(step2, tf.float32)
+
+# output_tensor conversion sequence is now eligible for SimplifyFpConversions optimization.
+```
+
+In this example, the sequence of conversions from `float32` to `float64` and back to `float32` can be simplified directly to a single conversion or optimized out if it ends up being redundant, which the `SimplifyFpConversions` pass aims to achieve.

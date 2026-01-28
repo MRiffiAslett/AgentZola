@@ -1,0 +1,87 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
+
+The TensorFlow model should contain a sequence where a tensor undergoes two consecutive reshape operations, where the second reshape operation reverts the tensor back to its original shape. This pattern can be identified in the TensorFlow model when:
+
+1. A tensor `input_tensor` is reshaped into any arbitrary shape.
+2. The result of the first reshape is then reshaped again to match the original shape of `input_tensor`.
+
+Here's a simple code example that illustrates this pattern:
+
+```python
+import tensorflow as tf
+
+# Suppose input_tensor is a TensorFlow tensor with a known shape
+input_tensor = tf.random.normal([8, 16])
+
+# First reshape operation changing the shape of input_tensor
+t1 = tf.reshape(input_tensor, [4, 32])
+
+# Second reshape operation that reverts the shape back to the original
+t2 = tf.reshape(t1, [8, 16])
+```
+
+In this scenario, `t2` is essentially redundant because it transforms the tensor back to its original shape, making it a prime target for the `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `StochasticConvertDecomposer` Optimization
+
+The TensorFlow model should include a specific operation called `stochastic_convert`, which is used to convert a tensor from one type to another stochastically. This operation must meet several conditions:
+
+1. The `stochastic_convert` operation must have exactly two operands.
+2. The first operand is the input tensor whose data type needs to be converted.
+3. The second operand is a tensor of random values that influences the stochastic nature of the conversion.
+4. The target data type (the type to which the tensor is being converted) must be a signed integral type.
+
+Here's an illustrative example:
+
+```python
+import tensorflow as tf
+
+# Create a floating-point tensor
+input_tensor = tf.random.normal([10])
+
+# Create a tensor of random values, typically uniform random values
+random_tensor = tf.random.uniform([10], dtype=tf.float32)
+
+# Define a custom operation or use an equivalent operation that represents
+# the stochastic convert; here, we simulate the behavior
+# Note: TensorFlow does not directly support `stochastic_convert`, this is a hypothetical example
+output_tensor = custom_stochastic_convert(input_tensor, random_tensor, target_dtype=tf.int32)
+```
+
+In this example, `custom_stochastic_convert` would hypothetically convert `input_tensor` into integers in a stochastic manner, influenced by `random_tensor`. This pattern is where the `StochasticConvertDecomposer` optimization would apply, decomposing the complex stochastic conversion into simpler operations that might involve comparisons, rounding, and conditional selections based on the random tensor. This optimization is particularly used to ensure that the conversion process is efficient and leverages hardware capabilities effectively.

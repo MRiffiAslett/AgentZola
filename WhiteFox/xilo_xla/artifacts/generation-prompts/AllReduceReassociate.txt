@@ -1,0 +1,86 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Models Triggering `ReshapeReshapeForwarding`
+
+The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model contains a sequence of two `tf.reshape` operations where:
+
+1. The first `reshape` changes the shape of an input tensor `input_tensor` to any arbitrary shape.
+2. The second `reshape` changes the shape back to the original shape of `input_tensor`.
+
+This results in the optimization recognizing that the two reshapes negate each other and can be removed, simplifying the computation.
+
+#### Example Code Pattern:
+```python
+import tensorflow as tf
+
+# Input tensor of any shape
+input_tensor = tf.random.normal([10, 20])
+
+# First reshape to an arbitrary new shape
+t1 = tf.reshape(input_tensor, [200])
+
+# Second reshape back to the original shape of the input tensor
+t2 = tf.reshape(t1, [10, 20])
+```
+
+### Characteristics of TensorFlow Models Triggering `AllReduceReassociate`
+
+The `AllReduceReassociate` optimization is applicable when the model performs operations that can be optimized through the reassociation of AllReduce operations. This optimization is triggered under the following conditions:
+
+1. The model contains a binary operation (e.g., addition, multiplication) applied to the outputs of two AllReduce operations.
+2. The AllReduce operations are compatible in terms of their reduction type (e.g., sum, product) and configuration.
+3. The operands of the binary operation potentially involve reshapes, pads, slices, or converts that do not significantly alter the semantics of the AllReduce operation.
+4. The reassociation is considered profitable; i.e., it does not result in a significant increase in the amount of data being reduced.
+5. Optional data type conversions (casts) involved must be value-preserving.
+
+#### Example Code Pattern:
+```python
+import tensorflow as tf
+
+# Simulated distributed tensors
+tensor1 = tf.random.normal([1024])
+tensor2 = tf.random.normal([1024])
+
+# AllReduce operations (simulated using tf.reduce_sum for illustration)
+ar1 = tf.reduce_sum(tensor1)
+ar2 = tf.reduce_sum(tensor2)
+
+# Binary operation on the results of AllReduce
+result = ar1 + ar2
+```
+
+In real distributed scenarios, `tf.distribute.Strategy` would manage the details of the AllReduce operations, and this pattern would be optimized if it meets the conditions listed.
