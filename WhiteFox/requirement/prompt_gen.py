@@ -136,22 +136,6 @@ def generate_requirement_prompts(
     
     actual_generated = len(prompts) - len(used_fallback)
     
-    # Print summary
-    print(f"\n📊 SUMMARY:")
-    print(f"  ✓ Generated from source: {actual_generated} prompts")
-    
-    if used_fallback:
-        print(f"  📋 Using fallback (no prompt needed): {len(used_fallback)} optimizations")
-        for opt in used_fallback:
-            print(f"      - {opt}")
-    
-    if skipped:
-        print(f"  ⚠️  Skipped (no source or fallback): {len(skipped)} optimizations")
-        for opt in skipped:
-            print(f"      - {opt}")
-    
-    print(f"  🎯 Total coverage: {len(prompts)}/{len(prompts) + len(skipped)} optimizations")
-    
     return prompts, set(used_fallback)
 
 

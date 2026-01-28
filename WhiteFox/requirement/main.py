@@ -26,7 +26,7 @@ def main():
     use_mini = gpt_config.get('use_mini', False)
     
     opt_spec_path = base_dir / "xilo_xla" / "artifacts" / "optimization_specification_xla.json"
-    template_path = base_dir / "xilo_xla" / "prompt_template.txt"
+    template_path = base_dir / "xilo_xla" / "artifacts" / "prompt_template.txt"
     prompts_dir = base_dir / "xilo_xla" / "artifacts" / "requirement-prompts"
     gpt_output_dir = base_dir / "xilo_xla" / "artifacts" / "generation-prompts"
     
