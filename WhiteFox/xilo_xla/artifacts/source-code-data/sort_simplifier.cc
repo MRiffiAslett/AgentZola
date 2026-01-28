@@ -1,10 +1,49 @@
+/* Copyright 2019 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/hlo/transforms/simplifiers/sort_simplifier.h"
+
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <vector>
+
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/util.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+
 namespace xla {
 namespace {
 
 // If the sort instruction has a tuple shape then looks for unused output
 // values and removes them from the sort instruction. Returns true if the
 // graph has been modified.
-StatusOr<bool> RemoveUnusedOperandFromSort(HloInstruction* sort) {
+absl::StatusOr<bool> RemoveUnusedOperandFromSort(HloInstruction* sort) {
   if (!sort->shape().IsTuple()) {
     return false;
   }
@@ -109,7 +148,7 @@ StatusOr<bool> RemoveUnusedOperandFromSort(HloInstruction* sort) {
 }
 }  // namespace
 
-StatusOr<bool> SortSimplifier::Run(
+absl::StatusOr<bool> SortSimplifier::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(2) << "HLO module before SortSimplifier:";
