@@ -68,6 +68,7 @@ class GenerationConfig(BaseModel):
     examples_per_prompt: int = Field(default=3, description="Number of examples to include in feedback prompt (N in Thompson Sampling)")
     parallel_test_workers: Optional[int] = Field(default=None, description="Number of parallel workers for test execution (None = auto-detect CPU count)")
     parallel_optimizations: int = Field(default=1, description="Number of optimizations to process in parallel (1 = sequential, higher values enable parallelism)")
+    test_timeout: int = Field(default=60, description="Timeout in seconds for each test execution")
 
 
 class OraclesConfig(BaseModel):
