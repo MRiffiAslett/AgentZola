@@ -1,0 +1,78 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics for `ReshapeReshapeForwarding` Optimization:
+
+The TensorFlow XLA optimization pass `ReshapeReshapeForwarding` is triggered when a model contains two consecutive `reshape` operations where the output shape of the second `reshape` matches the input shape of the tensor fed into the first `reshape`. Specifically, this pattern simplifies back-to-back reshape operations that essentially reverse each other, rendering them redundant.
+
+#### Example TensorFlow Model:
+```python
+import tensorflow as tf
+
+# Input tensor of any shape
+input_tensor = tf.random.normal([2, 3, 5])
+
+# First reshape operation changing the shape of `input_tensor`
+t1 = tf.reshape(input_tensor, [30])
+
+# Second reshape operation that reverses the previous reshape
+t2 = tf.reshape(t1, [2, 3, 5])
+```
+In this model, `t1` changes the shape of `input_tensor` but `t2` reshapes it back to the original shape. This is a typical pattern where `ReshapeReshapeForwarding` can optimize by eliminating the redundant reshapes, directly using `input_tensor` instead of `t2`.
+
+### Characteristics for `ConvertAsyncCollectivesToSync` Optimization:
+
+The `ConvertAsyncCollectivesToSync` optimization in TensorFlow XLA is applied when a model contains asynchronous collective operations (like `AllReduceStart`, `AllGatherStart`, etc.) followed by their corresponding `Done` operations, without any overlapping independent operations that could be executed in parallel with these collectives. The optimization converts these asynchronous collectives into their synchronous equivalents when they are not effectively utilized asynchronously (i.e., no operations are scheduled between the start and done operations of the collectives).
+
+#### Example TensorFlow Model:
+
+```python
+import tensorflow as tf
+
+# Placeholder for demonstrating a collective operation pattern
+@tf.function
+def collective_operations():
+    tensor = tf.random.uniform([1024])
+    # Start of an asynchronous all-reduce operation
+    start = tf.raw_ops.AllReduceStart(input=tensor, reduction="Add", group_size=1, group_key=1, instance_key=1)
+    # Normally, other operations would be here to overlap with the collective
+    # Done operation for the asynchronous all-reduce
+    done = tf.raw_ops.AllReduceDone(input=start)
+    return done
+
+output = collective_operations()
+```
+In this hypothetical example, the `AllReduceStart` and `AllReduceDone` do not have any operations in between that could run concurrently. This setup is ideal for `ConvertAsyncCollectivesToSync`, where the asynchronous pattern is converted to a synchronous one to potentially simplify execution and reduce overhead associated with managing asynchronous operations.

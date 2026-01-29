@@ -1,0 +1,84 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model that Trigger `ReshapeReshapeForwarding` Optimization
+
+The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when the following pattern is present in the TensorFlow model:
+
+1. **Sequential Reshape Operations**: The model must contain two consecutive `tf.reshape` operations.
+2. **Reversal of Shape**: The first `reshape` operation changes the shape of an input tensor `input_tensor` to any arbitrary shape. The subsequent `reshape` operation reverts the tensor back to its original shape.
+
+**Example TensorFlow Code:**
+```python
+import tensorflow as tf
+
+# Input tensor of any shape
+input_tensor = tf.random.normal([10, 20])
+
+# First reshape operation to change the shape
+t1 = tf.reshape(input_tensor, [200])
+
+# Second reshape operation to revert to the original shape
+t2 = tf.reshape(t1, [10, 20])
+```
+In this example, `t2` will have the same shape as `input_tensor`, triggering the optimization.
+
+### Characteristics of TensorFlow Model that Trigger `Defuser` Optimization
+
+The `Defuser` optimization is applied in TensorFlow XLA under these conditions:
+
+1. **Presence of Fusion Computations**: The model must contain fused computations. A fused computation in XLA is a single operation that combines multiple operations for efficiency.
+
+2. **Single Caller Fusion Operation**: Each fused computation should be used by exactly one other instruction (the "caller"). This scenario typically indicates that the fused operation can be separated (defused) because it is not intricately linked with multiple parts of the model.
+
+**Example TensorFlow Code:**
+```python
+import tensorflow as tf
+
+@tf.function
+def model(x):
+    # Example computation that might get fused
+    y = x + 1
+    z = y * 2
+    return z
+
+# Input tensor
+input_tensor = tf.constant([1.0, 2.0, 3.0])
+
+# Running the model function will setup a computation that could be fused
+output = model(input_tensor)
+```
+In this scenario, if TensorFlow decides to fuse the operations in `model` (e.g., addition and multiplication), and if this fused operation is used directly and only by the `model`, the `Defuser` optimization could be triggered to separate these operations for better computational efficiency or debugging purposes.

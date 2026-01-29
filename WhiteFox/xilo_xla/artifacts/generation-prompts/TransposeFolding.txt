@@ -1,0 +1,83 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow XLA Models for `ReshapeReshapeForwarding` Optimization
+
+The TensorFlow XLA optimization pass `ReshapeReshapeForwarding` is triggered when a model includes a sequence of two reshape operations where the output shape of the second reshape operation matches the input shape of the first reshape operation. Specifically, this optimization applies when a tensor is reshaped to a new shape and then immediately reshaped back to its original shape.
+
+#### Model Pattern:
+```python
+import tensorflow as tf
+
+# Input tensor of any shape
+input_tensor = tf.random.normal([10, 20])
+
+# First reshape: Changing the shape of the input tensor
+t1 = tf.reshape(input_tensor, [200])
+
+# Second reshape: Reverting to the original shape of the input tensor
+t2 = tf.reshape(t1, [10, 20])
+```
+In this scenario, the `ReshapeReshapeForwarding` optimization recognizes that `t2` simply reverts the shape change done by `t1`, and thus it can simplify this to directly use `input_tensor` without any reshaping.
+
+### Characteristics of TensorFlow XLA Models for `TransposeFolding` Optimization
+
+The `TransposeFolding` optimization in TensorFlow XLA is triggered in models that include transpose operations directly feeding into convolution or dot product operations, where the transpose can be absorbed into these operations by adjusting their attributes. This optimization is especially effective for eliminating unnecessary data movement caused by transpose operations right before these computationally intensive operations.
+
+#### Model Pattern for Convolution:
+```python
+input_tensor = tf.random.normal([1, 28, 28, 192])
+filter_tensor = tf.random.normal([5, 5, 192, 32])
+
+# Transpose operation before convolution (e.g., swapping channels and batch dimension)
+transposed_input = tf.transpose(input_tensor, [3, 1, 2, 0])
+
+# Convolution operation where the transpose can be folded
+output = tf.nn.conv2d(transposed_input, filter_tensor, strides=[1, 1, 1, 1], padding='SAME')
+```
+
+#### Model Pattern for Dot Product:
+```python
+a = tf.random.normal([30, 40])
+b = tf.random.normal([40, 50])
+
+# Transpose operation before dot product (e.g., transposing matrix 'a')
+transposed_a = tf.transpose(a)
+
+# Dot product where the transpose can be folded
+result = tf.linalg.matmul(transposed_a, b)
+```
+In these examples, if the transpose operation simply rearranges dimensions that align with the natural operation of convolution or dot product (like swapping batch and channel dimensions or transposing matrices for matrix multiplication), the `TransposeFolding` optimization can eliminate the transpose by adjusting how the convolution or dot product interprets its input dimensions.

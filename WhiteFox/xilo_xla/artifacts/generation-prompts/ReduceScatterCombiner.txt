@@ -1,0 +1,83 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization in TensorFlow XLA
+
+The `ReshapeReshapeForwarding` optimization is triggered when the following conditions are met in the TensorFlow model:
+
+1. There are two consecutive `reshape` operations.
+2. The first `reshape` operation changes the shape of an input tensor `input_tensor` to any new shape.
+3. The second `reshape` operation changes the shape back to the original shape of `input_tensor`.
+
+For this optimization to be applied, the output shape of the second `reshape` must match the input shape of the tensor input to the first `reshape`.
+
+#### Example Code:
+```python
+import tensorflow as tf
+
+# Input tensor of arbitrary shape
+input_tensor = tf.random.normal([8, 16])
+
+# First reshape operation changing the shape
+t1 = tf.reshape(input_tensor, [4, 32])
+
+# Second reshape operation restoring the original shape
+t2 = tf.reshape(t1, [8, 16])
+```
+Here, `t2` would be optimized to directly be `input_tensor` by skipping both reshape operations if possible.
+
+### Characteristics of TensorFlow Model for `ReduceScatterCombiner` Optimization in TensorFlow XLA
+
+The `ReduceScatterCombiner` optimization is applicable when the model includes multiple `ReduceScatter` operations that can be combined into a single operation. The conditions include:
+
+1. Multiple `ReduceScatter` operations are present.
+2. All `ReduceScatter` operations have the same reduction operation (e.g., sum, max).
+3. The operations are combining tensors along dimensions that can be aligned or are already aligned.
+4. The combined size of the `ReduceScatter` operations meets certain threshold criteria (either count of operations or total size in bytes).
+
+This optimization aims to reduce the overhead of performing multiple independent reduce-scatter operations by merging them into a single operation, potentially improving efficiency in distributed scenarios.
+
+#### Example Scenario:
+```python
+# Assume x1, x2, x3 are tensors distributed across a cluster
+# ReduceScatter operations on x1, x2, x3 with the same reduction operation
+rs1 = reduce_scatter(x1, op='sum', scatter_dim=0)
+rs2 = reduce_scatter(x2, op='sum', scatter_dim=0)
+rs3 = reduce_scatter(x3, op='sum', scatter_dim=0)
+
+# These might be combined into a single ReduceScatter operation
+```
+In this scenario, if `rs1`, `rs2`, and `rs3` meet the criteria (including matching dimensions and operations), then the `ReduceScatterCombiner` could optimize this by replacing them with a single `ReduceScatter` operation that performs the reduction across all input tensors at once. This is more efficient in terms of communication and computation in distributed environments.

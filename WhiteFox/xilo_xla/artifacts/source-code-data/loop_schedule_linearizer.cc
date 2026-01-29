@@ -1,10 +1,52 @@
+/* Copyright 2020 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/service/loop_schedule_linearizer.h"
+
+#include <cstdint>
+#include <memory>
+
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/analysis/hlo_alias_analysis.h"
+#include "xla/hlo/analysis/hlo_dataflow_analysis.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/graphcycles/graphcycles.h"
+#include "xla/service/hlo_value.h"
+#include "xla/shape_tree.h"
+#include "xla/shape_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
+
 namespace xla {
 
 namespace {
 
 // Calculate ordering for HLO, for fast online checking of whether adding
 // additional dependencies would create cycles.
-struct ComputationInstructionOrdering {
+class ComputationInstructionOrdering {
+ public:
   explicit ComputationInstructionOrdering(const HloComputation& computation) {
     for (const HloInstruction* instr : computation.instructions()) {
       for (const HloInstruction* control_pred : instr->control_predecessors()) {
@@ -22,13 +64,13 @@ struct ComputationInstructionOrdering {
 
   int32_t NodeIdForInstruction(const HloInstruction& instr) {
     int32_t instruction_id = instr.unique_id();
-    auto it = node_id_to_graph_id.find(instruction_id);
+    auto it = node_id_to_graph_id_.find(instruction_id);
 
-    if (it != node_id_to_graph_id.end()) {
+    if (it != node_id_to_graph_id_.end()) {
       return it->second;
     }
-    int32_t node_id = graph_cycles.NewNode();
-    node_id_to_graph_id[instruction_id] = node_id;
+    int32_t node_id = graph_cycles_.NewNode();
+    node_id_to_graph_id_[instruction_id] = node_id;
     return node_id;
   }
 
@@ -37,17 +79,17 @@ struct ComputationInstructionOrdering {
   bool InsertEdge(const HloInstruction& source, const HloInstruction& dest) {
     int32_t source_id = NodeIdForInstruction(source);
     int32_t dest_id = NodeIdForInstruction(dest);
-    return graph_cycles.InsertEdge(source_id, dest_id);
+    return graph_cycles_.InsertEdge(source_id, dest_id);
   }
 
-  absl::flat_hash_map<int32_t, int32_t> node_id_to_graph_id;
-
-  tensorflow::GraphCycles graph_cycles;
+ private:
+  absl::flat_hash_map<int32_t, int32_t> node_id_to_graph_id_;
+  GraphCycles graph_cycles_;
 };
 
 }  // namespace
 
-static StatusOr<bool> AddControlEdgesForLoopWrites(
+static absl::StatusOr<bool> AddControlEdgesForLoopWrites(
     HloInstruction* xla_while, HloAliasAnalysis& alias_analysis) {
   HloDataflowAnalysis& dataflow = alias_analysis.dataflow_analysis();
   HloComputation* body = xla_while->while_body();
@@ -60,7 +102,7 @@ static StatusOr<bool> AddControlEdgesForLoopWrites(
   // computations is because it is hard to extract the underlying graph from
   // those abstractions.
   ComputationInstructionOrdering ordering(*body);
-  ShapeTree<bool> indices_to_copy(xla_while->shape());
+  ShapeTree<bool> indices_to_copy(&xla_while->shape());
 
   for (auto& p : indices_to_copy) {
     const ShapeIndex& index = p.first;
@@ -107,12 +149,14 @@ static StatusOr<bool> AddControlEdgesForLoopWrites(
             continue;
           }
 
-          changed |= absl::c_linear_search(read->control_successors(), write);
-
-          // Unless we want a copy, read should happen before write.
-          TF_RETURN_IF_ERROR(read->AddControlDependencyTo(write));
-          VLOG(2) << "Adding dependency: " << read->ToShortString()
-                  << " before " << write->ToShortString();
+          // Add control dependency if it does not already exist.
+          if (!absl::c_linear_search(read->control_successors(), write)) {
+            // Unless we want a copy, read should happen before write.
+            TF_RETURN_IF_ERROR(read->AddControlDependencyTo(write));
+            VLOG(2) << "Adding dependency: " << read->ToShortString()
+                    << " before " << write->ToShortString();
+            changed = true;
+          }
         }
       }
     }
@@ -120,7 +164,7 @@ static StatusOr<bool> AddControlEdgesForLoopWrites(
   return changed;
 }
 
-StatusOr<bool> LoopScheduleLinearizer::Run(
+absl::StatusOr<bool> LoopScheduleLinearizer::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   // Constructing HloAliasAnalysis is expensive, so don't do it until we find at
@@ -130,15 +174,32 @@ StatusOr<bool> LoopScheduleLinearizer::Run(
   bool changed = false;
   for (HloComputation* computation :
        module->MakeNonfusionComputations(execution_threads)) {
-    for (HloInstruction* instruction :
-         computation->MakeInstructionPostOrder()) {
+    for (HloInstruction* instruction : computation->instructions()) {
       if (instruction->opcode() != HloOpcode::kWhile) {
+        continue;
+      }
+
+      // Skip loops that have async collectives, as the additional control deps
+      // inserted by this pass can constrain scheduling and hamper compute
+      // and communication overlap.
+      const HloComputation* body = instruction->while_body();
+      bool has_async_collectives =
+          absl::c_any_of(body->instructions(), [](const HloInstruction* instr) {
+            return hlo_query::IsAsyncCollectiveStartOp(
+                       instr, /*include_send_recv=*/true) ||
+                   hlo_query::IsAsyncCollectiveDoneOp(
+                       instr, /*include_send_recv=*/true);
+          });
+
+      if (has_async_collectives) {
+        VLOG(2) << "Skipping " << instruction->name()
+                << " since body has async collectives";
         continue;
       }
 
       if (alias_analysis == nullptr) {
         TF_ASSIGN_OR_RETURN(alias_analysis,
-                            HloAliasAnalysis::Run(module, can_share_buffer_));
+                            HloAliasAnalysis::Run(module, alias_info_));
       }
       TF_ASSIGN_OR_RETURN(bool updated_loop, AddControlEdgesForLoopWrites(
                                                  instruction, *alias_analysis));

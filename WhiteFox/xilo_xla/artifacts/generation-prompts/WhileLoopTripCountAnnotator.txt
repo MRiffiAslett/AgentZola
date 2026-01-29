@@ -1,0 +1,73 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow model that trigger `WhileLoopTripCountAnnotator` in TensorFlow XLA
+
+The TensorFlow model must include a `while` loop that fulfills specific analytical conditions that allow the trip count (number of iterations) of the loop to be determined statically during compilation. The optimization will trigger if:
+
+1. **Presence of a While Loop**: The model must contain a `while` loop. This is the fundamental requirement as the optimization targets `while` loops specifically.
+
+2. **Induction Variable Analysis**: The loop must have an identifiable induction variable. This variable is often part of a tuple that represents the loop state, and it controls the number of iterations.
+
+3. **Bounded and Known Step Loops**: The loop must have a range that is both bounded and has a known step. This means:
+   - The maximum and minimum values of the loop (that define its range) can be statically determined.
+   - The step value by which the induction variable changes in each iteration is constant and known.
+
+4. **Conditions for Static Analysis**:
+   - Both the maximum and minimum values of the loop must be non-negative (since they are stored as signed integers but represent quantities that can't be negative).
+   - The step value must be positive.
+
+When these conditions are met, the optimizer can compute the trip count statically, i.e., it can determine how many times the loop will run without executing the model. This is particularly useful for optimizing the execution of the model, especially in scenarios where predictable loop execution times are crucial, such as in real-time systems.
+
+### Code Example Illustrating a Model that Triggers the Optimization
+
+```python
+import tensorflow as tf
+
+# Assuming 'tf.while_loop' can be compiled with XLA and the conditions are met
+i = tf.constant(0)
+c = lambda i: tf.less(i, 10)
+b = lambda i: tf.add(i, 1)
+r = tf.while_loop(c, b, [i])
+
+# This TensorFlow model will trigger the WhileLoopTripCountAnnotator if the above C++ code is used for compilation,
+# because:
+# - It contains a while loop.
+# - The loop's induction variable `i` starts from 0 and increments by 1 until it becomes 10.
+# - The loop bounds (0 to 10) and step (1) are statically known and meet the non-negative and positive conditions.
+```
+
+In this example, the optimizer can determine that the loop will execute exactly 10 times (`trip_count`), starting from 0 with a step of 1. This information can then be used to optimize the loop execution.

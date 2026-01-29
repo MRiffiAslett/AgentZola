@@ -1,15 +1,9 @@
-# StarCoder Generation Configuration
-# Configuration for generating test programs using VLLM
-
 [paths]
 prompt_dir = "prompts"
 output_dir = "generated-outputs"
 hf_home = "hf_cache"
 log_file = "whitefox-llm-gen.log"
-# WhiteFox-specific paths
 bandit_state_file = "whitefox_state.json"
-
-
 
 [model]
 name = "bigcode/starcoder"
@@ -19,23 +13,22 @@ gpu_memory_utilization = 0.85
 swap_space = 4
 
 [generation]
-num_samples = 1     # Total number of output samples to generate per prompt
-max_tokens = 4096    # Maximum number of tokens to generate for each output
-temperature = 1.0    # Controls randomness (higher = more random)
-top_p = 1.0          # Nucleus sampling limit (1.0 = consider all tokens)
-split_size = 20      # Number of prompts processed together per batch
-unit_num = 2        # Number of samples generated per batch call (until num_samples reached)
-# WhiteFox-specific generation parameters
-optimizations_dir = "xilo_xla/artifacts/Prompts/test"  # Path to requirement prompt directory
-tests_per_optimization = 10  # Total tests to generate per optimization
-tests_per_iteration = 5      # Tests to generate per iteration (10 tests per batch as per spec)
-max_iterations = 15           # Maximum iterations per optimization
-examples_per_prompt = 3        # Number of examples to include in feedback prompt (few-shot)
-test_timeout = 30              # Timeout in seconds for each test execution (increased from 7 to avoid false timeouts)
-parallel_test_workers = 4      # Number of parallel test workers (reduced from default 8 to save memory)
-parallel_optimizations = 2     # Number of optimizations to process in parallel (1 = sequential)
+num_samples = 1     
+max_tokens = 4096   
+temperature = 1.0    
+top_p = 1.0        
+split_size = 20      
+unit_num = 2       
 
-# Hardcoded list of optimizations that WhiteFox targets
+optimizations_dir = "xilo_xla/artifacts/generation-prompts" 
+tests_per_optimization = 10  
+tests_per_iteration = 5      
+max_iterations = 15         
+examples_per_prompt = 3       
+test_timeout = 30             
+parallel_test_workers = 4   
+parallel_optimizations = 2     
+
 optimizations = [
     "AllGatherBroadcastReorder",
     "AllGatherCombiner",
@@ -107,8 +100,6 @@ float_rtol = 1e-5  # Relative tolerance for float comparison
 float_atol = 1e-8  # Absolute tolerance for float comparison
 
 [pass_name_aliases]
-# Exact mappings from CamelCase optimization names to pass->name() strings from instrumentation
-# No generic CamelCase -> kebab-case transform - use these exact mappings only
 AllGatherBroadcastReorder = ["all-gather-bcast-reorder"]
 AllGatherCombiner = ["all-gather-combiner", "gpu-all-gather-combiner"]
 AllGatherDecomposer = ["all_gather_decomposer"]
@@ -118,7 +109,7 @@ AllReduceReassociate = ["all-reduce-reassociate"]
 AllReduceSimplifier = ["all-reduce-simplifier"]
 AsyncCollectiveCreator = ["async-collective-creator"]
 BatchDotSimplification = ["batch-dot-simplification"]
-Bfloat16ConversionFolding = ["bfloat16-fold"]  # if this never matches, re-check the literal name() in your tree
+Bfloat16ConversionFolding = ["bfloat16-fold"] 
 BroadcastCanonicalizer = ["broadcast_canonicalizer"]
 ChangeOpDataType = ["change-op-data-type"]
 CollectivesScheduleLinearizer = ["collectives-schedule-linearizer"]
@@ -153,8 +144,6 @@ WhileLoopInvariantCodeMotion = ["while-loop-invariant-code-motion"]
 WhileLoopTripCountAnnotator = ["while-loop-trip-count-annotator"]
 ZeroSizedHloElimination = ["zero_sized_hlo_elimination"]
 
-# These are NOT separate passes in your doc; they're behaviors inside DynamicDimensionSimplifier.
-# So the only observable "pass=" you can match is dynamic-dimension-simplifier.
 ConcatForwarding = ["concat-forwarding"]
 IdentityConvertRemoving = ["identity-convert-removing"]
 IdentityReshapeRemoving = ["identity-reshape-removing"]
