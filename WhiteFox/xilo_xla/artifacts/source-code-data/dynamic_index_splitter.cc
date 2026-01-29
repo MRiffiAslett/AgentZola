@@ -1,6 +1,40 @@
+/* Copyright 2018 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/hlo/transforms/expanders/dynamic_index_splitter.h"
+
+#include <cstdint>
+#include <utility>
+#include <vector>
+
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/shape_util.h"
+#include "xla/status_macros.h"
+
 namespace xla {
 
-StatusOr<bool> DynamicIndexSplitter::Run(
+absl::StatusOr<bool> DynamicIndexSplitter::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;
@@ -18,17 +52,17 @@ StatusOr<bool> DynamicIndexSplitter::Run(
       }
       auto parent = dynamic_op->parent();
       bool is_update = dynamic_op->opcode() == HloOpcode::kDynamicUpdateSlice;
-      int64_t num_indices = dynamic_op->operand(0)->shape().rank();
+      int64_t num_indices = dynamic_op->operand(0)->shape().dimensions().size();
 
       if (num_indices == 0) {
         // If the operand rank is 0, directly replace R0 DS/DUS with the
         // operand (for DS) or update (for DUS).
         if (is_update) {
-          TF_CHECK_OK(parent->ReplaceInstruction(
-              dynamic_op, dynamic_op->mutable_operand(1)));
+          CHECK_OK(parent->ReplaceInstruction(dynamic_op,
+                                              dynamic_op->mutable_operand(1)));
         } else {
-          TF_CHECK_OK(parent->ReplaceInstruction(
-              dynamic_op, dynamic_op->mutable_operand(0)));
+          CHECK_OK(parent->ReplaceInstruction(dynamic_op,
+                                              dynamic_op->mutable_operand(0)));
         }
         changed = true;
         continue;
@@ -42,7 +76,7 @@ StatusOr<bool> DynamicIndexSplitter::Run(
         // This DS/DUS already uses scalar indices.
         continue;
       }
-      TF_RET_CHECK(index_operand->shape().rank() == 1);
+      TF_RET_CHECK(index_operand->shape().dimensions().size() == 1);
       auto index_element_type = index_operand->shape().element_type();
       std::vector<HloInstruction*> index_array;
       index_array.reserve(num_indices);
@@ -63,8 +97,8 @@ StatusOr<bool> DynamicIndexSplitter::Run(
                     dynamic_op->shape(), dynamic_op->mutable_operand(0),
                     absl::MakeSpan(index_array),
                     dynamic_op->dynamic_slice_sizes());
-      TF_CHECK_OK(parent->ReplaceWithNewInstruction(dynamic_op,
-                                                    std::move(new_dynamic_op)));
+      CHECK_OK(parent->ReplaceWithNewInstruction(dynamic_op,
+                                                 std::move(new_dynamic_op)));
       changed = true;
     }
   }

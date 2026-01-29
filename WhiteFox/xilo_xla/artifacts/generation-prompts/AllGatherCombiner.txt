@@ -1,0 +1,91 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization Pass
+
+The TensorFlow XLA optimization pass `ReshapeReshapeForwarding` is triggered when a TensorFlow model exhibits the following pattern:
+
+1. **Sequential Reshape Operations**: There are two consecutive `tf.reshape` operations applied to a tensor.
+2. **Shape Reversal**: The second reshape operation reverts the tensor to its original shape. 
+
+This means, if the first reshape changes the shape of tensor `input_tensor` from its original shape to a new shape, the second reshape must change it back to the original shape of `input_tensor`.
+
+#### Example Code:
+
+```python
+import tensorflow as tf
+
+# Assume input_tensor is a TensorFlow tensor with a specific shape
+input_tensor = tf.random.normal([10, 20])
+
+# First reshape operation changing the shape
+t1 = tf.reshape(input_tensor, [200, 1])
+
+# Second reshape operation reverting to the original shape
+t2 = tf.reshape(t1, [10, 20])
+```
+
+In this example, `t2` would be optimized out, effectively using `input_tensor` directly wherever `t2` is used, provided that the shapes are compatible as per the optimization conditions.
+
+---
+
+### Characteristics of TensorFlow Model for `AllGatherCombiner` Optimization Pass
+
+The `AllGatherCombiner` optimization pass is triggered in TensorFlow XLA when the following conditions are met in a model:
+
+1. **Multiple AllGather Operations**: The model contains multiple `AllGather` operations that can potentially be combined.
+2. **Same AllGather Dimension**: These `AllGather` operations should ideally be gathering along the same dimension or meet the criteria where combining them despite different dimensions is beneficial (as determined by internal heuristics like data size or count thresholds).
+3. **Compatibility of Operand Shapes**: The shapes of operands in these `AllGather` operations should allow them to be combined effectively without violating any constraints like data layout or collective operation semantics.
+4. **Optimization Thresholds**: The size (in bytes) and the count of the `AllGather` operations meet predefined thresholds which make the combination practical and beneficial in terms of performance.
+
+#### Example Code:
+
+```python
+import tensorflow as tf
+
+# Simulation of a scenario where multiple AllGather operations might be combined
+# Creating dummy tensors representing different shards in a distributed setting
+tensor1 = tf.random.normal([10, 20])
+tensor2 = tf.random.normal([10, 20])
+
+# AllGather operations across different devices
+gathered1 = tf.raw_ops.AllGatherV2(input=tensor1, num_devices=4, gather_dim=1)
+gathered2 = tf.raw_ops.AllGatherV2(input=tensor2, num_devices=4, gather_dim=1)
+
+# Assuming these operations are part of a larger model where combination is deemed beneficial
+```
+
+In this example, if `gathered1` and `gathered2` are eligible based on their operational characteristics and if combining them leads to reduced overhead or improved performance, the `AllGatherCombiner` pass would optimize by merging these operations into a single more efficient operation.

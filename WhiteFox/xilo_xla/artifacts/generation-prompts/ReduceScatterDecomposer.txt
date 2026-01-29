@@ -1,0 +1,74 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReduceScatterDecomposer` in TensorFlow XLA
+
+**Model Characteristics:**
+1. **Use of ReduceScatter Instruction**: The TensorFlow model must include an HloReduceScatterInstruction. This instruction typically performs a reduction on tensors across multiple devices followed by a scatter of the result. It is crucial for triggering the `ReduceScatterDecomposer`.
+
+2. **Array Shape**: The input to the ReduceScatter instruction must be an array. This is checked by the condition that the shape of the ReduceScatter instruction must be an array type.
+
+3. **Decomposition Condition**: There may be a condition (represented by `should_decompose_` in the code) that determines whether or not the ReduceScatter instruction should be decomposed based on specific model or execution configurations. This condition must be satisfied (or absent) for the decomposition to proceed.
+
+4. **Presence of a Channel ID**: The model can optionally include a channel ID for the ReduceScatter instruction, which is used to manage communication channels in distributed settings. If present, it is incremented for use in the decomposed operations.
+
+5. **Replacement by AllReduce and DynamicSlice**: The original ReduceScatter operation is decomposed into an AllReduce operation followed by a DynamicSlice. The AllReduce aggregates data across devices, and DynamicSlice extracts a portion of this data to achieve the equivalent of the original ReduceScatter.
+
+**Example Code Pattern in TensorFlow (conceptual):**
+```python
+import tensorflow as tf
+
+# Assuming `tf.distribute.ReduceScatter` exists and is an abstraction over the XLA HloReduceScatterInstruction
+# This is a conceptual representation since TensorFlow doesn't directly expose Hlo instructions.
+
+# Create some data
+data = tf.random.uniform(shape=[10, 5])
+
+# Define a reduction operation
+def reduce_op(x, y):
+    return x + y
+
+# Use a distributed strategy
+strategy = tf.distribute.MirroredStrategy()
+
+# Apply ReduceScatter within the strategy scope
+with strategy.scope():
+    reduced_data = tf.distribute.experimental.ReduceScatter(data, reduce_op)
+
+# The characteristics of this model include using ReduceScatter in a distributed setup with an array-shaped tensor.
+```
+
+**Note**: The actual implementation details like `tf.distribute.ReduceScatter` may not exist as described since TensorFlow abstracts XLA operations differently. The example is to illustrate how such a model characteristic might look in a high-level TensorFlow API context.
