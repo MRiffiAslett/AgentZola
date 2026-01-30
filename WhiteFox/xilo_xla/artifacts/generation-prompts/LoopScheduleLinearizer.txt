@@ -1,0 +1,90 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization:
+
+The `ReshapeReshapeForwarding` optimization is triggered in a TensorFlow model where there is a sequence of two `reshape` operations such that:
+1. The first `reshape` operation changes the shape of a tensor `input_tensor` to any arbitrary shape.
+2. The second `reshape` operation immediately follows the first and reverts the tensor back to its original shape, i.e., the shape of `input_tensor`.
+
+The characteristics that would trigger this optimization are:
+- Consecutive `reshape` operations where the output shape of the second reshape matches the input shape of the tensor fed into the first reshape.
+- There are no changes or operations between these two reshape operations that alter the tensor.
+
+#### Example in TensorFlow (Python):
+```python
+import tensorflow as tf
+
+# Define an input tensor
+input_tensor = tf.random.normal([10, 20])
+
+# First reshape operation
+reshaped_tensor = tf.reshape(input_tensor, [200])
+
+# Second reshape operation that reverts to the original shape
+output_tensor = tf.reshape(reshaped_tensor, [10, 20])
+```
+In the above model, the `ReshapeReshapeForwarding` optimization would recognize that `output_tensor` has the same shape as `input_tensor` and is only reshaped back and forth, hence it can optimize out the intermediate reshapes.
+
+### Characteristics of TensorFlow Model for `LoopScheduleLinearizer` Optimization:
+
+The `LoopScheduleLinearizer` optimization is triggered in a TensorFlow model specifically involving `while` loops where:
+1. There are writes and reads to tensor values within the loop body that can be reordered without introducing dependency cycles in the computation graph.
+2. The loop does not contain operations classified as asynchronous collectives which would otherwise restrict the reordering due to potential impacts on communication and computation overlap.
+
+The characteristics that would trigger this optimization are:
+- Presence of `while` loops in the model where tensor values are written and subsequently read,
+- Potential to introduce additional control dependencies to ensure writes happen after reads without creating cycles,
+- Absence of asynchronous collective operations within the loop body.
+
+#### Example in TensorFlow (Python simulation since actual scheduling and memory aliasing details are abstracted away):
+```python
+# Simulated TensorFlow code with a while loop
+i = tf.constant(0)
+limit = tf.constant(10)
+loop_var = tf.constant([1, 2])
+
+def loop_body(i, loop_var):
+    updated_var = loop_var + tf.constant([1, 1])
+    return i + 1, updated_var
+
+_, result = tf.while_loop(
+    lambda i, _: i < limit,
+    loop_body,
+    [i, loop_var]
+)
+```
+Here, if `loop_body` had more complex tensor manipulations and potential read-write sequences, the `LoopScheduleLinearizer` might be applied to optimize the execution order within the loop.

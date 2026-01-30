@@ -1,7 +1,51 @@
+/* Copyright 2023 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/hlo/transforms/collectives/convert_async_collectives_to_sync.h"
+
+#include <cstdint>
+#include <optional>
+#include <utility>
+#include <vector>
+
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_casting_utils.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instructions.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/hlo/ir/hlo_schedule.h"
+#include "xla/hlo/utils/hlo_query.h"
+#include "xla/service/scheduling_annotations_util.h"
+#include "xla/status_macros.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+#include "tsl/platform/statusor.h"
+
 namespace xla {
 
-StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
-                                            HloInstruction* async_done) {
+absl::StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
+                                                  HloInstruction* async_done) {
   HloInstruction* sync_instruction = nullptr;
   HloComputation* computation = async_start->parent();
 
@@ -12,7 +56,7 @@ StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
       sync_instruction =
           computation->AddInstruction(HloInstruction::CreateAllReduce(
               async_done->shape(), async_ar->operands(), async_ar->to_apply(),
-              async_ar->replica_groups(), async_ar->constrain_layout(),
+              async_ar->device_list(), async_ar->constrain_layout(),
               async_ar->channel_id(), async_ar->use_global_device_ids()));
       break;
     }
@@ -21,17 +65,16 @@ StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
       sync_instruction =
           computation->AddInstruction(HloInstruction::CreateAllGather(
               async_done->shape(), async_ag->operands(),
-              async_ag->all_gather_dimension(), async_ag->replica_groups(),
+              async_ag->all_gather_dimension(), async_ag->device_list(),
               async_ag->constrain_layout(), async_ag->channel_id(),
               async_ag->use_global_device_ids()));
       break;
     }
     case HloOpcode::kCollectivePermuteStart: {
       auto* async_cp = Cast<HloCollectivePermuteInstruction>(async_start);
-      TF_RET_CHECK(async_cp->operand_count() == 1);
       sync_instruction =
           computation->AddInstruction(HloInstruction::CreateCollectivePermute(
-              async_done->shape(), async_cp->mutable_operand(0),
+              async_done->shape(), async_cp->operands(),
               async_cp->source_target_pairs(), async_cp->channel_id()));
       break;
     }
@@ -44,12 +87,14 @@ StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
       break;
     }
     default:
-      return InternalError("Unexpected async start op %s",
-                           HloOpcodeString(async_start->opcode()));
+      return Internal("Unexpected async start op %s",
+                      HloOpcodeString(async_start->opcode()));
   }
 
   sync_instruction->set_metadata(async_start->metadata());
   sync_instruction->CopyBackendConfigFrom(async_start);
+  FrontendAttributes fas = async_done->frontend_attributes();
+  sync_instruction->set_frontend_attributes(fas);
 
   TF_RETURN_IF_ERROR(async_done->ReplaceAllUsesWith(sync_instruction));
 
@@ -59,20 +104,6 @@ StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
   // async-start/done.
   TF_RETURN_IF_ERROR(async_start->DropAllControlDeps());
   TF_RETURN_IF_ERROR(async_done->DropAllControlDeps());
-
-  // For the generic async-start/done, we also need to disconnect them from
-  // the called computations.
-  if (async_start_op == HloOpcode::kAsyncStart) {
-    auto disconnect_called_computation =
-        [](HloInstruction* async_op) -> Status {
-      TF_RET_CHECK(async_op->called_computations().size() == 1);
-      HloComputation* called = async_op->called_computations().front();
-      called->RemoveAsyncInstruction(async_op);
-      return OkStatus();
-    };
-    TF_RETURN_IF_ERROR(disconnect_called_computation(async_start));
-    TF_RETURN_IF_ERROR(disconnect_called_computation(async_done));
-  }
 
   // When we remove the async-done (and its unused operands), in most cases,
   // the async-start may not be deleted if its considered as having side effects
@@ -90,7 +121,7 @@ StatusOr<HloInstruction*> CreateSyncVariant(HloInstruction* async_start,
   return sync_instruction;
 }
 
-/*static*/ Status
+/*static*/ absl::Status
 ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
     HloComputation* computation,
     absl::Span<const std::pair<HloInstruction*, HloInstruction*>> async_pairs) {
@@ -98,6 +129,16 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
   for (auto& [async_start, async_done] : async_pairs) {
     TF_ASSIGN_OR_RETURN(HloInstruction * sync,
                         CreateSyncVariant(async_start, async_done));
+    TF_ASSIGN_OR_RETURN(std::optional<int64_t> group_id,
+                        GetSchedulingAnnotationGroupId(async_done));
+    if (group_id) {
+      LOG(WARNING) << "Async collective pair (" << async_start->name() << ", "
+                   << async_done->name() << ") with scheduling group id "
+                   << *group_id
+                   << " is not overlapped after scheduling and is converted "
+                      "to a synchronous collective "
+                   << sync->name() << ".";
+    }
     // Remember name of async instruction for profile usability.
     FrontendAttributes attributes;
     auto& map = *attributes.mutable_map();
@@ -125,10 +166,10 @@ ConvertAsyncCollectivesToSync::ReplaceAsyncInstructionsWithSync(
     }
   }
   module->schedule().set_sequence(computation, new_sequence);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
-StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
+absl::StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
     HloComputation* computation) {
   HloModule* module = computation->parent();
   std::vector<std::pair<HloInstruction*, HloInstruction*>> async_pairs;
@@ -141,10 +182,10 @@ StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
   absl::flat_hash_set<HloInstruction*> in_flight_ops;
 
   for (HloInstruction* instruction : sequence.instructions()) {
-    if (hlo_query::IsAsyncCollectiveStartOp(instruction->opcode())) {
+    if (hlo_query::IsAsyncCollectiveStartOp(instruction)) {
       in_flight_ops.insert(instruction);
       VLOG(3) << "Found async start " << instruction->ToString();
-    } else if (hlo_query::IsAsyncCollectiveDoneOp(instruction->opcode())) {
+    } else if (hlo_query::IsAsyncCollectiveDoneOp(instruction)) {
       // If this done is matching with the previous start and all intervening
       // ops are nops (i.e., prev_async_start was not reset to null), then we
       // were unable to schedule an independent op to overlap with this async
@@ -177,7 +218,7 @@ StatusOr<bool> ConvertAsyncCollectivesToSync::RunOnComputation(
   return true;
 }
 
-StatusOr<bool> ConvertAsyncCollectivesToSync::Run(
+absl::StatusOr<bool> ConvertAsyncCollectivesToSync::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   if (!module->has_schedule()) {

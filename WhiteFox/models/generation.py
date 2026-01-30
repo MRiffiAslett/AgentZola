@@ -5,8 +5,33 @@ These are schema-only definitions with no default values.
 All actual values should come from TOML configuration files.
 """
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
+@dataclass
+class TestExecutionTask:
+    """Task information for parallel test execution."""
+    test_file: Path
+    opt_name: str
+    iteration: int
+    sample_idx: int
+    timeout: int = 7
+
+
+@dataclass
+class TestExecutionResult:
+    """Result from parallel test execution including test metadata."""
+    task: TestExecutionTask
+    execution_result: Optional['ExecutionResult']
+    error: Optional[str] = None
+    
+    @property
+    def success(self) -> bool:
+        """Whether the test execution succeeded (no error)."""
+        return self.error is None and self.execution_result is not None
 
 
 class PathsConfig(BaseModel):
@@ -16,7 +41,6 @@ class PathsConfig(BaseModel):
     hf_cache: Optional[str] = Field(default=None, description="HuggingFace cache directory")
     log_file: str = Field(description="Log file path")
     test_output_root: Optional[str] = Field(default=None, description="Root directory for generated tests per optimization")
-    logs_root: Optional[str] = Field(default=None, description="Root directory for execution logs")
     bandit_state_file: Optional[str] = Field(default=None, description="Path to JSON/YAML file for WhiteFoxState persistence")
     bug_reports_dir: Optional[str] = Field(default=None, description="Directory for bug reports")
 
@@ -42,6 +66,9 @@ class GenerationConfig(BaseModel):
     tests_per_iteration: int = Field(default=10, description="Tests to generate per iteration")
     max_iterations: int = Field(default=100, description="Maximum iterations per optimization")
     examples_per_prompt: int = Field(default=3, description="Number of examples to include in feedback prompt (N in Thompson Sampling)")
+    parallel_test_workers: Optional[int] = Field(default=None, description="Number of parallel workers for test execution (None = auto-detect CPU count)")
+    parallel_optimizations: int = Field(default=1, description="Number of optimizations to process in parallel (1 = sequential, higher values enable parallelism)")
+    test_timeout: int = Field(default=60, description="Timeout in seconds for each test execution")
 
 
 class OraclesConfig(BaseModel):

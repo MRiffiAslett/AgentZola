@@ -1,0 +1,81 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow model that trigger the optimization pass `ReshapeReshapeForwarding`:
+
+The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model contains a sequence of two `tf.reshape` operations where:
+
+1. The first `tf.reshape` operation changes the shape of an input tensor (`input_tensor`) to any arbitrary shape.
+2. The second `tf.reshape` operation immediately following the first one reverts the tensor back to its original shape.
+
+This pattern suggests an unnecessary reshape operation that does not change the data but adds computational overhead. The optimization eliminates this redundant operation.
+
+#### Example Model:
+```python
+import tensorflow as tf
+
+# Original shape of the input tensor
+input_tensor = tf.random.normal([10, 20])
+
+# First reshape operation to change the shape
+reshaped_tensor = tf.reshape(input_tensor, [200])
+
+# Second reshape operation to revert to the original shape
+reverted_tensor = tf.reshape(reshaped_tensor, [10, 20])
+```
+In this example, the model exhibits the characteristics needed to trigger the `ReshapeReshapeForwarding` optimization, as the output of the second reshape (`reverted_tensor`) has the same shape as the `input_tensor`.
+
+### Characteristics of TensorFlow model that trigger the optimization pass `HloConstantFolding`:
+
+The `HloConstantFolding` optimization is triggered when a TensorFlow model contains operations that can be evaluated at compile-time because they operate on constant values. The characteristics of such a model include:
+
+1. Operations where all operands are constants or can be reduced to constants (like broadcasts of constants).
+2. The absence of operations that are inherently non-foldable due to side effects, randomness, or specific exclusion due to performance considerations (like `kRng`, `kAfterAll`, `kWhile`, `kFft`).
+
+This optimization attempts to evaluate expressions during the compilation process to reduce runtime computation.
+
+#### Example Model:
+```python
+import tensorflow as tf
+
+# Constant tensors
+const1 = tf.constant([1.0, 2.0, 3.0])
+const2 = tf.constant([4.0, 5.0, 6.0])
+
+# A foldable operation on constant tensors
+result = tf.add(const1, const2)
+```
+In this example, since both operands of the `tf.add` operation are constants, the `HloConstantFolding` optimization can pre-compute the result at compile-time, thus reducing runtime computations.
