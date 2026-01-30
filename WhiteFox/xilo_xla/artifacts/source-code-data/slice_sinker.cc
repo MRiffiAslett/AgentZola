@@ -1,3 +1,42 @@
+/* Copyright 2019 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/hlo/transforms/simplifiers/slice_sinker.h"
+
+#include <cstdint>
+#include <iterator>
+#include <optional>
+#include <vector>
+
+#include "absl/algorithm/container.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/span.h"
+#include "xla/hlo/ir/hlo_computation.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_module.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/shape.h"
+#include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
+#include "tsl/platform/errors.h"
+
 namespace xla {
 
 namespace {
@@ -59,7 +98,7 @@ bool IsSimilarOperationOnSlices(const HloInstruction* operation_on_slices,
     return false;
   }
 
-  if (candidate->opcode() != operation_on_slices->opcode() ||
+  if (!candidate->SameOp(*operation_on_slices) ||
       operation_on_slices->shape().element_type() !=
           candidate->shape().element_type()) {
     return false;
@@ -138,8 +177,9 @@ std::optional<std::vector<HloInstruction*>> FindElementwiseOperationGroup(
 // Generates a new elementwise operation using the slice_sources as operands,
 // and replaces the uses of elementwise operation_on_slices with slices of the
 // new elementwise operations.
-Status SinkSlices(const std::vector<HloInstruction*>& slice_sources,
-                  const std::vector<HloInstruction*>& operation_on_slices) {
+absl::Status SinkSlices(
+    const std::vector<HloInstruction*>& slice_sources,
+    const std::vector<HloInstruction*>& operation_on_slices) {
   const Shape shape = slice_sources[0]->shape();
   PrimitiveType element_type = operation_on_slices[0]->shape().element_type();
   Shape new_shape = ShapeUtil::ChangeElementType(shape, element_type);
@@ -161,7 +201,7 @@ Status SinkSlices(const std::vector<HloInstruction*>& slice_sources,
              << " to replace: " << user->ToString();
     TF_RETURN_IF_ERROR(user->ReplaceAllUsesWith(user_slice));
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace
@@ -212,7 +252,7 @@ Status SinkSlices(const std::vector<HloInstruction*>& slice_sources,
 // This pass currently doesn't transform non-elementwise instructions. We may
 // extend this pass to transform non-elementwise instructions, such as dot,
 // broadcast and reduce in the future.
-StatusOr<bool> SliceSinker::Run(
+absl::StatusOr<bool> SliceSinker::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

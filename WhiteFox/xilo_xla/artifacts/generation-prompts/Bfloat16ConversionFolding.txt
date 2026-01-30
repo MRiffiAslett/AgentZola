@@ -1,0 +1,83 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding`
+
+The optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA is triggered by a TensorFlow model containing a specific pattern of reshape operations:
+
+1. **Sequential Reshape Operations**: The model should have two consecutive reshape operations. The first reshape transforms a tensor `input_tensor` to any new shape, and the second reshape transforms it back to the original shape of `input_tensor`.
+
+2. **Shape Equality**: The input shape of the first reshape and the output shape of the second reshape must be identical.
+
+This pattern essentially performs a reshape to a new shape and then directly back to the original shape, making the pair of reshapes redundant.
+
+**Example of Triggering Model:**
+```python
+import tensorflow as tf
+
+input_tensor = tf.random.normal([10, 10])
+t1 = tf.reshape(input_tensor, [100])
+t2 = tf.reshape(t1, [10, 10])
+```
+In this example, `t2` can be directly replaced with `input_tensor` due to the redundant reshapes.
+
+### Characteristics of TensorFlow Model for `Bfloat16ConversionFolding`
+
+The optimization pass `Bfloat16ConversionFolding` is activated when the model meets conditions related to the usage of BF16 and F32 data types:
+
+1. **BF16 to F32 Conversion as Input**: If an input to an operation is a conversion from BF16 to F32 and the operation supports BF16 directly, this conversion can be folded into the operation.
+
+2. **F32 to BF16 Conversion as Output**: If all users of an operation's output perform a conversion from F32 to BF16, and the operation supports BF16 as output, these conversions can be folded into the operation itself.
+
+3. **Support for Low Precision**: The hardware must support BF16 operations as inputs or outputs where applicable.
+
+4. **No Mixed Precision Limitations**: If the operation does not support mixed precisions and other operands or outputs remain in F32, the optimization cannot proceed.
+
+**Example of Triggering Model:**
+```python
+import tensorflow as tf
+
+# Assuming 'x' is a tensor with data type F32.
+x = tf.random.normal([10, 10], dtype=tf.float32)
+
+# Convert x to BF16 and then back to F32.
+x_bf16 = tf.cast(x, tf.bfloat16)
+x_f32 = tf.cast(x_bf16, tf.float32)
+
+# Use x_f32 in an operation that supports BF16 directly.
+result = tf.nn.relu(x_f32)
+```
+In this example, if the `relu` operation supports BF16, then `x_f32` can directly be replaced with `x_bf16`, removing the need for the conversion from BF16 to F32. Additionally, if the output of `relu` is always converted to BF16, that conversion can also be folded back into the `relu` operation itself.
