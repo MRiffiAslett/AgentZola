@@ -31,41 +31,46 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `SortSimplifier` Optimization
 
-The `SortSimplifier` optimization in TensorFlow XLA is triggered by a specific pattern in a TensorFlow model involving sorting operations with tuple outputs. Below are the detailed characteristics of the model that would trigger this optimization:
+### Model Characteristics for `ReshapeReshapeForwarding` Optimization in TensorFlow XLA
 
-1. **Tuple Output in Sort Operation**: The model must contain a sort operation (`tf.sort` or similar) where the output is a tuple. This is generally used to handle multiple vectors or keys that are sorted together.
+This optimization is triggered when a TensorFlow model contains two consecutive `reshape` operations where the output shape of the second reshape matches the input shape of the first reshape. Essentially, this indicates that the second reshape operation is reversing the transformation performed by the first reshape operation, making the overall transformation redundant.
 
-2. **Use of GetTupleElement**: Only certain elements of the tuple output from the sort operation are utilized in further operations. This is typically seen where only specific elements (indices) of the sorted tuple are needed for subsequent computations.
-
-3. **Unused Tuple Elements**: Not all elements of the tuple output from the sort operation are used downstream. Some elements of the tuple are ignored or redundant in the context of the entire computation graph.
-
-4. **Comparator Using Subset of Parameters**: The comparator function used in the sort operation must reference only a subset of its parameters, indicating that some sorted elements are not actively compared or used to determine the sort order.
-
-### Code Example Illustrating the Model Pattern
+#### Pattern:
+1. **First Reshape**: Transforms an input tensor `input_tensor` from its original shape to any new shape. This can be any valid transformation as long as it is a legal reshape.
+2. **Second Reshape**: Transforms the tensor back to the original shape of `input_tensor`.
 
 ```python
 import tensorflow as tf
 
-# Example input data
-data1 = tf.constant([1, 3, 2])
-data2 = tf.constant([3, 2, 1])
+# Example of triggering the optimization
+input_tensor = tf.random.normal([8, 2])
+t1 = tf.reshape(input_tensor, [4, 4])  # First reshape to a new shape
+t2 = tf.reshape(t1, [8, 2])           # Second reshape back to the original shape
 
-# Sorting operation where output is a tuple and only one element is used
-sorted_tuple = tf.sort((data1, data2), axis=-1)
-sorted_data1 = sorted_tuple[0]  # Only the first element of the tuple is used
-
-# Further computation using only one part of the sorted tuple
-result = sorted_data1 + 5
+# t2 is equivalent to input_tensor after the optimization
 ```
 
-In this TensorFlow model snippet:
-- A tuple `(data1, data2)` is sorted.
-- Only the first element of the sorted tuple is used in the subsequent operation (`sorted_data1 + 5`).
-- The second element of the tuple (`data2` sorted) is not used, making it a candidate for sort simplification by removing the unused output.
+In this scenario, after the optimization, the model will directly use `input_tensor` instead of going through two reshape operations, effectively simplifying the computational graph.
 
-These characteristics lead to an optimization opportunity where the `SortSimplifier` can modify the sort operation to eliminate the creation and sorting of unused elements, thereby simplifying the computation and potentially enhancing performance.
+### Model Characteristics for `SortSimplifier` Optimization in TensorFlow XLA
+
+This optimization targets sorting operations within TensorFlow models, particularly when the output of a sort operation is a tuple, and some elements of this tuple are unused in subsequent computations or in the output of the model.
+
+#### Pattern:
+1. **Sort Operation**: The model should include a sort operation where the result is a tuple of multiple sorted values or keys.
+2. **Usage of Tuple Elements**: Not all elements of the tuple resulting from the sort operation are utilized in further operations or in the model's output. This can occur, for example, if only specific indices of the tuple are accessed using operations like `tf.gather`.
+
+```python
+# Example TensorFlow code that might trigger the optimization
+input_tensor = tf.random.uniform([10, 2])
+values, indices = tf.math.top_k(input_tensor, k=5, sorted=True)  # Sort operation creating a tuple
+
+# Use only values for further computation
+result = values + 10  # Further use only values, indices are unused
+```
+
+In this case, the optimization would potentially modify the sort operation to only compute and return the `values` since `indices` are not used in any subsequent operations, simplifying the computation and potentially improving memory usage and performance.
+
+Both optimizations aim to simplify the computational graph by removing redundant operations or outputs, leading to more efficient execution of the model.

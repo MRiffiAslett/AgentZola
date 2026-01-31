@@ -31,46 +31,53 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow model to trigger `ReshapeReshapeForwarding` optimization:
 
-The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model contains two consecutive `tf.reshape` operations where the second reshape operation reverts the tensor to its original shape before the first reshape. This optimization checks if the output shape of the second reshape matches the input shape of the tensor input to the first reshape. If they match, the optimization simplifies the model by removing both reshape operations, effectively forwarding the original tensor.
+### Characteristics of TensorFlow Model Triggering `ReshapeReshapeForwarding` Optimization
 
-#### Example TensorFlow code pattern:
+For the `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA to be triggered, the TensorFlow model must contain a sequence of two `tf.reshape` operations where:
+
+1. The first `reshape` operation changes the shape of a tensor (`input_tensor`) to any arbitrary new shape.
+2. The second `reshape` operation directly following the first, reverts the shape of the tensor back to the original shape of `input_tensor`.
+
+This pattern effectively makes the sequence of reshape operations redundant, as the final tensor shape after both reshapes is the same as the initial shape.
+
+#### Example:
 ```python
 import tensorflow as tf
 
-# Input tensor
-input_tensor = tf.random.normal([8, 8])
+# Input tensor of shape (10, 10)
+input_tensor = tf.random.normal([10, 10])
 
 # First reshape operation changing the shape
-t1 = tf.reshape(input_tensor, [64])
+t1 = tf.reshape(input_tensor, [100])
 
-# Second reshape operation reverting to the original shape
-t2 = tf.reshape(t1, [8, 8])
+# Second reshape operation reverting the shape to original
+t2 = tf.reshape(t1, [10, 10])
 ```
-In this example, `t2` would be optimized out to directly reference `input_tensor`.
+In this scenario, `t2` effectively has the same shape and content as `input_tensor`, triggering the `ReshapeReshapeForwarding` optimization to eliminate the redundant reshapes.
 
-### Characteristics of TensorFlow model to trigger `MapInliner` optimization:
+### Characteristics of TensorFlow Model Triggering `MapInliner` Optimization
 
-The `MapInliner` optimization is triggered when a TensorFlow model uses the `tf.map_fn` function where the function applied in `map_fn` is simple enough to be inlined - specifically, if the function consists of operations that use only the parameters (no intermediate computations that depend on external states or constants). The transformation will inline the operation, replacing the `map_fn` with the operation itself applied element-wise across the input.
+For the `MapInliner` optimization pass in TensorFlow XLA to be triggered, the TensorFlow model must include a `tf.map_fn` operation where:
 
-#### Example TensorFlow code pattern:
+1. The function applied in `tf.map_fn` (let’s call it `map_function`) consists of simple operations that only involve parameters (i.e., input arguments to the function) without any complex control flows or additional dependencies.
+2. The `map_function` can be expressed as a direct operation on the input tensors, making the use of `map_fn` redundant.
+
+This optimization pass is particularly triggered when the operations within the `map_function` are simple enough (like arithmetic operations directly on the parameters) that they can be directly applied outside of `map_fn`, thereby bypassing the overhead of the map operation.
+
+#### Example:
 ```python
 import tensorflow as tf
 
 # Input tensor
-input_tensor = tf.random.normal([10, 5])
+input_tensor = tf.constant([[1, 2], [3, 4]])
 
-# Simple function to be applied using map_fn
-def simple_op(x):
-    return x * 2  # This operation directly uses the input parameter x
+# Simple operation function to be applied using map_fn
+def simple_add(x):
+    return x + 5
 
-# Using map_fn to apply the simple_op element-wise
-result = tf.map_fn(simple_op, input_tensor)
+# Applying map_fn
+result = tf.map_fn(simple_add, input_tensor)
 ```
-In this scenario, if `simple_op` is simple enough (like just multiplying by 2 in this example), the `MapInliner` might replace the `map_fn` with a direct element-wise multiplication operation across `input_tensor`, optimizing away the overhead of `map_fn`.
-
-These examples illustrate cases where these specific optimizations would be triggered in TensorFlow models using the XLA compiler.
+In this example, the function `simple_add` directly operates on the input parameters with a simple addition. This scenario is ideal for the `MapInliner` optimization, which would replace the `map_fn` with a direct addition operation on `input_tensor`, thereby improving computational efficiency.

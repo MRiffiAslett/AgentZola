@@ -31,49 +31,56 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model Triggering `ReshapeReshapeForwarding`
 
-For the `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA to be triggered, the TensorFlow model should include a specific pattern of two consecutive reshape operations where the second reshape operation reverses the shape transformation applied by the first reshape. This can be succinctly described as:
+### Characteristics of TensorFlow models triggering `ReshapeReshapeForwarding`:
 
-- An `input_tensor` is reshaped to any arbitrary shape.
-- The resulting tensor from the first reshape is then reshaped back to the original shape of the `input_tensor`.
+The `ReshapeReshapeForwarding` optimization is triggered in a TensorFlow model that contains a specific sequence of two `reshape` operations. The characteristics of such a model include:
 
-Here is a TensorFlow model pattern in Python that would trigger this optimization:
+1. **Sequential Reshapes**: The model must include two consecutive `reshape` operations where the output tensor of the first `reshape` is the input tensor for the second `reshape`.
 
+2. **Shape Reversal**: The second `reshape` operation reverts the tensor back to its original shape as specified by the input tensor to the first `reshape`. This implies that the two reshapes are effectively negating each other's effect on the shape of the tensor.
+
+#### Example in TensorFlow (Python):
 ```python
 import tensorflow as tf
 
-input_tensor = tf.random.normal([8, 4])
-t1 = tf.reshape(input_tensor, [2, 16])  # First reshape to a new shape
-t2 = tf.reshape(t1, tf.shape(input_tensor))  # Second reshape back to original shape
+# Assuming `input_tensor` is a TensorFlow tensor with a known shape
+input_tensor = tf.random.normal([8, 16])
+
+# First reshape operation changes the shape
+t1 = tf.reshape(input_tensor, [4, 32])
+
+# Second reshape operation restores the original shape
+t2 = tf.reshape(t1, tf.shape(input_tensor))
+
+# t2 is now eligible for optimization by `ReshapeReshapeForwarding`
 ```
+In the example above, `t2` will be optimized out to directly reference `input_tensor`, bypassing unnecessary reshaping.
 
-In this example, `t1` changes the shape of `input_tensor`, and `t2` reverts it back to the original shape of `input_tensor`. This pattern causes the `ReshapeReshapeForwarding` to trigger and optimize the model by removing these redundant reshapes.
+### Characteristics of TensorFlow models triggering `AllReduceFolder`:
 
-### Characteristics of TensorFlow Model Triggering `AllReduceFolder`
+The `AllReduceFolder` optimization targets models using nested `all-reduce` operations with specific characteristics:
 
-The `AllReduceFolder` optimization pass involves a scenario where two consecutive `AllReduce` operations are performed on distributed data across multiple devices or replicas. For this optimization to be triggered:
+1. **Nested All-Reduces**: The model must contain at least two nested `all-reduce` operations where the output of the first `all-reduce` is the input to the second `all-reduce`.
 
-- There must be two consecutive `AllReduce` operations.
-- The operations must be compatible except in their replica group configurations.
-- The replica groups of both operations must allow for a potential merging or folding based on the participant contributions.
+2. **Non-Empty Replica Groups**: Both `all-reduce` operations must have non-empty replica groups defined. These groups specify how data is aggregated across different replicas.
 
-Here is a conceptual model pattern in Python that might trigger this optimization:
+3. **Compatible All-Reduce Operations**: Beyond having non-empty replica groups, the `all-reduce` operations must be compatible in terms of their computation (reduction operation), datatype, and other properties excluding the specific replica groups.
 
+4. **Potential for Replica Group Folding**: The replica groups of these `all-reduce` operations must be foldable into a new configuration that still respects the semantics of an `all-reduce` operation. This involves complex checks on how replicas contribute to the results of the operations.
+
+#### Example in TensorFlow (Python):
 ```python
 import tensorflow as tf
 
-# Assuming a distributed setup where 'strategy' is a distributed strategy object
-x = tf.random.normal([10])  # Some distributed tensor
+# Example setup for illustrative purposes; specifics like proper replica group setup are context-dependent
+x = tf.random.normal([10])
+ar0 = tf.raw_ops.CollectiveReduce(input=x, group_size=1, group_key=1, instance_key=1, merge_op="Add", final_op="Id", subdiv_offsets=[0])
 
-# First AllReduce operation with a certain replica group configuration
-ar0 = strategy.reduce(tf.distribute.ReduceOp.SUM, x, axis=0)
+# Second all-reduce consuming the output of the first
+ar1 = tf.raw_ops.CollectiveReduce(input=ar0, group_size=1, group_key=1, instance_key=2, merge_op="Add", final_op="Id", subdiv_offsets=[0])
 
-# Second AllReduce operation, intended to further aggregate results possibly with a different configuration
-ar1 = strategy.reduce(tf.distribute.ReduceOp.SUM, ar0, axis=0)
+# This configuration, if conditions met, can be optimized by `AllReduceFolder`
 ```
-
-In practice, the exact conditions under which the merging of replica groups is possible depend on the specific inter-replica relationships and contributions, as defined by the `FoldReplicaGroups` function. This is a more complex scenario that involves understanding the detailed behavior of distributed data across computations, making it sensitive to the exact configuration of replica groups and the data distribution among them.
+In practice, the correct configuration of `group_size`, `group_key`, `instance_key`, etc., would depend on the specific deployment environment and the distributed system's architecture. The example above simplifies these aspects for illustration.

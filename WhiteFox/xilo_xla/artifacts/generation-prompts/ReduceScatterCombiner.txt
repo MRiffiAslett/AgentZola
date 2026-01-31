@@ -31,53 +31,51 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization in TensorFlow XLA
 
-The `ReshapeReshapeForwarding` optimization is triggered when the following conditions are met in the TensorFlow model:
+### Characteristics of TensorFlow Model for Optimization Pass: `ReshapeReshapeForwarding`
 
-1. There are two consecutive `reshape` operations.
-2. The first `reshape` operation changes the shape of an input tensor `input_tensor` to any new shape.
-3. The second `reshape` operation changes the shape back to the original shape of `input_tensor`.
+The `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA is triggered when a TensorFlow model contains a specific pattern of reshape operations. The characteristics of such a model are as follows:
 
-For this optimization to be applied, the output shape of the second `reshape` must match the input shape of the tensor input to the first `reshape`.
+1. **Sequential Reshape Operations**: The model must contain two consecutive reshape operations.
+2. **Shape Reversal Pattern**: The output shape of the first reshape operation must be reversed by the second reshape operation to match the original input shape of the first reshape.
 
-#### Example Code:
+Here is a TensorFlow code example illustrating such a model pattern:
+
 ```python
 import tensorflow as tf
 
 # Input tensor of arbitrary shape
-input_tensor = tf.random.normal([8, 16])
+input_tensor = tf.random.uniform(shape=[8, 2, 3])
 
-# First reshape operation changing the shape
-t1 = tf.reshape(input_tensor, [4, 32])
+# First reshape operation changing the shape of the tensor
+t1 = tf.reshape(input_tensor, [4, 12])
 
-# Second reshape operation restoring the original shape
-t2 = tf.reshape(t1, [8, 16])
+# Second reshape operation reversing t1's shape back to the original input_tensor's shape
+t2 = tf.reshape(t1, [8, 2, 3])
 ```
-Here, `t2` would be optimized to directly be `input_tensor` by skipping both reshape operations if possible.
+In this example, `t1` is reshaped to a new shape `[4, 12]`, and then `t2` restores it back to the original shape `[8, 2, 3]`. This triggers the `ReshapeReshapeForwarding` optimization, where the two reshapes are optimized out, effectively simplifying the operations while maintaining computational integrity.
 
-### Characteristics of TensorFlow Model for `ReduceScatterCombiner` Optimization in TensorFlow XLA
+### Characteristics of TensorFlow Model for Optimization Pass: `ReduceScatterCombiner`
 
-The `ReduceScatterCombiner` optimization is applicable when the model includes multiple `ReduceScatter` operations that can be combined into a single operation. The conditions include:
+The `ReduceScatterCombiner` optimization pass in TensorFlow XLA is triggered under the following model characteristics:
 
-1. Multiple `ReduceScatter` operations are present.
-2. All `ReduceScatter` operations have the same reduction operation (e.g., sum, max).
-3. The operations are combining tensors along dimensions that can be aligned or are already aligned.
-4. The combined size of the `ReduceScatter` operations meets certain threshold criteria (either count of operations or total size in bytes).
+1. **Multiple `ReduceScatter` Operations**: The model must contain multiple `ReduceScatter` operations that can potentially be combined into a single operation.
+2. **Matching Reduction Operations**: These `ReduceScatter` operations must use the same type of reduction operation (e.g., sum, min, max) across all instances.
+3. **Scatter Dimension Consistency or Adjustment**: Either all `ReduceScatter` operations share the same scatter dimension, or it must be feasible to adjust them to a common scatter dimension by reordering tensor dimensions.
+4. **Sufficient Number and Size of Operations**: The combined size of the `ReduceScatter` operations must meet certain thresholds that make the combination beneficial in terms of performance.
 
-This optimization aims to reduce the overhead of performing multiple independent reduce-scatter operations by merging them into a single operation, potentially improving efficiency in distributed scenarios.
+A conceptual TensorFlow code example that could potentially trigger this optimization (if translated and applicable in XLA) might look like this:
 
-#### Example Scenario:
 ```python
-# Assume x1, x2, x3 are tensors distributed across a cluster
-# ReduceScatter operations on x1, x2, x3 with the same reduction operation
-rs1 = reduce_scatter(x1, op='sum', scatter_dim=0)
-rs2 = reduce_scatter(x2, op='sum', scatter_dim=0)
-rs3 = reduce_scatter(x3, op='sum', scatter_dim=0)
+# Example using conceptual TensorFlow operations that would correspond to XLA's HLO ReduceScatter
+scatter_dim = 0
+reduction_op = tf.reduce_sum  # Simplified example; actual XLA uses more complex reduction descriptions
 
-# These might be combined into a single ReduceScatter operation
+# Multiple ReduceScatter operations
+rs1 = reduce_scatter(tensor1, scatter_dim, reduction_op)
+rs2 = reduce_scatter(tensor2, scatter_dim, reduction_op)
+rs3 = reduce_scatter(tensor3, scatter_dim, reduction_op)
 ```
-In this scenario, if `rs1`, `rs2`, and `rs3` meet the criteria (including matching dimensions and operations), then the `ReduceScatterCombiner` could optimize this by replacing them with a single `ReduceScatter` operation that performs the reduction across all input tensors at once. This is more efficient in terms of communication and computation in distributed environments.
+
+In this simplified example, `rs1`, `rs2`, and `rs3` are candidates for combination if they meet the size and count thresholds and can effectively use the same scatter dimension and reduction operation across operations. This would result in a single, more efficient `ReduceScatter` operation handling the combined data from `tensor1`, `tensor2`, and `tensor3`.

@@ -31,52 +31,44 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
 
-The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model has two consecutive `tf.reshape` operations where the second reshape operation reverses the shape transformation performed by the first reshape operation, effectively restoring the original shape of the tensor.
+### Characteristics of TensorFlow Model Triggering `ReshapeReshapeForwarding`
+For the `ReshapeReshapeForwarding` optimization in TensorFlow XLA to be triggered, the TensorFlow model must contain two consecutive `tf.reshape` operations where the output shape of the second reshape operation matches the input shape of the tensor fed into the first reshape operation. This specific sequence effectively reverses the first reshape operation, rendering the sequence redundant.
 
-#### Pattern Example:
+**Illustrative TensorFlow Code:**
 ```python
 import tensorflow as tf
 
-# Original input tensor
-input_tensor = tf.random.uniform(shape=[10, 20])
-
-# First reshape operation changing the shape
-t1 = tf.reshape(input_tensor, [200])
-
-# Second reshape operation restoring the original shape
-t2 = tf.reshape(t1, [10, 20])
+input_tensor = tf.random.normal([8, 8])
+# First reshape
+t1 = tf.reshape(input_tensor, [64])
+# Second reshape that reverses the first
+t2 = tf.reshape(t1, [8, 8])
 ```
-In this example:
-1. `input_tensor` is reshaped to `[200]`.
-2. The output of the first reshape is then reshaped back to `[10, 20]`, the original shape of `input_tensor`.
+In this example, `input_tensor` has an initial shape of `[8, 8]`, which is reshaped to `[64]` by `t1` and then reshaped back to `[8, 8]` by `t2`. This scenario matches the pattern detected by the `ReshapeReshapeForwarding` optimization.
 
-This pattern results in no effective change in the tensor shape after the sequence of operations. The optimization pass detects this redundant transformation sequence and simplifies it by eliminating both reshape operations, directly using the original `input_tensor`.
+### Characteristics of TensorFlow Model Triggering `ShardingRemover`
+The `ShardingRemover` optimization in TensorFlow XLA is activated when the model contains specific custom-call operations related to tensor sharding and reshaping. These operations are generally used in SPMD (Single Program, Multiple Data) partitioning strategies and include:
 
+- `Sharding`
+- `SPMDShardToFullShape`
+- `SPMDFullToShardShape`
+- `ShardingGroupCustomCallTargetName`
+- `PropagationBarrierCustomCallTargetName`
+- `FuncResultShardingTargetName`
+- `ShardBarrierFrom`
+- `ShardBarrierTo`
 
-### Characteristics of TensorFlow Model for `ShardingRemover` Optimization
+The optimization is triggered if any of these operations are present in the model and are effectively redundant, meaning they can be replaced by direct references to their operand tensors without loss of function or incorrect behavior.
 
-The `ShardingRemover` optimization is triggered when a TensorFlow model contains custom call instructions related to sharding operations. These operations are used in distributed or parallel processing scenarios and are identified by specific target names. The optimization aims to remove or simplify these sharding operations when they are no longer necessary, such as when consolidating computations into a single device context or post-distributed training optimizations.
-
-#### Relevant Custom Call Targets:
-- "Sharding"
-- "SPMDShardToFullShape"
-- "SPMDFullToShardShape"
-- and other related sharding operations as defined in the code.
-
-#### Example Scenario:
-Suppose a model was previously setup for SPMD (Single Program, Multiple Data) but is being consolidated for inference on a single device. The model might have operations like:
+**Illustrative TensorFlow Code (Hypothetical):**
 ```python
-# Hypothetical TensorFlow code using XLA custom calls (not directly representable in pure TensorFlow)
-# Here, `xla_custom_call_to_shard` represents a placeholder function for the custom call operation.
-t1 = xla_custom_call_to_shard(input_tensor, target="SPMDShardToFullShape")
-t2 = tf.matmul(t1, some_other_tensor)  # Example operation in sharded form
-t3 = xla_custom_call_to_shard(t2, target="SPMDFullToShardShape")
+# Example of a custom-call operation that could trigger ShardingRemover
+# Note: This is a conceptual illustration since TensorFlow Python API does not expose these low-level operations directly.
+sharded_tensor = some_custom_sharding_operation(input_tensor)
+restored_tensor = spmd_shard_to_full_shape(sharded_tensor)
 ```
+Assuming `some_custom_sharding_operation` and `spmd_shard_to_full_shape` are placeholder names for operations that perform sharding and then reverse it, this pattern is what `ShardingRemover` seeks to optimize by removing the sharding operations and directly using `input_tensor` wherever `restored_tensor` is used.
 
-In this example:
-- `t1` and `t3` involve sharding transformations that may no longer be necessary if the model is being run in a non-distributed environment. The optimization pass identifies such patterns and removes or replaces the sharding operations, simplifying the model for single-device execution.
+In both cases, the optimizations are focused on simplifying the computational graph by removing operations that are redundant or can be substituted without altering the model's output.

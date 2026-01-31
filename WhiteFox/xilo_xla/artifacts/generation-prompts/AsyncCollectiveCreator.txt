@@ -31,56 +31,56 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Models that Trigger `ReshapeReshapeForwarding` Optimization
 
-The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when the following conditions are met within a model:
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization in TensorFlow XLA
 
-1. **Two Consecutive Reshape Operations**: The model must have two consecutive `tf.reshape()` operations applied to a tensor.
-   
-2. **Shape Reversal Pattern**: The first reshape operation changes the shape of the original tensor (`input_tensor`) to any other shape. The second reshape operation then reverses this change, bringing the tensor back to its original shape.
+The TensorFlow model that triggers the `ReshapeReshapeForwarding` optimization must contain a sequence of two consecutive `reshape` operations where the output shape of the second reshape matches the input shape of the tensor provided to the first reshape. Specifically, the model should exhibit the following pattern:
 
-#### Example Code:
+1. An initial tensor, `input_tensor`.
+2. A first reshape operation that changes the shape of `input_tensor` to any arbitrary shape.
+3. A second reshape operation that reverts the shape back to the original `input_tensor.shape`.
+
+Here’s a concise code example to illustrate this pattern:
+
 ```python
 import tensorflow as tf
 
-# Original input tensor of any shape
-input_tensor = tf.random.normal([8, 8])
+# Input tensor of any shape
+input_tensor = tf.random.normal([8, 16])
 
-# First reshape operation changes the shape
-t1 = tf.reshape(input_tensor, [64])
+# First reshape operation changing the shape
+reshaped_tensor = tf.reshape(input_tensor, [4, 32])
 
-# Second reshape operation restores the original shape
-t2 = tf.reshape(t1, [8, 8])
+# Second reshape operation reverting to the original shape
+output_tensor = tf.reshape(reshaped_tensor, [8, 16])
 ```
-In this example, `t1` reshapes `input_tensor` from `[8, 8]` to `[64]`, and then `t2` reshapes it back to `[8, 8]`. This pattern activates the `ReshapeReshapeForwarding` optimization, which effectively removes the unnecessary reshapes, directly utilizing `input_tensor` instead of `t2`.
 
-### Characteristics of TensorFlow Models that Trigger `AsyncCollectiveCreator` Optimization
+In this example, `output_tensor` should be directly optimized to be equivalent to `input_tensor`, bypassing the intermediate reshapes, assuming the shapes are compatible for this simplification as per the XLA optimization pass.
 
-The `AsyncCollectiveCreator` optimization is applied to TensorFlow models containing collective operations that meet specific conditions:
+### Characteristics of TensorFlow Model for `AsyncCollectiveCreator` Optimization in TensorFlow XLA
 
-1. **Presence of Supported Collective Operations**: The model must use collective operations such as `AllReduce`, `AllGather`, `CollectivePermute`, `CollectiveBroadcast`, `AllToAll`, `ReduceScatter`, or `RaggedAllToAll`.
+The TensorFlow model that triggers the `AsyncCollectiveCreator` optimization must contain collective operations (like AllReduce, AllGather, CollectivePermute, etc.) that satisfy specific conditions set by the XLA configuration. The optimization targets these operations to replace them with their asynchronous counterparts if they surpass certain size thresholds and configuration flags. 
 
-2. **Collective Operation Thresholds**: Each collective operation has a minimum size threshold (in bytes) that the input tensor must meet. For instance, the `AllReduce` operation will only be converted to its asynchronous variant if the size of the tensor being reduced meets or exceeds a predefined byte-size threshold.
+Characteristics include:
+- Collective operations such as `AllReduce`, `AllGather`, `CollectivePermute`, `CollectiveBroadcast`, `AllToAll`, `ReduceScatter`, and `RaggedAllToAll`.
+- The size of the data involved in these operations must surpass configured minimum byte thresholds for transformation into their asynchronous versions.
+- Configuration flags specific to each operation type must be enabled to allow their conversion.
 
-3. **Configuration Flags**: The model must be configured to enable conversion of specific collective operations to their asynchronous counterparts. These configurations are typically part of the model or system setup, indicating which operations should be transformed.
+Here’s an example involving an `AllReduce` operation which could be optimized:
 
-#### Example Code:
 ```python
 import tensorflow as tf
 
-# Assuming a distributed TensorFlow setup
-comm_group = tf.distribute.get_strategy().all_reduce_group_size()
+# Simulated scenario with multiple devices
+strategy = tf.distribute.MultiWorkerMirroredStrategy()
 
-# Large tensor that meets the byte-size threshold for AllReduce
-large_tensor = tf.random.normal([1024, 1024], dtype=tf.float32)
+with strategy.scope():
+    # Random tensor generated on multiple devices
+    values = tf.random.normal([32, 128])
 
-# AllReduce operation on large_tensor
-all_reduced = tf.raw_ops.CollectiveReduce(
-    input=large_tensor, group_size=comm_group, group_key=1, instance_key=2,
-    merge_op='Add', final_op='Id', subdiv_offsets=[0]
-)
+    # AllReduce operation across devices
+    reduced_values = tf.raw_ops.AllReduce(input=values, reduction="Add", group_size=4)
 ```
-In this example, assuming the byte-size threshold is met and the configuration enables asynchronous transformation, the `AllReduce` collective operation on `large_tensor` will trigger the `AsyncCollectiveCreator` optimization. This optimization converts the synchronous `AllReduce` into an asynchronous version to potentially improve the performance of distributed TensorFlow computations.
+
+In this setup, if the `AllReduce` operation's data size exceeds the threshold and the configuration allows conversion to an asynchronous version (`AsyncAllReduce`), the `AsyncCollectiveCreator` optimization would be triggered, enhancing performance by enabling non-blocking collective operations.

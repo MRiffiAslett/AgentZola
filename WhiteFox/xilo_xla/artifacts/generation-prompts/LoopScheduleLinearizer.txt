@@ -31,60 +31,50 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization:
 
-The `ReshapeReshapeForwarding` optimization is triggered in a TensorFlow model where there is a sequence of two `reshape` operations such that:
-1. The first `reshape` operation changes the shape of a tensor `input_tensor` to any arbitrary shape.
-2. The second `reshape` operation immediately follows the first and reverts the tensor back to its original shape, i.e., the shape of `input_tensor`.
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
 
-The characteristics that would trigger this optimization are:
-- Consecutive `reshape` operations where the output shape of the second reshape matches the input shape of the tensor fed into the first reshape.
-- There are no changes or operations between these two reshape operations that alter the tensor.
+To trigger the `ReshapeReshapeForwarding` optimization in TensorFlow XLA, a TensorFlow model should include a specific sequence of reshape operations. Specifically, the model needs a scenario where an input tensor undergoes two consecutive reshape operations, where the second reshape operation reverses the shape transformation applied by the first reshape operation, effectively restoring the tensor to its original shape.
 
-#### Example in TensorFlow (Python):
+#### Pattern Example:
 ```python
 import tensorflow as tf
 
-# Define an input tensor
-input_tensor = tf.random.normal([10, 20])
+# Define an input tensor of any shape
+input_tensor = tf.random.normal([8, 16])
 
-# First reshape operation
-reshaped_tensor = tf.reshape(input_tensor, [200])
+# First reshape operation that changes the shape
+t1 = tf.reshape(input_tensor, [2, 64])
 
-# Second reshape operation that reverts to the original shape
-output_tensor = tf.reshape(reshaped_tensor, [10, 20])
+# Second reshape operation that restores the original shape
+t2 = tf.reshape(t1, [8, 16])
 ```
-In the above model, the `ReshapeReshapeForwarding` optimization would recognize that `output_tensor` has the same shape as `input_tensor` and is only reshaped back and forth, hence it can optimize out the intermediate reshapes.
+In this example, `t1` is reshaped from `[8, 16]` to `[2, 64]` and `t2` is then reshaped back to `[8, 16]`. This pattern will trigger the optimization, and the optimizer will recognize that `t2` can be directly replaced by `input_tensor`, simplifying the computation graph.
 
-### Characteristics of TensorFlow Model for `LoopScheduleLinearizer` Optimization:
+### Characteristics of TensorFlow Model for `LoopScheduleLinearizer` Optimization
 
-The `LoopScheduleLinearizer` optimization is triggered in a TensorFlow model specifically involving `while` loops where:
-1. There are writes and reads to tensor values within the loop body that can be reordered without introducing dependency cycles in the computation graph.
-2. The loop does not contain operations classified as asynchronous collectives which would otherwise restrict the reordering due to potential impacts on communication and computation overlap.
+For the `LoopScheduleLinearizer` optimization to be triggered, the TensorFlow model must involve a while-loop (`tf.while_loop` in TensorFlow) where there is an opportunity to introduce additional control dependencies to linearize the execution schedule within the loop body. This optimization targets scenarios where adding control dependencies between loop body operations can prevent potential data hazards and improve execution determinism.
 
-The characteristics that would trigger this optimization are:
-- Presence of `while` loops in the model where tensor values are written and subsequently read,
-- Potential to introduce additional control dependencies to ensure writes happen after reads without creating cycles,
-- Absence of asynchronous collective operations within the loop body.
+#### Conditions Requiring Optimization:
+1. The model contains at least one `tf.while_loop`.
+2. The loop body does not involve asynchronous collective operations which could be affected negatively by additional control dependencies.
+3. There are opportunities within the loop body to add control dependencies between operations, particularly where such dependencies can enforce a more linear execution order without introducing cycles in the computation graph.
 
-#### Example in TensorFlow (Python simulation since actual scheduling and memory aliasing details are abstracted away):
+#### Example Pattern:
 ```python
-# Simulated TensorFlow code with a while loop
 i = tf.constant(0)
-limit = tf.constant(10)
-loop_var = tf.constant([1, 2])
+c = lambda i: tf.less(i, 10)
 
-def loop_body(i, loop_var):
-    updated_var = loop_var + tf.constant([1, 1])
-    return i + 1, updated_var
+def body(i):
+    # Simulate data dependency
+    a = tf.multiply(i, 2)
+    b = tf.add(a, 1)
+    return tf.add(i, 1)
 
-_, result = tf.while_loop(
-    lambda i, _: i < limit,
-    loop_body,
-    [i, loop_var]
-)
+# TensorFlow while loop
+result = tf.while_loop(c, body, [i])
 ```
-Here, if `loop_body` had more complex tensor manipulations and potential read-write sequences, the `LoopScheduleLinearizer` might be applied to optimize the execution order within the loop.
+In this example, if the model's data flow analysis reveals that the operation `b = tf.add(a, 1)` could benefit from a control dependency to ensure it occurs after `a = tf.multiply(i, 2)` consistently for better performance or correctness, the `LoopScheduleLinearizer` might add such a dependency.
+
+This optimization is particularly beneficial in complex loops where the order of operations impacts performance or where data dependencies are critical to maintaining correct computation results.

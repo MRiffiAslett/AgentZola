@@ -31,54 +31,55 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow model for `ReshapeReshapeForwarding` optimization in TensorFlow XLA:
 
-The TensorFlow model must have at least two consecutive `tf.reshape` operations where:
-1. The first `reshape` operation changes the shape of an input tensor `input_tensor` to any new shape.
-2. The second `reshape` operation transforms the tensor back to the original shape of `input_tensor`.
+### Description for `ReshapeReshapeForwarding` Optimization Trigger Characteristics
 
-This pattern indicates a redundancy in operations as the final shape after the second reshape is the same as the initial shape of the input tensor, making the sequence of reshapes effectively a no-op with respect to the tensor shape.
+For the `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA to be triggered, the TensorFlow model must exhibit a specific pattern of reshape operations. This pattern involves two sequential reshape operations where the output shape of the second reshape operation matches the input shape of the tensor being reshaped by the first operation. Specifically:
 
-**Example Model:**
+- The first reshape operation changes the shape of an input tensor to any arbitrary new shape.
+- The second reshape operation immediately follows the first and changes the tensor back to its original shape.
+
+Here is a code example that illustrates this pattern:
+
 ```python
 import tensorflow as tf
 
-# Assume input_tensor is some predefined tensor
-input_tensor = tf.random.normal([10, 10])
+# Input tensor of shape (2, 3)
+input_tensor = tf.constant([[1, 2, 3], [4, 5, 6]])
 
-# First reshape operation (any arbitrary new shape)
-t1 = tf.reshape(input_tensor, [100])
+# First reshape operation: change shape
+t1 = tf.reshape(input_tensor, [6])
 
-# Second reshape operation that reverts to the original shape of input_tensor
-t2 = tf.reshape(t1, [10, 10])
+# Second reshape operation: revert to original shape
+t2 = tf.reshape(t1, input_tensor.shape)
+
+# t2 will have the same shape as input_tensor, triggering the optimization
 ```
 
-### Characteristics of TensorFlow model for `ConditionalCanonicalizer` optimization in TensorFlow XLA:
+### Description for `ConditionalCanonicalizer` Optimization Trigger Characteristics
 
-The TensorFlow model must include a `tf.cond` or similar conditional operation that meets the following criteria:
-1. The conditional operation (`tf.cond`) involves branches where either the inputs to the branches, the outputs from the branches, or the result of the whole conditional operation itself are not already in tuple form.
-2. The model will trigger optimizations that convert these non-tuple inputs, outputs, or results into tuples if they are not already so. This includes:
-   - Ensuring all branch inputs are tuples.
-   - Ensuring all branch outputs are tuples.
-   - Ensuring the final output of the conditional operation is a tuple.
+The `ConditionalCanonicalizer` optimization pass is triggered in TensorFlow models that use conditional operations (`tf.cond` in TensorFlow or `kConditional` in XLA) where the inputs, outputs, or the computations within the branches of the conditional are not already in tuple form. The optimization aims to standardize these elements by ensuring they are all in tuple form. Characteristics that trigger this optimization include:
 
-This transformation standardizes the structure of data across different branches and the main computation, facilitating potential further optimizations and simplifications.
+1. **Non-Tuple Branch Inputs**: Any branch of the conditional operation receives non-tuple inputs.
+2. **Non-Tuple Branch Outputs**: Any branch of the conditional operation produces non-tuple outputs.
+3. **Non-Tuple Conditional Operands (Excluding the Predicate)**: If any operand (excluding the predicate) of the conditional operation is not a tuple.
+4. **Non-Tuple Conditional Output**: The output of the conditional operation itself is not a tuple.
 
-**Example Model:**
+Here is a TensorFlow code example to illustrate these patterns:
+
 ```python
-import tensorflow as tf
+# Conditional operation with non-tuple inputs and outputs
+x = tf.constant(10)
+y = tf.constant(20)
 
-# Define a simple conditional operation
-x = tf.constant(5)
-y = tf.constant(3)
-def f1(): return tf.multiply(x, 17)
-def f2(): return tf.add(y, 23)
+def f1(): return x * y
+def f2(): return x + y
 
-# Conditional operation where neither branches nor outputs are initially tuples
+# The branches f1 and f2 return non-tuple outputs, and the inputs x and y are non-tuple.
 result = tf.cond(tf.less(x, y), f1, f2)
+
+# This setup will trigger the ConditionalCanonicalizer optimization to wrap inputs and outputs into tuples.
 ```
 
-In the above model, neither `f1` nor `f2` returns a tuple, and neither are the inputs to these functions tuples. The `ConditionalCanonicalizer` would work to encapsulate the inputs and outputs in tuples, normalizing the structure of the computation.
+In summary, to trigger `ConditionalCanonicalizer`, the TensorFlow XLA model needs to use conditional operations where any of the inputs, outputs, or internal operations of branches are not already in tuple format, prompting the optimization pass to convert them into tuples.

@@ -31,35 +31,45 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-The TensorFlow model characteristic that triggers the `DotDecomposer` optimization in TensorFlow XLA involves the presence of a `Dot` operation where either the left-hand side (LHS) or right-hand side (RHS) operands do not meet specific conditions related to their dimensions. Specifically:
 
-1. **Non-Canonical Contracting Dimensions**: The `Dot` operation should have either the LHS or RHS with more than one contracting dimension or no contracting dimensions specified.
+### Characteristics of TensorFlow Models for `ReshapeReshapeForwarding` Optimization
 
-2. **Non-Canonical Batch Dimensions**: The batch dimensions, if present, should not be in a canonical form where they start from 0 and increment by 1 (e.g., [0, 1, 2, ...]).
+The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when the model contains a sequence of two consecutive `tf.reshape` operations where the second reshape reverts the tensor to its original shape before the first reshape. This pattern effectively makes the two reshapes redundant as they cancel each other out.
 
-3. **Excess Non-Contracting Dimensions**: The number of non-contracting dimensions (dimensions which are neither contracting nor batch dimensions) should be more than one.
-
-The model triggers the optimization when a `Dot` operation does not adhere to these canonical forms, thus requiring the operation to be decomposed and restructured into a form that the XLA compiler can handle more efficiently.
-
-### Illustrative Code Example
-
-Below is an example where a TensorFlow model contains a `Dot` operation that can potentially trigger the `DotDecomposer` optimization:
-
+#### Model Pattern:
 ```python
 import tensorflow as tf
 
-# Assume `a` and `b` are tensors with shapes that lead to non-canonical dot operation
-a = tf.random.normal([4, 5, 6, 7])  # 4D tensor
-b = tf.random.normal([4, 7, 3, 6])  # 4D tensor with a non-canonical form
-
-# Contracting over the second-to-last dimension of `a` and the second dimension of `b`
-# Batch dimensions are [0] for `a` and [0, 3] for `b` which is non-canonical
-dot_product = tf.tensordot(a, b, axes=[[2], [1]])
-
-# This operation in an XLA-enabled environment may trigger `DotDecomposer`
+# Assuming input_tensor is a TensorFlow tensor with a known shape
+t1 = tf.reshape(input_tensor, new_shape)  # First reshape to any new shape
+t2 = tf.reshape(t1, tf.shape(input_tensor))  # Second reshape back to the original shape of input_tensor
 ```
 
-In the above example, the `tensordot` operation between `a` and `b` might not be in a canonical form due to the specified axes and the arrangement of the batch dimensions. This setup can prompt the `DotDecomposer` to reorganize the operation to optimize execution.
+#### Characteristics:
+1. **Two Consecutive Reshapes**: The tensor undergoes two reshape operations in succession.
+2. **Shape Reversion**: The output shape of the second reshape operation matches the shape of the tensor before the first reshape.
+3. **No Intermediate Operations**: There are no operations between these two reshapes that alter the tensor, ensuring the shapes can be reverted cleanly.
+
+### Characteristics of TensorFlow Models for `DotDecomposer` Optimization
+
+The `DotDecomposer` optimization targets `Dot` operations (matrix multiplications) in TensorFlow XLA that are in a non-canonical form. The optimization aims to transform these operations into a canonical form to potentially simplify the operation or prepare it for further optimizations.
+
+#### Model Pattern:
+```python
+import tensorflow as tf
+
+# Example tensors with potentially non-canonical batch or contracting dimensions
+tensor_a = tf.random.normal([10, 5, 20])
+tensor_b = tf.random.normal([10, 20, 30])
+
+# A dot product where dimensions might not be canonical
+result = tf.tensordot(tensor_a, tensor_b, axes=[[2], [1]])
+```
+
+#### Characteristics:
+1. **Non-canonical Contracting Dimensions**: The dot operation does not follow the canonical form where there is exactly one contracting dimension.
+2. **Non-canonical Batch Dimensions**: The batch dimensions, if present, do not start from the 0th dimension or are not contiguous.
+3. **Multiple Non-contracting Dimensions**: There are more than one non-contracting dimensions, or their arrangement is not canonical (either all at the start or all at the end of the dimension list).
+
+These characteristics make the `Dot` operation a candidate for decomposition and reorganization into a form that might be more optimal for computation or further transformations by the compiler.

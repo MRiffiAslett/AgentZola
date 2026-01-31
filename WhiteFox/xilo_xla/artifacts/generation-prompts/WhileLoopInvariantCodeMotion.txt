@@ -31,49 +31,51 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow models triggering `ReshapeReshapeForwarding` optimization:
 
-For the `ReshapeReshapeForwarding` optimization to be triggered, the TensorFlow model must exhibit the following pattern:
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
 
-1. **Sequential Reshape Operations**: The model should contain two consecutive `tf.reshape` operations where:
-    - The first `tf.reshape` changes the shape of an input tensor `input_tensor` to any arbitrary shape.
-    - The second `tf.reshape` immediately follows the first and reverses the shape transformation, restoring the tensor to its original shape, which is `input_tensor.shape`.
+The optimization `ReshapeReshapeForwarding` is triggered when the following pattern is identified in the model:
 
+1. **Sequential Reshape Operations:** The model should contain a sequence of two reshape operations.
+2. **Identity Reshape Pattern:** The output shape of the second reshape operation should match the input shape of the tensor input to the first reshape operation. Essentially, the second reshape undoes the transformation performed by the first reshape.
+
+#### Example Code Pattern:
 ```python
 import tensorflow as tf
 
+# Input tensor of any shape
 input_tensor = tf.random.normal([8, 8])
-t1 = tf.reshape(input_tensor, [64])  # First reshape to an arbitrary shape
-t2 = tf.reshape(t1, [8, 8])         # Second reshape to the original shape
+
+# First reshape transforms the shape
+t1 = tf.reshape(input_tensor, [64])
+
+# Second reshape reverts to the original shape
+t2 = tf.reshape(t1, [8, 8])
 ```
+In this example, the second reshape operation transforms the output of the first reshape (`t1`) back to the original shape of `input_tensor`. This pattern is what the `ReshapeReshapeForwarding` optimization targets to simplify by eliminating redundant reshape operations.
 
-In this case, the `ReshapeReshapeForwarding` pass recognizes that the second reshape operation simply undoes the first, and hence, it can optimize by eliminating both reshapes, directly using `input_tensor` instead.
+### Characteristics of TensorFlow Model for `WhileLoopInvariantCodeMotion` Optimization
 
-### Characteristics of TensorFlow models triggering `WhileLoopInvariantCodeMotion` optimization:
+The `WhileLoopInvariantCodeMotion` optimization is applied when certain conditions are met in models utilizing while loops:
 
-For the `WhileLoopInvariantCodeMotion` optimization to be triggered, the TensorFlow model should include:
+1. **Invariant Operations Inside Loop:** There are operations within the while loop's body that produce the same value every iteration and can be moved outside the loop without affecting the loop's semantics.
+2. **No Side-Effect Operations:** Operations that are candidates for hoisting should not have side effects.
+3. **Memory Considerations:** The optimization checks that hoisting the operation does not lead to a disproportionate increase in memory usage, which is particularly important for operations that might significantly expand their output size compared to their input size (e.g., `Broadcast`, `Iota`).
+4. **Control Dependencies:** Operations without control predecessors or successors are considered for hoisting.
 
-1. **While Loop with Invariant Code**: The model must contain a `tf.while_loop` where certain instructions within the loop body do not depend on the loop variable and remain constant across iterations. These are considered invariant and can be moved outside the loop.
-
-2. **Profitable Hoisting Conditions**:
-    - Constants and reshapes inside the loop can be hoisted if they lead to reduced computational overhead inside the loop.
-    - Operations such as `tf.broadcast_to`, `tf.slice`, etc., are typically not hoisted alone unless they enable hoisting of other dependent instructions.
-
+#### Example Code Pattern:
 ```python
 import tensorflow as tf
 
-i = tf.constant(0)
-max_iter = tf.constant(10)
-loop_vars = (i, tf.constant([1.0, 2.0]))
+def loop_body(x):
+    y = tf.constant([1.0, 2.0])  # Invariant operation
+    z = x * y  # Dependent on x, not invariant
+    return z
 
-def body(i, vals):
-    vals = vals * 2  # Invariant as it does not depend on `i`
-    return i + 1, vals
-
-_, result = tf.while_loop(lambda i, _: i < max_iter, body, loop_vars)
+x = tf.constant([10.0, 20.0])
+result = tf.while_loop(lambda x: tf.reduce_sum(x) < 1000, loop_body, [x])
 ```
+In this example, the creation of tensor `y` is invariant (does not change across iterations) and can be moved outside the loop to optimize execution.
 
-In this example, the multiplication operation inside the loop does not depend on the loop variable `i` and remains constant for all iterations. Thus, it may be hoisted outside the loop, reducing the computation performed during each iteration. This optimization would only be applied if deemed profitable and not increasing memory usage disproportionately (as controlled by `hoist_size_inflation_ratio_`).
+These optimizations significantly improve the efficiency of TensorFlow models by reducing redundant computations and memory usage, especially in complex models with nested operations and loops.
