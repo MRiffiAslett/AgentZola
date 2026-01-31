@@ -31,51 +31,55 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow models that trigger the `DotMerger` optimization pass in TensorFlow XLA
 
-The `DotMerger` optimization pass is designed to merge dot product operations (`dot`) in a TensorFlow model that exhibit certain characteristics. The pass optimally merges dot operations that share operands and have compatible attributes to form a larger, single dot operation potentially followed by slicing to retrieve original results. This optimization can lead to reduced memory overhead and computational cost by minimizing redundant operations and data movements. Below are specific model characteristics that would trigger this optimization:
+### Characteristics of the TensorFlow model that trigger the `DotMerger` optimization pass in TensorFlow XLA
 
-1. **Shared Operand:**
-   - Dot operations that utilize a common operand can potentially be merged. This includes cases where two dot operations might be using the same tensor as either their left-hand-side (LHS) or right-hand-side (RHS) operand.
+The `DotMerger` optimization is designed to merge pairs of `dot` operations that share common operands under specific conditions. The triggering characteristics include:
 
-2. **Compatible Dot Dimensions:**
-   - The dimensions over which the dot products are computed (contracting dimensions) must match between the two operations. Additionally, if batch dimensions are used, they must also coincide.
+1. **Shared Operand(s):**
+   - Two `dot` operations share either the left-hand side (LHS) or right-hand side (RHS) operand. Merging is attempted if they share an operand directly or if one operand is the transposed version of the other’s operand.
 
-3. **Matching Element Types:**
-   - The element types (data types) of the operands and the output of the dot operations need to be the same for a merge to be feasible.
+2. **Matching Element Types:**
+   - The element types of the operands (LHS and RHS) and the output of the `dot` operations must match. This ensures that the merged operation is type-consistent.
 
-4. **Layout Compatibility:**
-   - The tensor layouts of the operands involved in the dot operations need to be compatible or identical to facilitate a merge.
+3. **Consistent Dimension Numbers:**
+   - The dimension numbers used for the contraction and batch dimensions in both `dot` operations must match. This ensures the operations are compatible for merging.
 
-5. **Absence of Control Dependencies:**
-   - Dot operations should not have control dependencies. Operations with control dependencies are typically excluded from this optimization as merging them could lead to changes in the execution logic of the model.
+4. **Non-Batched Operations:**
+   - Currently, only `dot` operations without batch dimensions are considered. This simplifies the merging logic and constraints.
 
-6. **Size Restrictions:**
-   - The combined size of the operands and the resulting tensor from the dot product should not exceed a predefined threshold (`max_size_to_merge`). This constraint ensures that the optimization does not lead to excessive memory usage.
+5. **No Transitive Dependencies:**
+   - There should be no transitive dependency between the two `dot` operations. This is essential to prevent cycles and ensure that the operations can be safely merged without altering the program’s semantics.
 
-7. **Transposition Equivalence:**
-   - For certain merges, especially those involving operands on different sides (LHS vs. RHS), the operands themselves or their transpositions should be equivalent, allowing them to be concatenated and used in a new merged dot operation.
+6. **Size Constraints:**
+   - The combined size of the `dot` operations (including their operands) must not exceed a predefined threshold (`max_size_to_merge`). This prevents excessive memory usage post-merging.
 
-### Example Pattern in TensorFlow Model:
+7. **Layout and Precision Consistency:**
+   - The layout of the tensors involved in the `dot` operations must be the same. Additionally, the precision settings of the operations must match to ensure that the merged operation maintains the expected numerical behavior.
 
-Here is a simplified example of TensorFlow code involving patterns that might trigger this optimization:
+8. **Unique Dot Operations:**
+   - The `dot` operations should not have any control dependencies associated with them, ensuring that side effects or execution order constraints do not complicate the merging process.
+
+### Example Code Pattern
+
+Here's a simplified TensorFlow example that could potentially trigger the `DotMerger` optimization if translated into HLO and assuming all other conditions are met:
 
 ```python
 import tensorflow as tf
 
-# Assuming these tensors are compatible in shape and type for dot product operations.
-tensor_a = tf.random.normal([100, 200])
-tensor_b = tf.random.normal([200, 50])
-tensor_c = tf.random.normal([200, 30])
+# Assume a, b, c, d are predefined tensors of appropriate shapes
+# Example shapes: a: [m, k], b: [k, n_a], c: [n_b, k], d: [k, m]
+a = tf.random.normal([200, 100])
+b = tf.random.normal([100, 10])
+c = tf.random.normal([50, 100])
+d = tf.transpose(a)  # Transpose of a
 
-# Two dot operations using the same LHS operand.
-dot1 = tf.linalg.matmul(tensor_a, tensor_b)
-dot2 = tf.linalg.matmul(tensor_a, tensor_c)
+# Dot operations
+dot1 = tf.linalg.matmul(a, b)  # Shape [200, 10]
+dot2 = tf.linalg.matmul(d, c)  # Shape [100, 50] and d is transpose of a
 
-# Depending on the internal criteria and settings of the XLA compiler, `dot1` and `dot2` might be merged into a single operation.
+# Further operations could be defined here
 ```
 
-In this example, if `tensor_a`’s usage in both `dot1` and `dot2` meets all the required conditions (e.g., size constraints, layout compatibility), the `DotMerger` pass might merge these operations into a single larger dot product operation followed by appropriate slicing to produce the original `dot1` and `dot2` results. This is a simplification and actual behavior can depend on more specific internal states and configurations of the XLA compiler.
+In this scenario, if `dot1` and `dot2` meet all the conditions outlined (e.g., same precision, layout, no batch dimensions, size constraints), the `DotMerger` might merge these into a single operation, optimizing the execution by reducing redundant calculations.

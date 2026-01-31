@@ -31,35 +31,36 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `CollectivesScheduleLinearizer` Optimization
 
-In TensorFlow XLA, the `CollectivesScheduleLinearizer` optimization pass is triggered for models that utilize collective operations (like `AllReduce`, `AllGather`, `CollectivePermute`, etc.) in an asynchronous or non-linear order, potentially across multiple threads of execution. The characteristic pattern involves multiple such collective operations where the execution order is not explicitly controlled or where dependencies between these operations are not straightforward.
+### Characteristics of TensorFlow Model for Optimization Pass `CollectivesScheduleLinearizer`
 
-This optimization will apply when:
-1. The model contains collective operations that can be asynchronous, such as starting a collective operation (`AllReduceStart`, `AllGatherStart`, etc.) and then having a corresponding `AsyncDone`.
-2. These collective operations are not strictly sequentially connected in their execution paths, meaning there's no direct control dependency between successive collective operations.
+The `CollectivesScheduleLinearizer` optimization pass is triggered for TensorFlow XLA models containing the following characteristics:
 
-The optimization pass intervenes to linearize the schedule of these operations by adding explicit control dependencies. This ensures that collective operations that could potentially execute out of order now execute in a linear, predictable manner.
+1. **Presence of Collective Operations:** The model should contain collective operations such as `AllReduce`, `AllGather`, `CollectivePermute`, or their asynchronous variants (`AllReduceStart`, `AllGatherStart`, `CollectivePermuteStart`, etc.). These operations are crucial as the optimization targets the linearization of collectives to ensure correct execution order.
 
-#### Code Example for Pattern
+2. **Execution on Specific Threads:** The model's computation must be performed on particular execution threads specified by the `execution_threads` parameter, which filters the computations that this pass applies to.
 
-Here’s a simple TensorFlow code snippet that could potentially trigger this optimization if converted to HLO and optimized by XLA:
+3. **Independent Collective Operations:** The optimization is triggered when there are multiple collective operations in sequence, where the subsequent operation does not depend on the completion of the previous one (i.e., they are not already connected in the reachability map). The optimization inserts control dependencies to enforce a specific linear execution order.
+
+Here is an illustrative example:
 
 ```python
 import tensorflow as tf
 
-# Example tensors
-tensor1 = tf.random.normal([256, 256])
-tensor2 = tf.random.normal([256, 256])
+# Assuming a distributed setup with multiple devices
+strategy = tf.distribute.MirroredStrategy()
 
-# Start of asynchronous collective operations
-all_reduce_start1 = tf.raw_ops.AllReduce(input=tensor1, reduction="Add", group_size=1, group_key=1, instance_key=1)
-all_reduce_start2 = tf.raw_ops.AllReduce(input=tensor2, reduction="Add", group_size=1, group_key=1, instance_key=2)
+with strategy.scope():
+    # Dummy input tensor
+    input_tensor = tf.random.normal([10, 10])
 
-# Corresponding AsyncDone operations would typically be managed within TensorFlow's runtime
+    # Collective operations
+    sum_reduced = tf.raw_ops.AllReduce(input_tensor, reduction="Add", group_assignment=[[0, 1], [2, 3]])
+    max_reduced = tf.raw_ops.AllReduce(input_tensor, reduction="Max", group_assignment=[[0, 1], [2, 3]])
+
+    # The model must be constructed in such a way that these operations are considered independent
+    # and thus the optimization pass would trigger to add control dependencies ensuring correct order.
 ```
 
-In this example, `all_reduce_start1` and `all_reduce_start2` are collective operations that start asynchronously. In a more complex computation graph, without explicit control dependencies or linear execution paths, the `CollectivesScheduleLinearizer` could intervene to add control dependencies to ensure that these operations execute in a deterministic order.
+In this example, if the `sum_reduced` and `max_reduced` operations are found to be independent in the HLO module's computation, and they aren't already ordered by data dependencies, the `CollectivesScheduleLinearizer` would add a control dependency between them. This ensures that `sum_reduced` operation completes before `max_reduced` starts, maintaining a linear and predictable execution order for collective operations.

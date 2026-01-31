@@ -31,34 +31,32 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of the TensorFlow model that trigger the `BroadcastCanonicalizer` in TensorFlow XLA
 
-The TensorFlow model will trigger the `BroadcastCanonicalizer` optimization when it contains a `Broadcast` operation with unsorted broadcasting dimensions. The optimization targets these specific patterns to reorganize the broadcasting dimensions into a sorted order and adjusts the resultant tensor shape to match the original, through transposition.
+### Characteristics of the TensorFlow model that trigger the `BroadcastCanonicalizer` optimization pass in TensorFlow XLA:
 
-#### Model Pattern Example
+The `BroadcastCanonicalizer` optimization is triggered in TensorFlow XLA when the model contains a broadcast operation where the dimensions of the broadcast are not in a sorted order. This means that the indices specified in the `dimensions` attribute of the broadcast operation are not in ascending order.
 
-Here's an example illustrating the model characteristics that would fit this pattern:
+#### Example:
+In TensorFlow, a broadcast operation can be represented as follows:
 
 ```python
 import tensorflow as tf
 
-# Assume `input_tensor` has shape [1, H, W]
-input_tensor = tf.random.normal([1, 100, 100])
+# Assuming `input_tensor` has a shape of [3, 1]
+input_tensor = tf.constant([[1], [2], [3]])
 
-# Broadcasting `input_tensor` with unsorted dimensions
-# For instance, broadcasting the second dimension
-broadcasted_tensor = tf.broadcast_to(input_tensor, [100, 1, 100])
-
-# This results in a tensor where the broadcasting dimensions are not sorted.
-# In TensorFlow XLA, this would trigger the BroadcastCanonicalizer to sort
-# these dimensions and apply a transpose to align the output back to the expected shape.
+# Broadcasting `input_tensor` to a shape [3, 2] without sorted dimensions
+# Suppose the broadcast dimensions are specified as [1, 0] which is not sorted
+broadcasted_tensor = tf.broadcast_to(input_tensor, [2, 3])
 ```
 
 In this example:
-- `input_tensor` is broadcasted to a new shape `[100, 1, 100]` where the dimensions intended for broadcasting (from `[1, H, W]` to `[100, 1, 100]`) are not in an ascending order.
-- The `BroadcastCanonicalizer` would detect this unsorted order in the `dimensions` attribute of the broadcast operation, sort them, and then apply a transpose to ensure the output tensor retains the correct logical shape alignment as per the original non-broadcasted dimensions.
+- `input_tensor` has a shape of `[3, 1]`.
+- It is broadcasted to a new shape `[2, 3]`.
+- The broadcast dimensions `[1, 0]` are not in a sorted order.
 
-This model characteristic specifically involves the use of a `Broadcast` operation where the `dimensions` attribute (indicating which axes in the input tensor are being broadcasted to match the output shape) is not sorted in ascending order. The optimizer's goal here is to canonicalize such operations to improve execution efficiency and potentially enable further optimizations.
+This type of operation in a TensorFlow XLA model would trigger the `BroadcastCanonicalizer` optimization. The pass would then adjust the order of the broadcast dimensions to be sorted and introduce necessary operations (like transpose) to preserve the semantics of the original model while improving its efficiency or execution characteristics.
+
+### Summary:
+For the `BroadcastCanonicalizer` to be triggered, the model should include a broadcast operation where the broadcast dimensions (`dimensions` attribute) are not sorted in ascending order. The optimization pass will then reorder these dimensions and potentially adjust the operation graph to maintain correct output while optimizing execution.

@@ -31,42 +31,61 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
 
-For the optimization pass `ReshapeReshapeForwarding` to be triggered, the TensorFlow model must exhibit a specific pattern of reshape operations. Specifically, the model should contain a sequence where a tensor is reshaped twice consecutively, and the final shape of the tensor after the second reshape operation is the same as the original shape of the tensor before the first reshape operation.
+### Characteristics of TensorFlow model for `ReshapeReshapeForwarding` Optimization
 
-In TensorFlow code, this pattern can be represented as:
+For the `ReshapeReshapeForwarding` optimization to be triggered, the TensorFlow model must exhibit a specific pattern in its operations:
 
+1. **Sequential Reshape Operations**:
+   - The model should contain a sequence of two consecutive `tf.reshape()` operations.
+   - The first `reshape` operation changes the shape of a tensor (`input_tensor`) to any new shape.
+   - The second `reshape` operation reverts the shape of the tensor back to the original shape of `input_tensor`.
+
+2. **Shape Equality**:
+   - The output shape of the second `reshape` must match the original shape of the tensor before the first `reshape`.
+
+#### Example:
 ```python
 import tensorflow as tf
 
-input_tensor = tf.random.normal([10, 20])
-# First reshape: Change the shape of the tensor
-t1 = tf.reshape(input_tensor, [200])
-# Second reshape: Restore the original shape
-t2 = tf.reshape(t1, [10, 20])
+# Assume input_tensor is a TensorFlow tensor with a known shape
+input_tensor = tf.random.normal([8, 16])
+
+# First reshape operation (changing shape)
+t1 = tf.reshape(input_tensor, [2, 4, 16])
+
+# Second reshape operation (restoring original shape)
+t2 = tf.reshape(t1, tf.shape(input_tensor))
+
+# t2 should now trigger the optimization, effectively becoming equivalent to input_tensor
 ```
 
-In this example, `input_tensor` is reshaped to a new shape `[200]` and then reshaped back to the original shape `[10, 20]`. This model characteristic triggers the `ReshapeReshapeForwarding` optimization.
+### Characteristics of TensorFlow model for `BatchDotSimplification` Optimization
 
-### Characteristics of TensorFlow Model for `BatchDotSimplification` Optimization
+For the `BatchDotSimplification` optimization to be triggered, the TensorFlow model must meet several criteria related to its `tf.linalg.matmul` or batch dot operations:
 
-The optimization pass `BatchDotSimplification` is triggered when a TensorFlow model involves a batch dot product operation (`tf.linalg.matmul` or equivalent in XLA) where the batch dimensions are degenerate (i.e., have a size of one) and the batch dimensions of both operands are equal and strictly ascending. The operation must also have exactly one contracting dimension.
+1. **Equality of Batch Dimensions**:
+   - The batch dimensions of the left-hand side (lhs) and right-hand side (rhs) tensors in the dot operation must be equal and strictly ascending.
 
-In TensorFlow code, this pattern can be represented as:
+2. **Contracting Dimensions**:
+   - There must be exactly one contracting dimension specified in the dot operation.
 
+3. **Presence of Degenerate Dimensions**:
+   - At least one of the batch dimensions must be degenerate (i.e., dimension size is 1) in either the lhs or rhs tensor.
+
+#### Example:
 ```python
 import tensorflow as tf
 
-# Create tensors with a degenerate batch dimension (size 1 in the batch dimension)
-a = tf.random.normal([1, 5, 3])
-b = tf.random.normal([1, 3, 4])
+# Assume lhs and rhs are tensors suitable for batch dot product
+lhs = tf.random.normal([1, 5, 10])  # One degenerate batch dimension
+rhs = tf.random.normal([1, 10, 3])  # Matching batch dimension
 
-# Perform batch matrix multiplication
-result = tf.linalg.matmul(a, b)
+# Performing batch dot product
+output = tf.linalg.matmul(lhs, rhs)
+
+# This setup should trigger the optimization if the tensors meet all specific conditions
 ```
 
-In this scenario, both tensors `a` and `b` have a batch dimension of size 1 (`[1, ...]`), and there is one contracting dimension (size 3 in the middle of both tensors). This specific structure will trigger the `BatchDotSimplification` optimization if these tensors are used within a model that is compiled with XLA where such optimizations are applicable.
+In both cases, the model structures need to precisely match these characteristics for the respective optimization passes to be triggered in TensorFlow XLA.

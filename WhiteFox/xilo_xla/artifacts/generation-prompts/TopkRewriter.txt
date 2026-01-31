@@ -31,46 +31,34 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model Triggering `ReshapeReshapeForwarding` Optimization
 
-The TensorFlow model characteristics that trigger the `ReshapeReshapeForwarding` optimization in XLA must include a sequence where a tensor undergoes two consecutive reshape operations such that the final output shape of the second reshape matches the original shape of the tensor before the first reshape. This scenario implies that the second reshape operation effectively reverses the transformation applied by the first reshape, making the overall operation redundant.
+The characteristics of the TensorFlow model that trigger the optimization pass `TopkRewriter` in TensorFlow XLA include:
 
-#### Code Pattern Example:
+1. **Presence of a `Sort` operation with one or two operands:** The model must contain a `Sort` operation. If it has two operands, the second must be an iota generated along the sorting dimension.
 
-```python
-import tensorflow as tf
+2. **Use of a `Sort` operation in a Top-K context:** The `Sort` operation should be followed by a `Slice` operation that extracts the first `k` elements along the sorting dimension. This pattern is indicative of performing a Top-K operation where only the top `k` values (and possibly their indices) are required.
 
-# Input tensor of arbitrary shape
-input_tensor = tf.random.normal(shape=[8, 16])
+3. **Non-strided, non-zero starting `Slice`:** The `Slice` operation must start at index 0 for the sort dimension and have a stride of 1, ensuring it's simply truncating the sorted list to the top `k` elements.
 
-# First reshape transforms the shape
-reshaped_tensor = tf.reshape(input_tensor, [2, 64])
+4. **Matching comparator for handling NaN values safely:** The comparator used in the `Sort` operation should handle NaN values correctly to ensure stability in sorting.
 
-# Second reshape reverts to the original shape
-output_tensor = tf.reshape(reshaped_tensor, [8, 16])
-```
+5. **Data types and dimensions alignment:** The `Sort` operation's data type must be either floating-point types (`F32`, `BF16`) or it must efficiently handle integer types through bit manipulations to ensure the comparator logic applies correctly. The sorting must be performed on either the first or the last dimension of the tensor.
 
-In this example, `output_tensor` will have the same shape as `input_tensor`, triggering the `ReshapeReshapeForwarding` optimization if used in a TensorFlow model compiled with XLA.
-
-### Characteristics of TensorFlow Model Triggering `TopkRewriter` Optimization
-
-The `TopkRewriter` optimization is triggered when there is a sort operation in the TensorFlow model that can be effectively replaced with a more efficient Top-K operation. This optimization is specifically applicable under conditions where the sort operation is followed by a slice that extracts the top K elements, the sorting comparison is nan-safe, and certain other conditions about the data layout and operation characteristics are met.
-
-#### Code Pattern Example:
+Here is an example pattern in TensorFlow (Python) that would likely trigger this optimization when compiled with XLA:
 
 ```python
 import tensorflow as tf
 
-# Input tensor
-input_tensor = tf.random.uniform([10, 20], minval=1, maxval=100, dtype=tf.float32)
+# Generate some data
+data = tf.random.uniform([32, 100], minval=-1.0, maxval=1.0)
 
-# Using TensorFlow operations to mimic a sort followed by a slice to retrieve top K elements
-values, indices = tf.math.top_k(input_tensor, k=5, sorted=True)
+# Perform a top-5 sort
+values, indices = tf.math.top_k(data, k=5, sorted=True)
+
+# Model execution
+with tf.Session() as sess:
+    result = sess.run([values, indices])
 ```
 
-In this example, the `tf.math.top_k` is directly representative of what the `TopkRewriter` seeks to optimize. However, if not using `tf.math.top_k` directly, a similar effect could be achieved by explicitly sorting and then slicing the tensor, which the XLA compiler would recognize and potentially optimize by converting it back into a `top_k` operation internally.
-
-These optimizations significantly enhance performance by reducing unnecessary computations and utilizing more efficient algorithms suited for the operations' intents.
+In this example, the `tf.math.top_k` is typically implemented under the hood using a sort followed by a slice. If XLA is enabled, and the conditions above are met, the `TopkRewriter` optimization might be applied to convert this into a more efficient custom TopK operation.

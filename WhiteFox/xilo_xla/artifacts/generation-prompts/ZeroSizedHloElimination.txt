@@ -31,56 +31,54 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
 
-The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when a TensorFlow model contains a sequence of two `reshape` operations where:
+### Characteristics for `ReshapeReshapeForwarding` Trigger
 
-1. The first `reshape` operation changes the shape of a tensor `input_tensor` to any new shape.
-2. The second `reshape` operation directly consumes the output of the first `reshape` and reverts it back to the original shape of `input_tensor`.
+For the `ReshapeReshapeForwarding` optimization in TensorFlow XLA to be triggered, a TensorFlow model must have a specific pattern involving two consecutive `tf.reshape` operations. Here’s the characteristic pattern:
 
-This pattern implies that the output shape of the second `reshape` matches the shape of the tensor input to the first `reshape`. Essentially, the sequence of reshape operations is redundant as they transform the tensor into a new shape and then immediately revert to the original shape.
+1. An initial tensor is reshaped into a new shape.
+2. This newly shaped tensor is then immediately reshaped back into its original shape.
 
-#### Illustrative Code Example:
+This optimization would be triggered when the output shape of the second reshape operation matches the input shape of the tensor that was input to the first reshape operation. 
+
+#### Example Code:
 ```python
 import tensorflow as tf
 
-# Sample input tensor
-input_tensor = tf.constant([[1, 2], [3, 4]])
+# Define an input tensor
+input_tensor = tf.random.normal([10, 20])
 
-# First reshape operation: Change shape
-reshaped_tensor = tf.reshape(input_tensor, [4])
+# First reshape operation
+t1 = tf.reshape(input_tensor, [200])
 
-# Second reshape operation: Revert to original shape
-reverted_tensor = tf.reshape(reshaped_tensor, input_tensor.shape)
+# Second reshape operation that restores the original shape
+t2 = tf.reshape(t1, [10, 20])
 
-# reverted_tensor should now have the same shape and contents as input_tensor
+# t2 can be optimized back to input_tensor directly
 ```
-In this example, the first reshape changes the shape to `[4]`, and the second reshape reverts it back to `[2, 2]`, which is the original shape of `input_tensor`. This sequence triggers the `ReshapeReshapeForwarding` optimization pass, where the two reshapes can be removed, directly using `input_tensor` instead.
 
-### Characteristics of TensorFlow Model for `ZeroSizedHloElimination` Optimization
+### Characteristics for `ZeroSizedHloElimination` Trigger
 
-The `ZeroSizedHloElimination` optimization pass is triggered when the TensorFlow XLA model contains operations that produce zero-sized arrays. This means the tensor has a shape where at least one dimension has a size of zero, resulting in a total element count of zero.
+The `ZeroSizedHloElimination` optimization is triggered when there are operations within the model that produce zero-sized tensors. These tensors have shapes where at least one dimension has a size of zero, resulting in no elements.
 
-#### Conditions for triggering the optimization:
-1. The operation produces an array-shaped tensor with zero elements.
-2. The operation should not have any side effects that would prevent its removal, except for specific custom operations that can be replaced even if they typically have side effects.
-3. The tensor should have a static shape, meaning its dimensions are known and fixed at compile time.
-4. The operation is not a `kConstant` operation since constants are already optimized in their representation.
+Here are the primary characteristics for this optimization to be triggered:
 
-#### Illustrative Code Example:
+1. The operation must produce a zero-sized tensor, i.e., a tensor where the product of the dimensions equals zero.
+2. The operation should not have significant side effects that must be preserved, with an exception for certain custom calls.
+3. The tensor must be an array and must be statically sized.
+
+Operations that typically might produce such outputs include incorrect reshaping, slicing, or operations contingent upon dynamic input shapes that resolve to zero at runtime.
+
+#### Example Code:
 ```python
 import tensorflow as tf
 
-# Zero-sized tensor due to one dimension being zero
-zero_sized_tensor = tf.zeros([0, 10])
+# Incorrect reshape that leads to a zero-sized tensor
+input_tensor = tf.random.normal([10, 0])  # Zero-sized second dimension
+reshaped_tensor = tf.reshape(input_tensor, [0, 100])  # Result is zero-sized
 
-# Some operations performed on zero-sized tensor
-result_tensor = zero_sized_tensor + 5  # This tensor is also zero-sized
-
-# Another example with reshaping
-reshaped_tensor = tf.reshape(zero_sized_tensor, [0, 5, 2])  # Still zero-sized
+# Another example could involve slicing where the slice size is zero
+sliced_tensor = tf.slice(input_tensor, [0, 0], [10, 0])  # Zero-sized slice
 ```
-In these examples, since the operations produce zero-sized arrays and meet the conditions listed above, they trigger the `ZeroSizedHloElimination` optimization. This optimization can potentially remove these operations or replace them with more efficient constructs, as they do not contribute meaningful computational load or output due to their zero-sized nature.
+In these cases, TensorFlow XLA can potentially eliminate these operations or replace them with constant tensors, optimizing runtime execution and memory usage.

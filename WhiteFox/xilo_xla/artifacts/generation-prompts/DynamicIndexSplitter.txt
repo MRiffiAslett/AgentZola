@@ -31,57 +31,58 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization Pass
 
-The TensorFlow model should contain a sequence of two `tf.reshape` operations where the output of the first `reshape` is used as the input to the second `reshape`. The trigger for the `ReshapeReshapeForwarding` optimization specifically occurs when:
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization:
 
-1. The first `reshape` operation changes the shape of the input tensor (`input_tensor`) to any arbitrary shape.
-2. The second `reshape` operation changes the shape of the tensor back to its original shape (the shape of `input_tensor` before the first reshape).
+The TensorFlow model needs to follow a specific pattern to trigger the `ReshapeReshapeForwarding` optimization in XLA. This pattern includes two consecutive `reshape` operations where:
 
-Here is a simple Python code snippet illustrating such a model pattern:
+1. The first `reshape` operation changes the shape of an input tensor `input_tensor` to any arbitrary shape.
+2. The second `reshape` operation changes the shape of the tensor resulting from the first reshape back to the original shape of `input_tensor`.
 
-```python
-import tensorflow as tf
-
-# Assume input_tensor is a TensorFlow tensor with a known shape
-input_tensor = tf.random.normal([8, 8])  # Example shape [8, 8]
-
-# First reshape: change the shape arbitrarily
-t1 = tf.reshape(input_tensor, [64])  # New shape [64]
-
-# Second reshape: revert to the original shape
-t2 = tf.reshape(t1, [8, 8])  # Original shape [8, 8]
-```
-
-In this example, `t1` is the result of the first reshape operation, and `t2` is the result of the second reshape operation that restores the original shape of `input_tensor`.
-
-### Characteristics of TensorFlow Model for `DynamicIndexSplitter` Optimization Pass
-
-The `DynamicIndexSplitter` optimization pass in TensorFlow XLA is triggered by models using `DynamicSlice` or `DynamicUpdateSlice` operations, specifically when these operations do not already use scalar indices for slicing or updating. The characteristics of such a model include:
-
-1. The model employs either a `DynamicSlice` or `DynamicUpdateSlice` operation.
-2. The indices used in these operations are array indices rather than scalar indices.
-
-The optimization pass modifies these operations to use scalar indices for each dimension being sliced or updated, which is typically more performance-efficient.
-
-Here’s a code snippet illustrating a model that might trigger this optimization:
+Here's an illustrative TensorFlow code snippet:
 
 ```python
 import tensorflow as tf
 
-# Example tensor and update values
-input_tensor = tf.random.normal([10, 10, 10])
-update_values = tf.random.normal([2, 2, 2])
-indices = tf.constant([4, 5, 3])  # Non-scalar (vector) indices
+# Original input tensor
+input_tensor = tf.random.uniform(shape=[10, 20])
 
-# Dynamic Update Slice using vector indices
-updated_tensor = tf.tensor_scatter_nd_update(input_tensor, [indices], update_values)
+# First reshape operation
+reshaped_tensor = tf.reshape(input_tensor, [200])
 
-# Dynamic Slice using vector indices
-sliced_tensor = tf.slice(input_tensor, indices, [2, 2, 2])
+# Second reshape operation that restores the original shape
+restored_tensor = tf.reshape(reshaped_tensor, [10, 20])
 ```
 
-In this example, both `tensor_scatter_nd_update` and `tf.slice` (when used for dynamic operations) are potential candidates for the `DynamicIndexSplitter` optimization if they are translated to `DynamicUpdateSlice` and `DynamicSlice` respectively in the XLA computation graph. The optimization would convert the vector indices to scalar indices for each dimension.
+In this example, `input_tensor` is first reshaped to `[200]`, and then it is reshaped back to its original shape `[10, 20]`. This sequence will activate the `ReshapeReshapeForwarding` optimization if the model is compiled with TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `DynamicIndexSplitter` Optimization:
+
+The `DynamicIndexSplitter` optimization is triggered in TensorFlow XLA for models containing `DynamicSlice` or `DynamicUpdateSlice` operations under specific conditions:
+
+1. The operation involves a tensor (`dynamic_op`) with any number of dimensions.
+2. The indices used for slicing or updating are not scalars but vectors, which means the index tensor has more than one element.
+
+A typical scenario where this optimization would be triggered is when a model employs dynamic slicing or updating operations with non-scalar indices. Here's an example:
+
+```python
+import tensorflow as tf
+
+# Tensor to be dynamically sliced
+input_tensor = tf.random.uniform(shape=[10, 20, 30])
+
+# Non-scalar index tensor
+index_tensor = tf.constant([1, 2])
+
+# Dynamic slice operation
+sliced_tensor = tf.slice(input_tensor, index_tensor, [5, 5, 5])
+
+# Dynamic update slice operation
+update_value = tf.zeros(shape=[5, 5, 5])
+updated_tensor = tf.tensor_scatter_nd_update(input_tensor, [index_tensor], update_value)
+```
+
+In this example, `index_tensor` is a vector, used for dynamically slicing and updating `input_tensor`. The `DynamicIndexSplitter` optimization would potentially be triggered to handle these operations more efficiently by converting the index vector into scalar indices.
+
+These configurations in TensorFlow models would lead the corresponding XLA optimization passes to be activated during compilation, improving execution performance by simplifying operations or enhancing data handling.

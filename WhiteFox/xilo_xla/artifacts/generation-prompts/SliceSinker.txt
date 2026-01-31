@@ -31,60 +31,62 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
 
-The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when there is a specific pattern of consecutive reshape operations in the model. The characteristics of the TensorFlow model that would trigger this optimization are:
+### Characteristics of TensorFlow models that trigger the `ReshapeReshapeForwarding` optimization in TensorFlow XLA
 
-1. **Consecutive Reshape Operations**: The model must include two consecutive `reshape` operations. The output of the first `reshape` operation acts as the input to the second `reshape` operation.
+To trigger the `ReshapeReshapeForwarding` optimization, the TensorFlow model should contain a sequence of two `tf.reshape` operations where:
 
-2. **Matching Input and Output Shapes**: The input tensor of the first `reshape` operation and the output tensor of the second `reshape` operation must have the same shape. This implies that the transformations applied by the two `reshape` operations effectively cancel each other out.
+1. The first `tf.reshape` operation reshapes an input tensor `input_tensor` into any arbitrary shape.
+2. The second `tf.reshape` operation subsequently reshapes the output of the first reshape back to the original shape of `input_tensor`.
 
-3. **Non-trivial Transformation**: The reshapes between the two operations are non-trivial, meaning that the intermediate shape between the two reshapes is different from both the initial and final shapes, although the net effect is an identity operation over the tensor shape.
+Here is a code example that illustrates this pattern:
 
-**Illustrative Code Example**:
 ```python
 import tensorflow as tf
 
-# Input tensor of shape [M, N]
-input_tensor = tf.random.normal([M, N])
+# Original input tensor
+input_tensor = tf.random.normal([8, 8])
 
-# First reshape operation changing shape to some intermediate shape
-t1 = tf.reshape(input_tensor, [X, Y])
+# First reshape into any new shape
+t1 = tf.reshape(input_tensor, [64])
 
-# Second reshape operation reverting shape back to original
-t2 = tf.reshape(t1, [M, N])
+# Second reshape that reverses the first reshape
+t2 = tf.reshape(t1, tf.shape(input_tensor))
+
+# t2 will effectively have the same shape and content as input_tensor
 ```
-In this scenario, despite the intermediate shape change, the final shape of `t2` matches the original `input_tensor` shape, triggering the optimization.
 
-### Characteristics of TensorFlow Model for `SliceSinker` Optimization
+In this model, the `ReshapeReshapeForwarding` optimization would recognize that the second reshape inverts the first, and the optimization would simplify these operations by eliminating both reshapes, directly using `input_tensor` instead.
 
-The `SliceSinker` optimization pass is triggered in models where multiple element-wise operations are performed on slices of tensors that can be optimized by consolidating operations on the unsliced tensors first. Key characteristics include:
+### Characteristics of TensorFlow models that trigger the `SliceSinker` optimization in TensorFlow XLA
 
-1. **Element-wise Operations on Slices**: The model must perform similar element-wise operations (like addition, multiplication) on slices of one or more tensors. 
+The `SliceSinker` optimization is triggered when:
 
-2. **Consistent Slicing Across Operations**: The slices involved in these operations need to be extracted from the same indices of their respective tensors.
+1. Multiple elementwise operations are performed on slices of tensors where these slices are taken from the same indices of tensors with compatible shapes.
+2. The operations are similar (same operation type and processing similar slices).
+3. Combining these operations into a single operation on the unsliced tensors followed by slicing the result is more efficient than performing the operations separately on the slices.
 
-3. **Same Element-wise Operation Across Slices**: The element-wise operations performed on these slices should be the same (e.g., all additions).
+Here is a code example to illustrate this pattern:
 
-4. **Potential for Reduced Operation Cost**: The optimization checks if performing the operation on the entire tensor before slicing (post-operation) is cheaper in terms of computation compared to performing operations on slices individually.
-
-**Illustrative Code Example**:
 ```python
 import tensorflow as tf
 
-# Input tensor
-input_tensor = tf.random.normal([100])
+# Original tensor
+p = tf.random.normal([10])
 
-# Slicing the tensor and performing element-wise operations
-slice_a = input_tensor[:50]
-slice_b = input_tensor[50:]
+# Different slices on the same tensor, followed by similar elementwise operations
+a = p[0:9]  # First slice
+aa = a + a  # Operation on first slice
 
-result_a = slice_a * slice_a  # Element-wise multiplication on first slice
-result_b = slice_b * slice_b  # Element-wise multiplication on second slice
+b = p[2:10] # Overlapping slice
+bb = b + b  # Similar operation on the overlapping slice
+
+# Potential reorganization by SliceSinker:
+# A single addition on the whole tensor followed by slicing the result
+full_add = p + p
+aa_new = full_add[0:9]
+bb_new = full_add[2:10]
 ```
-In this example, the model performs the same operation (multiplication) on two slices of the same tensor. The `SliceSinker` optimization can potentially transform this to operate on the entire tensor first and then slice the result, which could be less expensive computationally.
 
-These characteristics define when each respective optimization would be applied, leading to potential performance improvements in the execution of TensorFlow models on XLA.
+In this example, the `SliceSinker` optimization would recognize that `aa` and `bb` are performing the same operation (`+`) on overlapping slices of the same tensor `p`. It would then merge these operations into a single operation on the entire tensor, followed by extracting the necessary slices from the result. This avoids redundant computations and can lead to performance improvements.

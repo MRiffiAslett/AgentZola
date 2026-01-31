@@ -31,46 +31,43 @@ x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
 y = m(x1)
 
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
-### Description of TensorFlow Model Characteristics for `ReshapeReshapeForwarding`
 
-The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model contains a sequence of two reshape operations where the first reshape changes the shape of a tensor, and the second reshape operation reverts it back to the original shape. This specific pattern is characterized by the following:
+### Characteristics of TensorFlow Model that Trigger `ReshapeReshapeForwarding` Optimization
 
-1. **Two Consecutive Reshape Operations**: The model includes two consecutive `tf.reshape` operations.
-2. **First Reshape Alteration and Reversion by Second**: The first reshape operation changes the shape of an input tensor to any other shape, and the second reshape operation changes it back to its original shape.
+The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered by a specific pattern in the TensorFlow model involving two consecutive `tf.reshape` operations. The characteristics of the model that would cause this optimization to be applied are:
 
-#### Code Example:
+1. **Sequential Reshape Operations:** The model must contain two consecutive `reshape` operations.
+2. **Shape Reversal Pattern:** The second `reshape` operation reverses the shape transformation applied by the first `reshape`. This means that the output tensor of the second `reshape` returns to the original shape of the tensor before the first `reshape`.
+
+#### Example Code:
 ```python
-# Example TensorFlow code that would trigger the ReshapeReshapeForwarding optimization.
 import tensorflow as tf
 
-input_tensor = tf.random.normal([10, 20])
-t1 = tf.reshape(input_tensor, [200])  # First reshape to a different shape
-t2 = tf.reshape(t1, [10, 20])        # Second reshape that reverts to the original shape
-
-# t2 can be directly replaced by input_tensor through the optimization.
+input_tensor = tf.random.normal([8, 16])
+# First reshape: Changes the shape
+t1 = tf.reshape(input_tensor, [2, 64])
+# Second reshape: Reverses the first reshape
+t2 = tf.reshape(t1, [8, 16])
 ```
+In this example, the second `reshape` reverts the tensor `t1` back to the original shape of `input_tensor`. This pattern will trigger the `ReshapeReshapeForwarding` optimization, where the two reshapes can be effectively removed, directly using `input_tensor` instead of `t2`.
 
-### Description of TensorFlow Model Characteristics for `TreeReductionRewriter`
+### Characteristics of TensorFlow Model that Trigger `TreeReductionRewriter` Optimization
 
-The `TreeReductionRewriter` optimization is triggered when a TensorFlow model contains a reduction operation that can be rewritten as a combination of a `ReduceWindow` operation followed by a `Reduce` operation to improve performance. This transformation is suited for scenarios where the reduction dimension size is larger than a predefined window size. The characteristics include:
+The `TreeReductionRewriter` optimization pass in TensorFlow XLA optimizes reduction operations that are split across multiple dimensions. This optimization is effective for large-scale reductions and is triggered under the following conditions:
 
-1. **Reduction Operation with Large Dimension**: The model should include a reduction operation where at least one of the dimensions being reduced is larger than a predefined window size (`reduce_window_size_`).
-2. **Non-Variadic Reductions**: The optimization currently targets non-variadic reductions only.
+1. **Presence of a `reduce` Operation:** The TensorFlow model must include a reduction operation (`tf.reduce_*` such as `tf.reduce_sum`, `tf.reduce_max`).
+2. **Large Reduction Dimensions:** At least one of the dimensions being reduced should have a size larger than the specified `reduce_window_size` in the rewriter configuration, which suggests a potential benefit from breaking down the reduction into smaller, more manageable operations.
 
-#### Code Example:
+#### Example Code:
 ```python
-# Example TensorFlow code that might trigger the TreeReductionRewriter optimization.
 import tensorflow as tf
 
-input_tensor = tf.random.normal([100, 200])
-# Sum reduction across the first dimension
-result = tf.reduce_sum(input_tensor, axis=0)
-
-# If the first dimension (size 100) is considered large (e.g., greater than reduce_window_size_),
-# this could be optimized by first applying a reduce window operation followed by a reduce operation.
+# Large input tensor
+input_tensor = tf.random.normal([1024, 2048])
+# Reduction across both dimensions but primarily large in the second dimension
+result = tf.reduce_sum(input_tensor, axis=[0, 1])
 ```
+In this scenario, if the `reduce_window_size` is set smaller than `2048`, the `TreeReductionRewriter` might partition the reduction into smaller window-based reductions before performing the final reduction, optimizing the overall computational effort and possibly improving parallelism.
 
-In both cases, the presence of these specific patterns and properties in a TensorFlow model triggers the respective optimizations during the XLA compilation process, potentially leading to performance improvements by simplifying the computation graph or by more efficiently mapping the computations in hardware-aware manners.
+These descriptions and examples outline how specific patterns and configurations in a TensorFlow model can trigger these optimization passes in TensorFlow XLA.
