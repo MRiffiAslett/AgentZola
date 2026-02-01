@@ -2,8 +2,8 @@
 #SBATCH --job-name=whitefox_tfxla
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:1                  # Request 1 GPU (required for LLM inference)
-#SBATCH --cpus-per-task=8             # CPUs for parallel test execution
-#SBATCH --mem=64G                     # Memory allocation (64GB to avoid OOM)
+#SBATCH --cpus-per-task=4             # CPUs for parallel test execution
+#SBATCH --mem=32G                     # Memory allocation (64GB to avoid OOM)
 #SBATCH --time=48:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
