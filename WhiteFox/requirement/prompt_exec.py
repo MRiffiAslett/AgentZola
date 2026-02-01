@@ -105,8 +105,7 @@ class GPTModel:
         n_samples: int = 1,
         skip_existing: bool = True,
         fallback_optimizations: set = None,
-        fallback_dir: str = None,
-        prefix_text: str = None
+        fallback_dir: str = None
     ) -> Dict[str, Dict]:
        
         if fallback_optimizations is None:
@@ -133,18 +132,19 @@ class GPTModel:
                     fallback_file = fallback_path / f"{opt_name}.txt"
                     description = fallback_file.read_text()
                     
-                    if prefix_text:
-                        description = prefix_text + "\n\n" + description
+                    # Add instruction header
+                    instruction = f"Generate a valid TensorFlow model for {opt_name} that meets the requirements.\n\n"
+                    full_prompt = instruction + description
                     
                     with open(output_file, "w") as f:
-                        f.write(description)
+                        f.write(full_prompt)
                     
                     print(f"  📋 Using pre-existing description (no GPT call)")
                     print(f"  ✓ Saved: {output_file.name}")
                     
                     results[opt_name] = {
                         "status": "success",
-                        "descriptions": [description],
+                        "descriptions": [full_prompt],
                         "metadata": {"source": "fallback", "fallback_file": str(fallback_file)}
                     }
                     continue
@@ -164,17 +164,18 @@ class GPTModel:
                 )
                 
                 description = descriptions[0] if descriptions else ""
-     
-                if prefix_text:
-                    description = prefix_text + "\n\n" + description
+                
+                # Add instruction header
+                instruction = f"Generate a valid TensorFlow model for {opt_name} that meets the requirements.\n\n"
+                full_prompt = instruction + description
                 
                 with open(output_file, "w") as f:
-                    f.write(description)
+                    f.write(full_prompt)
                 print(f"  ✓ Saved: {output_file.name}")
                 
                 results[opt_name] = {
                     "status": "success",
-                    "descriptions": descriptions,
+                    "descriptions": [full_prompt],
                     "metadata": metadata
                 }
                 

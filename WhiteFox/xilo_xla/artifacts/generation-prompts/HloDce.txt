@@ -1,78 +1,35 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for HloDce that meets the requirements.
 
-# Description
-The model should contain the following pattern:
+The `HloDCE` (Dead Code Elimination) optimization in TensorFlow XLA targets TensorFlow models that contain specific characteristics of redundant or unused operations. The primary triggers for this optimization include:
+
+1. **Unused Operations:** If an operation in the model does not contribute to the final output or its outputs are not used by any other operation, it becomes a candidate for elimination. For instance, operations that compute values but are never used in subsequent computations or the output.
+
+2. **Dead Roots:** Operations that are roots (i.e., final operations in a computation chain) and are unused or do not have side effects can be removed.
+
+3. **Unused Parameters:** Parameters that are not utilized within their computations can also be removed, particularly in the entry computation of the model.
+
+4. **Redundant Fusion Outputs:** If a fusion operation (a single operation representing a subgraph of operations that are fused together) produces outputs that are not used by any operation, these outputs can be removed.
+
+An example TensorFlow model that would trigger this optimization might look like this:
+
+```python
+import tensorflow as tf
+
+# Construct a simple model
+x = tf.constant([1.0, 2.0, 3.0])
+y = tf.constant([-1.0, -2.0, -3.0])
+z = x + y  # z is never used
+w = x - y  # w is used as the output
+
+# Function that only uses w
+@tf.function
+def model():
+    return w
+
+# Run the model
+print(model())
 ```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
 
+In the above example, the operation `z = x + y` is dead code because `z` is computed but never used in the computation that leads to the model's output. An optimization pass like `HloDCE` would identify `z` as removable, thus simplifying the computation and potentially improving performance.
 
-# Model
-class Model(tf.keras.Model):
-
-  def __init__(self):
-    super(Model, self).__init__()
-
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
-
-# Initializing the model
-m = Model()
-
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
-
-# Call model
-y = m(x1)
-
-
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
-
-### Characteristics of TensorFlow Model that Trigger `ReshapeReshapeForwarding` Optimization Pass
-
-For the `ReshapeReshapeForwarding` optimization to be triggered, the TensorFlow model must have a specific sequence of reshape operations:
-
-1. **Sequence of Reshape Operations**: The model includes two consecutive reshape operations where:
-   - The first reshape operation changes the shape of a tensor (`input_tensor`) to any other shape.
-   - The second reshape operation changes the tensor back to its original shape (`input_tensor.shape`).
-
-2. **TensorFlow Code Pattern**:
-   ```python
-   input_tensor = ... # Some tensor
-   t1 = tf.reshape(input_tensor, [new_shape]) # First reshape to any new shape
-   output_tensor = tf.reshape(t1, tf.shape(input_tensor)) # Second reshape back to original shape
-   ```
-
-In this pattern, the optimization recognizes that the two reshape operations cancel each other out, allowing the elimination of these operations to directly use `input_tensor` instead of `output_tensor`.
-
-### Characteristics of TensorFlow Model that Trigger `HloDce` Optimization Pass
-
-To trigger the `HloDCE` (Dead Code Elimination) optimization pass in a TensorFlow model, the model must include operations or paths that satisfy the following conditions:
-
-1. **Unused Operations**: There are operations within the model that do not affect the output of the model. These can be operations whose results are not used in subsequent computations or contribute to the model's final output.
-
-2. **Dead Parameters**: Parameters (inputs) of the model or of specific computations that are not used in any meaningful way within the computational graph.
-
-3. **Ineffectual Control Paths**: Control dependencies that do not impact the computation's outcome.
-
-4. **Specific Code Patterns**:
-   - Operations that can be safely removed without affecting the model's outcome.
-   - Parameters that are not referenced or contribute to any output.
-   - Computational branches where the results do not feed into required outputs.
-
-5. **TensorFlow/XLA Code Illustrating Potential Unused Operation**:
-   ```python
-   x = tf.constant([1, 2, 3])
-   y = tf.add(x, x)
-   z = tf.multiply(x, 2)  # Suppose 'z' is never used later in the model
-   ```
-
-   In this example, if `z` is never used for further computations or contributing towards the model’s output, it becomes a candidate for dead code elimination under the `HloDCE` optimization pass.
-
-In summary, the `HloDCE` pass aims to remove operations, parameters, and paths within a TensorFlow XLA computation that are not contributing to the final output, thus optimizing the computational efficiency and potentially reducing resource usage.
+By identifying and removing such dead code and redundant operations, the TensorFlow XLA compiler can optimize the execution graph, reduce resource usage, and improve execution speed.

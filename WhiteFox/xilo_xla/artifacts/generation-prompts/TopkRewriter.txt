@@ -1,76 +1,38 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for TopkRewriter that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `TopkRewriter` optimization pass in TensorFlow XLA is triggered for TensorFlow models containing a `Sort` operation that can be specialized to a `TopK` operation. This optimization is applicable under certain conditions, primarily when the `Sort` operation is used in a manner consistent with extracting the top `k` elements along a specified dimension. The characteristics of the TensorFlow model that would trigger this optimization include:
 
+1. **Sort Operation with Specific Usage Patterns:** The optimization is triggered when a `Sort` operation is followed by a `Slice` operation that extracts the first `k` elements along the sorted dimension. This pattern typically indicates an intent to retrieve the top `k` elements.
 
-# Model
-class Model(tf.keras.Model):
+2. **Dimension and Shape Constraints:**
+   - The sort must be performed along either the first or the last dimension of the tensor.
+   - The output of the sort is sliced such that only the first `k` elements of the sorted dimension are used, and the slice starts at 0 with a stride of 1.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Data Types:** The data types supported for this optimization are typically floating-point types like `F32` or `BF16`. 
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Comparator Function:** The comparator used in the sort operation should be capable of handling NaN values correctly, ensuring that the comparison logic matches the expected behavior for floating-point numbers, including handling of negative zero and NaN.
 
-# Initializing the model
-m = Model()
+5. **Usage of Iota:** For sorts involving two operands, the second operand should be an `Iota` operation, which often indicates the generation of indices used in sorting operations.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+### Example Model Code:
 
-# Call model
-y = m(x1)
-
-
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
-
-### Characteristics of TensorFlow Model Triggering `ReshapeReshapeForwarding` Optimization
-
-The TensorFlow model characteristics that trigger the `ReshapeReshapeForwarding` optimization in XLA must include a sequence where a tensor undergoes two consecutive reshape operations such that the final output shape of the second reshape matches the original shape of the tensor before the first reshape. This scenario implies that the second reshape operation effectively reverses the transformation applied by the first reshape, making the overall operation redundant.
-
-#### Code Pattern Example:
+For a TensorFlow model to trigger this optimization, it might look something like the following hypothetical TensorFlow code:
 
 ```python
 import tensorflow as tf
 
-# Input tensor of arbitrary shape
-input_tensor = tf.random.normal(shape=[8, 16])
+# Input data
+data = tf.random.normal([batch_size, num_elements])
 
-# First reshape transforms the shape
-reshaped_tensor = tf.reshape(input_tensor, [2, 64])
+# Perform a sort along the last dimension
+sorted_data = tf.sort(data, axis=-1, direction='DESCENDING')
 
-# Second reshape reverts to the original shape
-output_tensor = tf.reshape(reshaped_tensor, [8, 16])
+# Extract the top k elements
+top_k = sorted_data[..., :k]
 ```
 
-In this example, `output_tensor` will have the same shape as `input_tensor`, triggering the `ReshapeReshapeForwarding` optimization if used in a TensorFlow model compiled with XLA.
+In this example:
+- `tf.sort` is analogous to the `Sort` operation in XLA.
+- The slicing `[..., :k]` represents the `Slice` operation that extracts the top `k` elements.
 
-### Characteristics of TensorFlow Model Triggering `TopkRewriter` Optimization
-
-The `TopkRewriter` optimization is triggered when there is a sort operation in the TensorFlow model that can be effectively replaced with a more efficient Top-K operation. This optimization is specifically applicable under conditions where the sort operation is followed by a slice that extracts the top K elements, the sorting comparison is nan-safe, and certain other conditions about the data layout and operation characteristics are met.
-
-#### Code Pattern Example:
-
-```python
-import tensorflow as tf
-
-# Input tensor
-input_tensor = tf.random.uniform([10, 20], minval=1, maxval=100, dtype=tf.float32)
-
-# Using TensorFlow operations to mimic a sort followed by a slice to retrieve top K elements
-values, indices = tf.math.top_k(input_tensor, k=5, sorted=True)
-```
-
-In this example, the `tf.math.top_k` is directly representative of what the `TopkRewriter` seeks to optimize. However, if not using `tf.math.top_k` directly, a similar effect could be achieved by explicitly sorting and then slicing the tensor, which the XLA compiler would recognize and potentially optimize by converting it back into a `top_k` operation internally.
-
-These optimizations significantly enhance performance by reducing unnecessary computations and utilizing more efficient algorithms suited for the operations' intents.
+If the `Sort` operation in a model follows such a pattern, where it is primarily used to extract a subset of sorted elements, the `TopkRewriter` optimization can be triggered to potentially convert these operations into a more efficient `TopK` operation using a custom call in XLA.

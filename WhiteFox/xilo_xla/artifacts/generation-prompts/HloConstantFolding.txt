@@ -1,81 +1,44 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for HloConstantFolding that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `HloConstantFolding` optimization pass in TensorFlow XLA is triggered for a TensorFlow model when specific characteristics and patterns are met in the model's HLO (High-Level Optimizer) instructions. Below are the key characteristics that can lead this optimization to be triggered:
 
+### Characteristics of the Model
 
-# Model
-class Model(tf.keras.Model):
+1. **Presence of Constant Operands**: The primary trigger for this optimization is the presence of operations that have at least one operand as a constant (`kConstant`). This is a basic requirement for attempting constant folding.
 
-  def __init__(self):
-    super(Model, self).__init__()
+2. **All Operands are Constants or Broadcasts of Constants**: The operation must either involve all constant operands or operations where operands are broadcasts of constants. An example is an operation like addition where both operands are constants or one is a broadcast of a constant.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+   ```python
+   # TensorFlow equivalent
+   tf.add(tf.constant([1, 2, 3]), tf.broadcast_to(tf.constant(1), [3]))
+   ```
 
-# Initializing the model
-m = Model()
+3. **Non-Side-Effecting Operations**: The operations should not have side effects. Operations like random number generation (`kRng`) and those that manage control flow or synchronization tokens (`kAfterAll`) are excluded from folding.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+4. **Size Constraints on Operations and Constants**: There are specific size constraints to prevent performance degradation due to excessively large constants. If the operands or the resulting constant exceed a predefined size limit (e.g., 45 million elements), the operation will not be folded.
 
-# Call model
-y = m(x1)
+5. **Foldable Computations Only**: If a computation (or a nested subcomputation) contains non-foldable operations as determined by various checks (e.g., operation types like `kBroadcast`, `kIota`, `kFft`, and presence of side effects), then the computation is not considered foldable, and constant folding won't be applied.
 
+6. **No Control Dependencies**: The instructions targeted for constant folding should not have control dependencies. This ensures that the semantics related to execution order and control are not disturbed.
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+7. **Exclusion of Certain Operations**: Certain operations, even if all operands are constants, are not folded by default. These include parameter instructions (`kParameter`), constants themselves (`kConstant`), and tuple constructions (`kTuple`).
 
-### Characteristics of TensorFlow model that trigger the optimization pass `ReshapeReshapeForwarding`:
+### Example Model
 
-The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model contains a sequence of two `tf.reshape` operations where:
+Consider a simple TensorFlow model where constant folding might be applied:
 
-1. The first `tf.reshape` operation changes the shape of an input tensor (`input_tensor`) to any arbitrary shape.
-2. The second `tf.reshape` operation immediately following the first one reverts the tensor back to its original shape.
-
-This pattern suggests an unnecessary reshape operation that does not change the data but adds computational overhead. The optimization eliminates this redundant operation.
-
-#### Example Model:
 ```python
 import tensorflow as tf
 
-# Original shape of the input tensor
-input_tensor = tf.random.normal([10, 20])
+# Example where constant folding can be applied
+x = tf.constant([1.0, 2.0, 3.0])
+y = tf.constant([4.0, 5.0, 6.0])
+z = tf.add(x, y)  # This can be folded to [5.0, 7.0, 9.0]
 
-# First reshape operation to change the shape
-reshaped_tensor = tf.reshape(input_tensor, [200])
-
-# Second reshape operation to revert to the original shape
-reverted_tensor = tf.reshape(reshaped_tensor, [10, 20])
+# Example where constant folding won't be applied due to size
+large_constant1 = tf.constant(list(range(100000000)))  # 100 million elements
+large_constant2 = tf.constant(list(range(100000000)))
+result = tf.add(large_constant1, large_constant2)  # Won't be folded due to size constraints
 ```
-In this example, the model exhibits the characteristics needed to trigger the `ReshapeReshapeForwarding` optimization, as the output of the second reshape (`reverted_tensor`) has the same shape as the `input_tensor`.
 
-### Characteristics of TensorFlow model that trigger the optimization pass `HloConstantFolding`:
-
-The `HloConstantFolding` optimization is triggered when a TensorFlow model contains operations that can be evaluated at compile-time because they operate on constant values. The characteristics of such a model include:
-
-1. Operations where all operands are constants or can be reduced to constants (like broadcasts of constants).
-2. The absence of operations that are inherently non-foldable due to side effects, randomness, or specific exclusion due to performance considerations (like `kRng`, `kAfterAll`, `kWhile`, `kFft`).
-
-This optimization attempts to evaluate expressions during the compilation process to reduce runtime computation.
-
-#### Example Model:
-```python
-import tensorflow as tf
-
-# Constant tensors
-const1 = tf.constant([1.0, 2.0, 3.0])
-const2 = tf.constant([4.0, 5.0, 6.0])
-
-# A foldable operation on constant tensors
-result = tf.add(const1, const2)
-```
-In this example, since both operands of the `tf.add` operation are constants, the `HloConstantFolding` optimization can pre-compute the result at compile-time, thus reducing runtime computations.
+In this example, the addition of `x` and `y` can be constant folded because both operands are small constants, but the addition involving `large_constant1` and `large_constant2` will not be folded due to the size constraint.

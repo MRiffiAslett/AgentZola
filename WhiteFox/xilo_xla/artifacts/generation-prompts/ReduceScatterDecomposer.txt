@@ -1,74 +1,50 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for ReduceScatterDecomposer that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The optimization pass `ReduceScatterDecomposer` in TensorFlow XLA is triggered by TensorFlow models that specifically use the `ReduceScatter` operation. Here are the characteristics of the TensorFlow models that would activate this pass:
 
+1. **Presence of ReduceScatter Operations:**
+   The model must contain at least one `ReduceScatter` operation. This is an operation used typically in distributed training to reduce and then scatter the result to different parts of a cluster.
 
-# Model
-class Model(tf.keras.Model):
+2. **Array Shapes:**
+   The `ReduceScatter` operation must operate on data with array shapes. If the data shapes are not arrays, the optimization will not be triggered.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Decomposition Conditions:**
+   There has to be a specific decomposition requirement or condition set (possibly via conditions or configurations external to this code snippet), which is checked by the `should_decompose_` condition. If this condition or configuration is set not to decompose (i.e., returns false), the optimization will not proceed even if other conditions are met.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Channel Management:**
+   If the `ReduceScatter` operation specifies a channel_id, a new channel ID is generated, implying that this optimization can involve creating separate communication channels for the newly decomposed operations. This is important for operations that might need isolated or specific communication paths in distributed environments.
 
-# Initializing the model
-m = Model()
+5. **Use of the Original Reduction Computation:**
+   The optimization clones the original reduction computation (`to_apply()`) used in the `ReduceScatter` operation. This means that the models which use custom or specific reduction functions in their `ReduceScatter` operations will have these functions preserved and reused in the decomposed operations.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+6. **Dynamic Slicing Based on Start Indices:**
+   The optimization involves creating dynamic slices of the result of an all-reduce operation based on calculated start indices. This indicates that the model should be compatible with or expect operations that can segment data dynamically post-reduction, according to the collective operation's configuration (like `replica_groups`).
 
-# Call model
-y = m(x1)
+### Example Model Pattern:
 
+Here's a simplified example pattern in Python using TensorFlow that might trigger this optimization when compiled with XLA:
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
-
-### Characteristics of TensorFlow Model for `ReduceScatterDecomposer` in TensorFlow XLA
-
-**Model Characteristics:**
-1. **Use of ReduceScatter Instruction**: The TensorFlow model must include an HloReduceScatterInstruction. This instruction typically performs a reduction on tensors across multiple devices followed by a scatter of the result. It is crucial for triggering the `ReduceScatterDecomposer`.
-
-2. **Array Shape**: The input to the ReduceScatter instruction must be an array. This is checked by the condition that the shape of the ReduceScatter instruction must be an array type.
-
-3. **Decomposition Condition**: There may be a condition (represented by `should_decompose_` in the code) that determines whether or not the ReduceScatter instruction should be decomposed based on specific model or execution configurations. This condition must be satisfied (or absent) for the decomposition to proceed.
-
-4. **Presence of a Channel ID**: The model can optionally include a channel ID for the ReduceScatter instruction, which is used to manage communication channels in distributed settings. If present, it is incremented for use in the decomposed operations.
-
-5. **Replacement by AllReduce and DynamicSlice**: The original ReduceScatter operation is decomposed into an AllReduce operation followed by a DynamicSlice. The AllReduce aggregates data across devices, and DynamicSlice extracts a portion of this data to achieve the equivalent of the original ReduceScatter.
-
-**Example Code Pattern in TensorFlow (conceptual):**
 ```python
 import tensorflow as tf
 
-# Assuming `tf.distribute.ReduceScatter` exists and is an abstraction over the XLA HloReduceScatterInstruction
-# This is a conceptual representation since TensorFlow doesn't directly expose Hlo instructions.
+# Assuming a distributed strategy context is appropriately set
+dist_strategy = tf.distribute.MirroredStrategy()
 
-# Create some data
-data = tf.random.uniform(shape=[10, 5])
+with dist_strategy.scope():
+    # Input tensor
+    tensor = tf.ones([4, 5])  # Shape is an array which is necessary
 
-# Define a reduction operation
-def reduce_op(x, y):
-    return x + y
+    # Custom reduction operation (sum in this case)
+    def reduce_op(x, y):
+        return x + y
 
-# Use a distributed strategy
-strategy = tf.distribute.MirroredStrategy()
-
-# Apply ReduceScatter within the strategy scope
-with strategy.scope():
-    reduced_data = tf.distribute.experimental.ReduceScatter(data, reduce_op)
-
-# The characteristics of this model include using ReduceScatter in a distributed setup with an array-shaped tensor.
+    # ReduceScatter operation
+    output = tf.raw_ops.ReduceScatter(
+        input=tensor,
+        group_assignment=[[0, 1], [2, 3]],
+        reduce_op=reduce_op,
+        scatter_dim=1
+    )
 ```
 
-**Note**: The actual implementation details like `tf.distribute.ReduceScatter` may not exist as described since TensorFlow abstracts XLA operations differently. The example is to illustrate how such a model characteristic might look in a high-level TensorFlow API context.
+In this example, if compiled under XLA and with specific settings or flags that allow decomposition, the `ReduceScatterDecomposer` might be triggered due to the presence of the `ReduceScatter` operation with an array shape and specific reduction operation.

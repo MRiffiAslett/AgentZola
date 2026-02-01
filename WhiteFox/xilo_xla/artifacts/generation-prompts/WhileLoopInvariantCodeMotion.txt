@@ -1,79 +1,35 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for WhileLoopInvariantCodeMotion that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `WhileLoopInvariantCodeMotion` optimization in TensorFlow XLA is designed to identify and hoist invariant computations outside of the while loop to improve performance by reducing redundant computations across loop iterations. The characteristics of TensorFlow models that would trigger this optimization include:
 
+1. **Presence of While Loops with Tuple Outputs:** The model must contain at least one while loop whose output is a tuple. This is a prerequisite since the optimization logic checks if the while loop's shape is a tuple before proceeding with any invariant code motion.
 
-# Model
-class Model(tf.keras.Model):
+2. **Loop Trip Count Greater Than One:** The optimization pass skips loops that are determined to have a trip count of at most one. For the optimization to be triggered, the loop should potentially execute more than once.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Invariant Computations Inside the While Loop:** The loop should contain computations that are invariant, meaning they compute the same value in every iteration of the loop. These include operations on constants, computations that depend only on loop-invariant inputs, and certain operations like reshapes or broadcasts which are determined to be hoistable as per the optimization logic.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Profitability of Hoisting:** Even if an instruction is invariant, it won't be hoisted unless it's also deemed profitable. For example, reshapes and constants can be hoisted based on the flags `hoist_reshapes_` and `hoist_constants_`. Other operations like bitcasts, broadcasts, and slices are typically not hoisted unless doing so enables the hoisting of other dependent computations.
 
-# Initializing the model
-m = Model()
+5. **Absence of Certain Conditions:** The optimization will not proceed if any of the instructions in the loop has side effects, certain custom calls (e.g., related to sharding or memory annotations), or if the instructions are involved in complex control flow scenarios (like having control predecessors or successors).
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+6. **Memory and Computational Cost Considerations:** The optimization evaluates the memory footprint and computational cost. For instance, it checks whether hoisting an instruction would significantly increase memory usage relative to the inputs of the instruction.
 
-# Call model
-y = m(x1)
+7. **Absence of Specific Frontend Attributes:** If the while loop has a frontend attribute `_xla_disable_loop_instr_hoisting`, the optimization will be skipped for that loop.
 
-
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
-
-### Characteristics of TensorFlow models triggering `ReshapeReshapeForwarding` optimization:
-
-For the `ReshapeReshapeForwarding` optimization to be triggered, the TensorFlow model must exhibit the following pattern:
-
-1. **Sequential Reshape Operations**: The model should contain two consecutive `tf.reshape` operations where:
-    - The first `tf.reshape` changes the shape of an input tensor `input_tensor` to any arbitrary shape.
-    - The second `tf.reshape` immediately follows the first and reverses the shape transformation, restoring the tensor to its original shape, which is `input_tensor.shape`.
+### Example:
+Here’s an example TensorFlow model snippet where the optimization might be triggered:
 
 ```python
 import tensorflow as tf
 
-input_tensor = tf.random.normal([8, 8])
-t1 = tf.reshape(input_tensor, [64])  # First reshape to an arbitrary shape
-t2 = tf.reshape(t1, [8, 8])         # Second reshape to the original shape
-```
-
-In this case, the `ReshapeReshapeForwarding` pass recognizes that the second reshape operation simply undoes the first, and hence, it can optimize by eliminating both reshapes, directly using `input_tensor` instead.
-
-### Characteristics of TensorFlow models triggering `WhileLoopInvariantCodeMotion` optimization:
-
-For the `WhileLoopInvariantCodeMotion` optimization to be triggered, the TensorFlow model should include:
-
-1. **While Loop with Invariant Code**: The model must contain a `tf.while_loop` where certain instructions within the loop body do not depend on the loop variable and remain constant across iterations. These are considered invariant and can be moved outside the loop.
-
-2. **Profitable Hoisting Conditions**:
-    - Constants and reshapes inside the loop can be hoisted if they lead to reduced computational overhead inside the loop.
-    - Operations such as `tf.broadcast_to`, `tf.slice`, etc., are typically not hoisted alone unless they enable hoisting of other dependent instructions.
-
-```python
-import tensorflow as tf
-
+# A simple loop where the body reshapes a tensor, which is an invariant operation.
 i = tf.constant(0)
-max_iter = tf.constant(10)
-loop_vars = (i, tf.constant([1.0, 2.0]))
+c = lambda i: tf.less(i, 10)
+b = lambda i: (tf.reshape(i, [1, 1]),)
+r = tf.while_loop(c, b, [i])
 
-def body(i, vals):
-    vals = vals * 2  # Invariant as it does not depend on `i`
-    return i + 1, vals
-
-_, result = tf.while_loop(lambda i, _: i < max_iter, body, loop_vars)
+with tf.Session() as sess:
+    print(sess.run(r))
 ```
 
-In this example, the multiplication operation inside the loop does not depend on the loop variable `i` and remains constant for all iterations. Thus, it may be hoisted outside the loop, reducing the computation performed during each iteration. This optimization would only be applied if deemed profitable and not increasing memory usage disproportionately (as controlled by `hoist_size_inflation_ratio_`).
+In this example, the reshape operation inside the while loop does not depend on the loop variable in a way that changes across iterations, making it a candidate for hoisting out of the loop. The output of the loop is also a tuple, fitting the optimization's requirements. If hoisting is considered profitable and there are no disqualifying conditions, the `WhileLoopInvariantCodeMotion` might be triggered to optimize this loop.

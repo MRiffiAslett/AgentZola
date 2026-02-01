@@ -1,87 +1,36 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for DynamicIndexSplitter that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The TensorFlow XLA optimization pass `DynamicIndexSplitter` is triggered by specific characteristics in a TensorFlow model that uses dynamic slicing (`DynamicSlice`) or dynamic updating slicing (`DynamicUpdateSlice`) operations. Here's a concise guide on the model characteristics that would lead to this optimization being applied:
 
+1. **Use of Dynamic Slicing or Dynamic Update Slicing Operations**:
+    - The model must contain at least one `DynamicSlice` or `DynamicUpdateSlice` operation. These operations dynamically select a slice or update a slice of a tensor, respectively, based on runtime index values.
 
-# Model
-class Model(tf.keras.Model):
+2. **Non-scalar Index Operand with Multiple Dimensions**:
+    - The index operand (the tensor providing the indices for slicing) should be non-scalar with exactly one dimension. If the index operand is scalar or has more than one dimension, the optimization pass will not modify that operation.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Rank of Operand**:
+    - The operand being sliced or updated (i.e., the tensor from which a slice is taken or to which a slice is updated) must have at least one dimension. If this tensor is rank 0 (scalar), the operation is directly replaced with the operand or the update value, which also results in optimization but through a different mechanism.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
-
-# Initializing the model
-m = Model()
-
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
-
-# Call model
-y = m(x1)
-
-
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
-
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization Pass
-
-The TensorFlow model should contain a sequence of two `tf.reshape` operations where the output of the first `reshape` is used as the input to the second `reshape`. The trigger for the `ReshapeReshapeForwarding` optimization specifically occurs when:
-
-1. The first `reshape` operation changes the shape of the input tensor (`input_tensor`) to any arbitrary shape.
-2. The second `reshape` operation changes the shape of the tensor back to its original shape (the shape of `input_tensor` before the first reshape).
-
-Here is a simple Python code snippet illustrating such a model pattern:
+### Code Example Illustrating Trigger Conditions:
+Here's an example TensorFlow model in Python that would trigger the `DynamicIndexSplitter` optimization when compiled with XLA:
 
 ```python
 import tensorflow as tf
 
-# Assume input_tensor is a TensorFlow tensor with a known shape
-input_tensor = tf.random.normal([8, 8])  # Example shape [8, 8]
+# Assume we're using a shape that ensures the tensor has multiple dimensions
+tensor_to_slice = tf.random.uniform([10, 20, 30], dtype=tf.float32)
+update_values = tf.random.uniform([2, 3, 4], dtype=tf.float32)  # For DynamicUpdateSlice
 
-# First reshape: change the shape arbitrarily
-t1 = tf.reshape(input_tensor, [64])  # New shape [64]
+# Indices are provided by a 1D tensor, which is not scalar and has exactly one dimension
+indices = tf.constant([1, 2, 3], dtype=tf.int32)
 
-# Second reshape: revert to the original shape
-t2 = tf.reshape(t1, [8, 8])  # Original shape [8, 8]
+# Dynamic Slice Operation
+dynamic_slice = tf.slice(tensor_to_slice, indices, [2, 3, 4])
+
+# Dynamic Update Slice Operation
+dynamic_update_slice = tf.tensor_scatter_nd_update(tensor_to_slice, tf.reshape(indices, [1, 3]), update_values)
+
+# When compiled with XLA, the DynamicIndexSplitter optimization would be triggered for these operations
 ```
 
-In this example, `t1` is the result of the first reshape operation, and `t2` is the result of the second reshape operation that restores the original shape of `input_tensor`.
-
-### Characteristics of TensorFlow Model for `DynamicIndexSplitter` Optimization Pass
-
-The `DynamicIndexSplitter` optimization pass in TensorFlow XLA is triggered by models using `DynamicSlice` or `DynamicUpdateSlice` operations, specifically when these operations do not already use scalar indices for slicing or updating. The characteristics of such a model include:
-
-1. The model employs either a `DynamicSlice` or `DynamicUpdateSlice` operation.
-2. The indices used in these operations are array indices rather than scalar indices.
-
-The optimization pass modifies these operations to use scalar indices for each dimension being sliced or updated, which is typically more performance-efficient.
-
-Here’s a code snippet illustrating a model that might trigger this optimization:
-
-```python
-import tensorflow as tf
-
-# Example tensor and update values
-input_tensor = tf.random.normal([10, 10, 10])
-update_values = tf.random.normal([2, 2, 2])
-indices = tf.constant([4, 5, 3])  # Non-scalar (vector) indices
-
-# Dynamic Update Slice using vector indices
-updated_tensor = tf.tensor_scatter_nd_update(input_tensor, [indices], update_values)
-
-# Dynamic Slice using vector indices
-sliced_tensor = tf.slice(input_tensor, indices, [2, 2, 2])
-```
-
-In this example, both `tensor_scatter_nd_update` and `tf.slice` (when used for dynamic operations) are potential candidates for the `DynamicIndexSplitter` optimization if they are translated to `DynamicUpdateSlice` and `DynamicSlice` respectively in the XLA computation graph. The optimization would convert the vector indices to scalar indices for each dimension.
+In this example, both the `tf.slice` (which corresponds to `DynamicSlice` in XLA) and `tf.tensor_scatter_nd_update` (which corresponds to `DynamicUpdateSlice` in XLA) are set up in a way that matches the conditions outlined above. The indices tensor is non-scalar and has exactly one dimension, and the tensors being operated on are not rank 0, making them suitable for this specific optimization.
