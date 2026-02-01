@@ -1,8 +1,35 @@
+/* Copyright 2021 The OpenXLA Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
+#include "xla/hlo/transforms/simplifiers/dynamic_dimension_simplifier.h"
+
+#include <cstdint>
+#include <vector>
+
+#include "absl/container/flat_hash_set.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/status_macros.h"
+
 namespace xla {
 namespace {
 
 // Concat(Concat(A, B), C) => Concat(A, B, C)
-StatusOr<bool> ConcatForwarding(HloInstruction* concat) {
+absl::StatusOr<bool> ConcatForwarding(HloInstruction* concat) {
   if (concat->opcode() != HloOpcode::kConcatenate) {
     return false;
   }
@@ -30,7 +57,7 @@ StatusOr<bool> ConcatForwarding(HloInstruction* concat) {
 }
 
 // Slice(Concat(A1, A2, ..., An, ...), [n:n+1]) => An
-StatusOr<bool> SliceConcatForwarding(HloInstruction* slice) {
+absl::StatusOr<bool> SliceConcatForwarding(HloInstruction* slice) {
   if (slice->opcode() != HloOpcode::kSlice) {
     return false;
   }
@@ -39,7 +66,7 @@ StatusOr<bool> SliceConcatForwarding(HloInstruction* slice) {
     return false;
   }
 
-  if (slice->shape().rank() != 1) {
+  if (slice->shape().dimensions().size() != 1) {
     // Slice concat forwarding only work for size 1 tensor.
     return false;
   }
@@ -69,7 +96,7 @@ StatusOr<bool> SliceConcatForwarding(HloInstruction* slice) {
 }
 
 // Reshape(Broadcast(A, []->[1]), [1]->[]) ==> A
-StatusOr<bool> ReshapeBroadcastForwarding(HloInstruction* reshape) {
+absl::StatusOr<bool> ReshapeBroadcastForwarding(HloInstruction* reshape) {
   if (reshape->opcode() != HloOpcode::kReshape) {
     return false;
   }
@@ -78,15 +105,15 @@ StatusOr<bool> ReshapeBroadcastForwarding(HloInstruction* reshape) {
     return false;
   }
 
-  if (reshape->shape().rank() != 0) {
+  if (reshape->shape().dimensions().size() != 0) {
     return false;
   }
 
-  if (broadcast->shape().rank() != 1) {
+  if (broadcast->shape().dimensions().size() != 1) {
     return false;
   }
 
-  if (broadcast->mutable_operand(0)->shape().rank() != 0) {
+  if (broadcast->mutable_operand(0)->shape().dimensions().size() != 0) {
     return false;
   }
 
@@ -97,7 +124,7 @@ StatusOr<bool> ReshapeBroadcastForwarding(HloInstruction* reshape) {
 }
 
 // Reshape(Reshape(A, []->[1]), [1]->[]) ==> A
-StatusOr<bool> ReshapeReshapeForwarding(HloInstruction* reshape) {
+absl::StatusOr<bool> ReshapeReshapeForwarding(HloInstruction* reshape) {
   if (reshape->opcode() != HloOpcode::kReshape) {
     return false;
   }
@@ -116,7 +143,7 @@ StatusOr<bool> ReshapeReshapeForwarding(HloInstruction* reshape) {
 }
 
 // Convert(A, T->T) ==> A
-StatusOr<bool> IdentityConvertRemoving(HloInstruction* convert) {
+absl::StatusOr<bool> IdentityConvertRemoving(HloInstruction* convert) {
   if (convert->opcode() != HloOpcode::kConvert) {
     return false;
   }
@@ -129,7 +156,7 @@ StatusOr<bool> IdentityConvertRemoving(HloInstruction* convert) {
 }
 
 // Reshape(A, S->S) ==> A
-StatusOr<bool> IdentityReshapeRemoving(HloInstruction* reshape) {
+absl::StatusOr<bool> IdentityReshapeRemoving(HloInstruction* reshape) {
   if (reshape->opcode() != HloOpcode::kReshape) {
     return false;
   }
@@ -143,11 +170,11 @@ StatusOr<bool> IdentityReshapeRemoving(HloInstruction* reshape) {
 
 }  // namespace
 
-StatusOr<bool> DynamicDimensionSimplifier::Run(
+absl::StatusOr<bool> DynamicDimensionSimplifier::RunImpl(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
-  XLA_VLOG_LINES(
-      2, "DynamicDimensionSimplifier::Run(), before:\n" + module->ToString());
+  XLA_VLOG_LINES(2, "DynamicDimensionSimplifier::RunImpl(), before:\n" +
+                        module->ToString());
   bool changed = false;
 
   for (auto* comp : module->MakeNonfusionComputations(execution_threads)) {
@@ -188,8 +215,8 @@ StatusOr<bool> DynamicDimensionSimplifier::Run(
       changed |= local_changed;
     }
   }
-  XLA_VLOG_LINES(
-      2, "DynamicDimensionSimplifier::Run(), after:\n" + module->ToString());
+  XLA_VLOG_LINES(2, "DynamicDimensionSimplifier::RunImpl(), after:\n" +
+                        module->ToString());
   return changed;
 }
 }  // namespace xla

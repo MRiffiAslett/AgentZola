@@ -1,0 +1,648 @@
+{
+    "TreeReductionRewriter": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return ReplaceWithNewInstruction(hlo, std::move(new_output));",
+                "target_type": "Status",
+                "func": "HandleReduce",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/tree_reduction_rewriter.cc"
+                ]
+            }
+        ]
+    },
+    "AllGatherBroadcastReorder": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type":"StatusOr<bool>",
+                "func": "AllGatherBroadcastReorder::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_gather_broadcast_reorder.cc"
+                ]
+            }
+        ]
+    },
+    "AllReduceSimplifier": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type":"StatusOr<bool>",
+                "func": "AllReduceSimplifier::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_reduce_simplifier.cc"
+                ]
+            }
+        ]
+    },
+    "SliceSinker": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "SliceSinker::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/slice_sinker.cc"
+                ]
+            }
+        ]
+    },
+    "HloCse": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "HloCSE::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/hlo_cse.cc"
+                ]
+            }
+        ]
+    },
+    "TopkRewriter": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "TopkRewriter::TransformToCustomCall",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/topk_rewriter.cc"
+                ]
+            }
+        ]
+    },
+    "ShardingRemover": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ShardingRemover::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/sharding_remover.cc"
+                ]
+            }
+        ]
+    },
+    "ReduceScatterDecomposer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ReduceScatterDecomposer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/reduce_scatter_decomposer.cc"
+                ]
+            }
+        ]
+    },
+    "WhileLoopTripCountAnnotator": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "WhileLoopTripCountAnnotator::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/while_loop_trip_count_annotator.cc"
+                ]
+            }
+        ]
+    },
+    "MapInliner": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "changed_ = true;",
+                "target_type": "StatusOr<bool>",
+                "func": "MapInlinerVisitor::HandleMap",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/map_inliner.cc"
+                ]
+            }
+        ]
+    },
+    "BroadcastCanonicalizer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "BroadcastCanonicalizer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/broadcast_canonicalizer.cc"
+                ]
+            }
+        ]
+    },
+    "HloDce": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "HloDCE::RecursivelyRemoveDeadComputations",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/hlo_dce.cc"
+                ]
+            }
+        ]
+    },
+    "ReduceScatterCombiner": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ReduceScatterCombiner::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/reduce_scatter_combiner.cc"
+                ]
+            }
+        ]
+    },
+    "HloConstantFolding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "HloConstantFolding::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/hlo_constant_folding.cc"
+                ]
+            }
+        ]
+    },
+    "SimplifyFpConversions": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "RunOnComputation",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/simplify_fp_conversions.cc"
+                ]
+            }
+        ]
+    },
+    "ConvertMover": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "MoveConvertPrecisionOps",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/convert_mover.cc"
+                ]
+            }
+        ]
+    },
+    "TupleSimplifier": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "TupleSimplifier::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/tuple_simplifier.cc"
+                ]
+            }
+        ]
+    },
+    "AllGatherCombiner": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "AllGatherCombiner::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_gather_combiner.cc"
+                ]
+            }
+        ]
+    },
+    "ChangeOpDataType": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ChangeOpDataType::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/change_op_data_type.cc"
+                ]
+            }
+        ]
+    },
+    "LoopScheduleLinearizer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "LoopScheduleLinearizer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/loop_schedule_linearizer.cc"
+                ]
+            }
+        ]
+    },
+    "DotDecomposer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "DotDecomposer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/dot_decomposer.cc"
+                ]
+            }
+        ]
+    },
+    "ZeroSizedHloElimination": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ZeroSizedHloElimination::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/zero_sized_hlo_elimination.cc"
+                ]
+            }
+        ]
+    },
+    "TransposeFolding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "TransposeFolding::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/transpose_folding.cc"
+                ]
+            }
+        ]
+    },
+    "WhileLoopConstantSinking": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "WhileLoopConstantSinking::TrySinkingConstantsIntoWhileLoop",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/while_loop_constant_sinking.cc"
+                ]
+            }
+        ]
+    },
+    "AllGatherDecomposer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "AllGatherDecomposer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_gather_decomposer.cc"
+                ]
+            }
+        ]
+    },
+    "WhileLoopExpensiveInvariantCodeMotion": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "WhileLoopExpensiveInvariantCodeMotion::TryHoistingInvariantInstructionsFromWhileBody",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/while_loop_expensive_invariant_code_motion.cc"
+                ]
+            }
+        ]
+    },
+    "Defuser": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "Defuser::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/defuser.cc"
+                ]
+            }
+        ]
+    },
+    "AllReduceFolder": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "AllReduceFolder::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_reduce_folder.cc"
+                ]
+            }
+        ]
+    },
+    "HloElementTypeConverter": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "HloElementTypeConverter::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/hlo_element_type_converter.cc"
+                ]
+            }
+        ]
+    },
+    "DotMerger": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return !dead_instrs.empty();",
+                "target_type": "StatusOr<bool>",
+                "func": "MergeDots",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/dot_merger.cc"
+                ]
+            }
+        ]
+    },
+    "Bfloat16ConversionFolding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "changed_ = true;",
+                "target_type": "Status",
+                "func": "BFloat16ConversionFoldingVisitor::FoldOperandConversion",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/bfloat16_conversion_folding.cc"
+                ]
+            },
+            {
+                "type": "trigger",
+                "target_line": "changed_ = true;",
+                "target_type": "Status",
+                "func": "BFloat16ConversionFoldingVisitor::FoldOutputConversions",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/bfloat16_conversion_folding.cc"
+                ]
+            }
+        ]
+    },
+    "CollectivesScheduleLinearizer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "CollectivesScheduleLinearizer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/collectives_schedule_linearizer.cc"
+                ]
+            }
+        ]
+    },
+    "StochasticConvertDecomposer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return OkStatus();",
+                "target_type": "Status",
+                "func": "DecomposeStochasticConvert",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/stochastic_convert_decomposer.cc"
+                ]
+            }
+        ]
+    },
+    "BatchDotSimplification": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "BatchDotSimplification::ElideDegenerateBatchDimensionFromBatchDot",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/batch_dot_simplification.cc"
+                ]
+            }
+        ]
+    },
+    "WhileLoopInvariantCodeMotion": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "WhileLoopInvariantCodeMotion::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/while_loop_invariant_code_motion.cc"
+                ]
+            }
+        ]
+    },
+    "ReduceScatterReassociate": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ReduceScatterReassociate::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/reduce_scatter_reassociate.cc"
+                ]
+            }
+        ]
+    },
+    "ConditionalCanonicalizer": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ConditionalCanonicalizer::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/conditional_canonicalizer.cc"
+                ]
+            }
+        ]
+    },
+    "DynamicIndexSplitter": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "DynamicIndexSplitter::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/dynamic_index_splitter.cc"
+                ]
+            }
+        ]
+    },
+    "SortSimplifier": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "",
+                "target_type": "",
+                "func": "",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/sort_simplifier.cc"
+                ]
+            }
+        ]
+    },
+    "AsyncCollectiveCreator": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "RemoveUnusedOperandFromSort",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/async_collective_creator.cc"
+                ]
+            }
+        ]
+    },
+    "ConvertAsyncCollectivesToSync": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "ConvertAsyncCollectivesToSync::RunOnComputation",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/convert_async_collectives_to_sync.cc"
+                ]
+            }
+        ]
+    },
+    "AllReduceReassociate": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "AllReduceReassociate::Run",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_reduce_reassociate.cc"
+                ]
+            }
+        ]
+    },
+    "AllReduceCombiner": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "AllReduceCombiner",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/all_reduce_combiner.cc"
+                ]
+            }
+        ]
+    },
+    "SliceConcatForwarding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "SliceConcatForwarding",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/SliceConcatForwarding.cc"
+                ]
+            }
+        ]
+    },
+    "IdentityReshapeRemoving": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "IdentityReshapeRemoving",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/IdentityReshapeRemoving.cc"
+                ]
+            }
+        ]
+    },
+    "ReshapeReshapeForwarding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "ReshapeReshapeForwarding",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/ReshapeReshapeForwarding.cc"
+                ]
+            }
+        ]
+    },
+    "ReshapeBroadcastForwarding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "ReshapeBroadcastForwarding",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/ReshapeBroadcastForwarding.cc"
+                ]
+            }
+        ]
+    },
+    "IdentityConvertRemoving": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return true;",
+                "target_type": "StatusOr<bool>",
+                "func": "IdentityConverRemoving",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/IdentityConvertRemoving.cc"
+                ]
+            }
+        ]
+    },
+    "ConcatForwarding": {
+        "hints": [
+            {
+                "type": "trigger",
+                "target_line": "return changed;",
+                "target_type": "StatusOr<bool>",
+                "func": "ConcatForwarding",
+                "codes": [
+                    "../xilo_xla/artifacts/source-code-data/ConcatForwarding.cc"
+                ]
+            }
+        ]
+    }
+}

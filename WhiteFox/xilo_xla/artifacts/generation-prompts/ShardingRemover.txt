@@ -1,0 +1,82 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
+
+The `ReshapeReshapeForwarding` optimization is triggered when a TensorFlow model has two consecutive `tf.reshape` operations where the second reshape operation reverses the shape transformation performed by the first reshape operation, effectively restoring the original shape of the tensor.
+
+#### Pattern Example:
+```python
+import tensorflow as tf
+
+# Original input tensor
+input_tensor = tf.random.uniform(shape=[10, 20])
+
+# First reshape operation changing the shape
+t1 = tf.reshape(input_tensor, [200])
+
+# Second reshape operation restoring the original shape
+t2 = tf.reshape(t1, [10, 20])
+```
+In this example:
+1. `input_tensor` is reshaped to `[200]`.
+2. The output of the first reshape is then reshaped back to `[10, 20]`, the original shape of `input_tensor`.
+
+This pattern results in no effective change in the tensor shape after the sequence of operations. The optimization pass detects this redundant transformation sequence and simplifies it by eliminating both reshape operations, directly using the original `input_tensor`.
+
+
+### Characteristics of TensorFlow Model for `ShardingRemover` Optimization
+
+The `ShardingRemover` optimization is triggered when a TensorFlow model contains custom call instructions related to sharding operations. These operations are used in distributed or parallel processing scenarios and are identified by specific target names. The optimization aims to remove or simplify these sharding operations when they are no longer necessary, such as when consolidating computations into a single device context or post-distributed training optimizations.
+
+#### Relevant Custom Call Targets:
+- "Sharding"
+- "SPMDShardToFullShape"
+- "SPMDFullToShardShape"
+- and other related sharding operations as defined in the code.
+
+#### Example Scenario:
+Suppose a model was previously setup for SPMD (Single Program, Multiple Data) but is being consolidated for inference on a single device. The model might have operations like:
+```python
+# Hypothetical TensorFlow code using XLA custom calls (not directly representable in pure TensorFlow)
+# Here, `xla_custom_call_to_shard` represents a placeholder function for the custom call operation.
+t1 = xla_custom_call_to_shard(input_tensor, target="SPMDShardToFullShape")
+t2 = tf.matmul(t1, some_other_tensor)  # Example operation in sharded form
+t3 = xla_custom_call_to_shard(t2, target="SPMDFullToShardShape")
+```
+
+In this example:
+- `t1` and `t3` involve sharding transformations that may no longer be necessary if the model is being run in a non-distributed environment. The optimization pass identifies such patterns and removes or replaces the sharding operations, simplifying the model for single-device execution.
