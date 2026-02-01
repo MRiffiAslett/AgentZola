@@ -54,7 +54,7 @@ def main():
     try:
         generator.generate_whitefox(only_optimizations=only_optimizations)
     except KeyboardInterrupt:
-        print("\nInterrupted by user. Saving state...")
+        print("\nInterrupted by user. Saving state and generating summary...")
         logging_dir = generator._get_logging_dir() if hasattr(generator, '_get_logging_dir') else None
         if logging_dir:
             source_dir = logging_dir / "source"
@@ -65,10 +65,31 @@ def main():
         if hasattr(generator, 'whitefox_state'):
             generator.whitefox_state.save(state_file)
             print(f"State saved to {state_file}")
+            
+            # Generate run summary with partial results
+            try:
+                from generation.logging import WhiteFoxLogger
+                whitefox_logger = WhiteFoxLogger(logging_dir, generator.logger)
+                whitefox_logger.generate_run_summary(generator.whitefox_state)
+                print(f"Run summary saved to {logging_dir / 'run_summary_detailed.log'}")
+            except Exception as summary_error:
+                print(f"Warning: Could not generate run summary: {summary_error}", file=sys.stderr)
         sys.exit(0)
     except Exception as e:
         print(f"Error during WhiteFox fuzzing: {e}", file=sys.stderr)
         traceback.print_exc()
+        
+        # Try to generate run summary with partial results before exiting
+        try:
+            logging_dir = generator._get_logging_dir() if hasattr(generator, '_get_logging_dir') else None
+            if logging_dir and hasattr(generator, 'whitefox_state'):
+                from generation.logging import WhiteFoxLogger
+                whitefox_logger = WhiteFoxLogger(logging_dir, generator.logger)
+                whitefox_logger.generate_run_summary(generator.whitefox_state)
+                print(f"Run summary saved to {logging_dir / 'run_summary_detailed.log'}", file=sys.stderr)
+        except Exception as summary_error:
+            print(f"Warning: Could not generate run summary: {summary_error}", file=sys.stderr)
+        
         sys.exit(1)
 
 
