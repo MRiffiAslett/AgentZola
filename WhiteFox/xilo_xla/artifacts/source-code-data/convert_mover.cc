@@ -1,39 +1,3 @@
-/* Copyright 2022 The OpenXLA Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-==============================================================================*/
-
-#include "xla/hlo/transforms/simplifiers/convert_mover.h"
-
-#include <deque>
-#include <vector>
-
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_set.h"
-#include "absl/container/inlined_vector.h"
-#include "absl/log/log.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/literal.h"
-#include "xla/primitive_util.h"
-#include "xla/service/hlo_creation_utils.h"
-#include "xla/shape.h"
-#include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
-
 namespace xla {
 namespace {
 
@@ -45,11 +9,11 @@ static bool IsLosslesslyConvertibleTo(const Literal& literal,
 
   // The only reason Convert() should fail is if we don't support converting
   // from x to y, which indeed means it's not losslessly-convertible.
-  absl::StatusOr<Literal> converted1 = literal.Convert(dst_ty);
+  StatusOr<Literal> converted1 = literal.Convert(dst_ty);
   if (!converted1.ok()) {
     return false;
   }
-  absl::StatusOr<Literal> converted2 = converted1->Convert(orig_ty);
+  StatusOr<Literal> converted2 = converted1->Convert(orig_ty);
   if (!converted2.ok()) {
     return false;
   }
@@ -79,7 +43,7 @@ bool OpCommutesWithConvert(HloOpcode opcode) {
   }
 }
 
-absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
+StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
   bool changed = false;
 
   // Move increase_precision "down" the graph:
@@ -126,12 +90,6 @@ absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
           return operand->opcode() == HloOpcode::kConstant &&
                  !IsLosslesslyConvertibleTo(operand->literal(), src_ty);
         })) {
-      continue;
-    }
-
-    // Currently packed types are not supported in most ops so moving the
-    // convert is not safe.
-    if (primitive_util::IsSubByteNonPredType(src_ty)) {
       continue;
     }
 
@@ -184,9 +142,6 @@ absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
     if (primitive_util::BitWidth(src_ty) <= primitive_util::BitWidth(dst_ty)) {
       continue;
     }
-    if (primitive_util::IsSubByteNonPredType(dst_ty)) {
-      continue;
-    }
 
     VLOG(2) << "Moving decrease-precision convert up the graph: "
             << instr->ToString();
@@ -211,7 +166,7 @@ absl::StatusOr<bool> MoveConvertPrecisionOps(HloComputation* comp) {
 
 }  // anonymous namespace
 
-absl::StatusOr<bool> ConvertMover::RunImpl(
+StatusOr<bool> ConvertMover::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

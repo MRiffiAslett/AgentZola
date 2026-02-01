@@ -43,7 +43,6 @@ fi
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 cd "$PROJECT_ROOT"
-mkdir -p "$PROJECT_ROOT/output" "$PROJECT_ROOT/slurm/output_tf" "$PROJECT_ROOT/hf_cache"
 
 # Hugging Face token for gated models (stored in ~/.hf_token, not in git)
 if [ -f "$HOME/.hf_token" ]; then

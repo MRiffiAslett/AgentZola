@@ -1,43 +1,8 @@
-/* Copyright 2021 The OpenXLA Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-==============================================================================*/
-
-#include "xla/hlo/transforms/collectives/all_gather_broadcast_reorder.h"
-
-#include <cstdint>
-#include <vector>
-
-#include "absl/container/flat_hash_set.h"
-#include "absl/log/log.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "absl/types/span.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/utils/hlo_query.h"
-#include "xla/shape.h"
-#include "xla/shape_util.h"
-#include "xla/util.h"
-#include "tsl/platform/errors.h"
-
 namespace xla {
 
-absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+StatusOr<bool> AllGatherBroadcastReorder::Run(
+    HloModule *module,
+    const absl::flat_hash_set<absl::string_view> &execution_threads) {
   if (hlo_query::ContainsLayoutConstrainedCollective(*module,
                                                      HloOpcode::kAllGather)) {
     VLOG(1) << "Skip AllGatherBroadcastReorder because the module contains "
@@ -76,7 +41,7 @@ absl::StatusOr<bool> AllGatherBroadcastReorder::RunImpl(
 
       // Find the product of the size of uniform dims.
       int64_t uniform_dim_size = 1;
-      for (int64_t i = 0; i < ag->shape().dimensions().size(); ++i) {
+      for (int64_t i = 0; i < ag->shape().rank(); ++i) {
         if (non_uniform_dims.count(i) == 0) {
           uniform_dim_size *= ag->shape().dimensions(i);
         }

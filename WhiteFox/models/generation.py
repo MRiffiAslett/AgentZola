@@ -63,7 +63,7 @@ class GenerationConfig(BaseModel):
     optimizations_dir: Optional[str] = Field(default=None, description="Path to requirement prompt directory")
     optimizations: Optional[List[str]] = Field(default=None, description="Hardcoded list of optimization names to target")
     tests_per_optimization: int = Field(default=1000, description="Total tests to generate per optimization")
-    tests_per_iteration: int = Field(default=5, description="Tests to generate per iteration")
+    tests_per_iteration: int = Field(default=10, description="Tests to generate per iteration")
     max_iterations: int = Field(default=100, description="Maximum iterations per optimization")
     examples_per_prompt: int = Field(default=3, description="Number of examples to include in feedback prompt (N in Thompson Sampling)")
     parallel_test_workers: Optional[int] = Field(default=None, description="Number of parallel workers for test execution (None = auto-detect CPU count)")

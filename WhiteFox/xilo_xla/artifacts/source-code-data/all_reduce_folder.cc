@@ -1,43 +1,3 @@
-/* Copyright 2021 The OpenXLA Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-==============================================================================*/
-
-#include "xla/hlo/transforms/simplifiers/all_reduce_folder.h"
-
-#include <algorithm>
-#include <cstdint>
-#include <optional>
-#include <vector>
-
-#include "absl/algorithm/container.h"
-#include "absl/container/flat_hash_map.h"
-#include "absl/container/flat_hash_set.h"
-#include "absl/log/log.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "absl/types/span.h"
-#include "xla/hlo/ir/hlo_casting_utils.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_instructions.h"
-#include "xla/hlo/ir/hlo_module.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/hlo/ir/replica_group.h"
-#include "xla/hlo/utils/hlo_query.h"
-#include "xla/service/all_reduce_key.h"
-#include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-
 namespace xla {
 namespace {
 // Folds the given two sets of non-empty replica groups into a single set if
@@ -116,7 +76,7 @@ std::optional<std::vector<ReplicaGroup>> FoldReplicaGroups(
   }
 
   // Now verify, for each unique set of contributors, whether for all of the
-  // associated replicas have the same contributors. These unique sets now
+  // associated replica's have the same contributors. These unique sets now
   // become the folded replica groups.
   std::vector<ReplicaGroup> new_replica_groups;
   new_replica_groups.reserve(contributor_set_id.size());
@@ -137,7 +97,7 @@ std::optional<std::vector<ReplicaGroup>> FoldReplicaGroups(
   }
 
   // Sort the replica groups by the first id for stable behavior. Otherwise,
-  // groups are formed according to the order in the contributor_set_id map,
+  // groups are formed according to the order in the contributer_set_id map,
   // which is not stable.
   absl::c_sort(new_replica_groups,
                [](const ReplicaGroup &a, const ReplicaGroup &b) {
@@ -148,9 +108,9 @@ std::optional<std::vector<ReplicaGroup>> FoldReplicaGroups(
 
 }  // namespace
 
-absl::StatusOr<bool> AllReduceFolder::RunImpl(
-    HloModule* module,
-    const absl::flat_hash_set<absl::string_view>& execution_threads) {
+StatusOr<bool> AllReduceFolder::Run(
+    HloModule *module,
+    const absl::flat_hash_set<absl::string_view> &execution_threads) {
   if (hlo_query::ContainsLayoutConstrainedAllReduce(*module)) {
     VLOG(1) << "Skip AllReduceFolder because the module contains all-reduce "
                "with constrained layouts";
@@ -212,8 +172,7 @@ absl::StatusOr<bool> AllReduceFolder::RunImpl(
       HloInstruction *new_ar =
           computation->AddInstruction(HloInstruction::CreateAllReduce(
               ar0->shape(), ar0->operands(), ar0->to_apply(),
-              CollectiveDeviceList(*new_replica_groups),
-              /*constrain_layout=*/false, channel_id,
+              *new_replica_groups, /*constrain_layout=*/false, channel_id,
               ar0->use_global_device_ids()));
       TF_RETURN_IF_ERROR(ar1->ReplaceAllUsesWith(new_ar));
       TF_RETURN_IF_ERROR(computation->RemoveInstruction(ar1));

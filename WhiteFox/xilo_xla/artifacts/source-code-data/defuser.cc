@@ -1,41 +1,58 @@
-/* Copyright 2017 The OpenXLA Authors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-==============================================================================*/
-
-#include "xla/hlo/transforms/defuser.h"
-
-#include <memory>
-
-#include "absl/container/flat_hash_set.h"
-#include "absl/log/log.h"
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/string_view.h"
-#include "xla/hlo/ir/hlo_computation.h"
-#include "xla/hlo/ir/hlo_instruction.h"
-#include "xla/hlo/ir/hlo_opcode.h"
-#include "xla/service/call_graph.h"
-#include "xla/status_macros.h"
-#include "xla/types.h"
-#include "xla/util.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/status.h"
-
 namespace xla {
 
-absl::StatusOr<bool> Defuser::RunImpl(
+namespace {
+
+// Copy all the instructions in the given fusion instruction into the fusion
+// instruction's parent computation and replace the use of the fusion
+// instruction with the copy of the fusion expression root.
+Status Defuse(HloInstruction* fusion_instruction) {
+  VLOG(2) << "Defusing instruction: " << fusion_instruction->ToString();
+
+  HloComputation* fused_computation =
+      fusion_instruction->fused_instructions_computation();
+
+  // A map from fused instruction to its defused clone.
+  absl::flat_hash_map<const HloInstruction*, HloInstruction*>
+      defused_instructions;
+  // Initialize map to contain the fusion instruction parameters mapping
+  // to the operands of the fusion instruction.
+  for (int64_t i = 0; i < fusion_instruction->operand_count(); ++i) {
+    defused_instructions[fused_computation->parameter_instruction(i)] =
+        fusion_instruction->mutable_operand(i);
+  }
+
+  // Create a clone of each instruction of the fused computation in the same
+  // computation as the fusion instruction itself.
+  // TODO(b/68227302): Moving instruction to new computation rather than
+  // cloning and deleting.
+  for (HloInstruction* fused_instruction :
+       fused_computation->MakeInstructionPostOrder()) {
+    if (fused_instruction->opcode() == HloOpcode::kParameter) {
+      continue;
+    }
+    std::vector<HloInstruction*> new_operands;
+    for (HloInstruction* operand : fused_instruction->operands()) {
+      new_operands.push_back(defused_instructions.at(operand));
+    }
+    HloInstruction* defused_instruction =
+        fusion_instruction->parent()->AddInstruction(
+            fused_instruction->CloneWithNewOperands(fused_instruction->shape(),
+                                                    new_operands));
+    defused_instructions[fused_instruction] = defused_instruction;
+  }
+
+  TF_RETURN_IF_ERROR(fusion_instruction->ReplaceAllUsesWith(
+      defused_instructions.at(fusion_instruction->fused_expression_root())));
+
+  HloModule* module = fusion_instruction->GetModule();
+  TF_RETURN_IF_ERROR(
+      fusion_instruction->parent()->RemoveInstruction(fusion_instruction));
+  return module->RemoveEmbeddedComputation(fused_computation);
+}
+
+}  // namespace
+
+StatusOr<bool> Defuser::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   VLOG(1) << "Defusing module " << module->name();
@@ -44,15 +61,15 @@ absl::StatusOr<bool> Defuser::RunImpl(
   bool changed = false;
   std::unique_ptr<CallGraph> call_graph = CallGraph::Build(module);
   TF_RETURN_IF_ERROR(call_graph->VisitNodes(
-      [&](const CallGraphNode& call_graph_node) -> absl::Status {
+      [&](const CallGraphNode& call_graph_node) -> Status {
         if (call_graph_node.computation()->IsFusionComputation()) {
           TF_RET_CHECK(call_graph_node.caller_callsites().size() == 1);
           HloInstruction* fusion_instruction =
               call_graph_node.caller_callsites()[0].instruction();
-          TF_RETURN_IF_ERROR(fusion_instruction->Defuse());
+          TF_RETURN_IF_ERROR(Defuse(fusion_instruction));
           changed = true;
         }
-        return absl::OkStatus();
+        return OkStatus();
       },
       /*visit_unreachable_nodes=*/true));
 
