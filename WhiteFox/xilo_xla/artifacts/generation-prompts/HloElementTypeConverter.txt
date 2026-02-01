@@ -1,0 +1,75 @@
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+
+# Description
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+
+
+# Model
+class Model(tf.keras.Model):
+
+  def __init__(self):
+    super(Model, self).__init__()
+
+  def call(self, x1):
+    x2 = tf.reshape(x1, [2,2])
+    return tf.reshape(x2, [4])
+
+# Initializing the model
+m = Model()
+
+# Inputs to the model
+input_shape = [4]
+x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+
+# Call model
+y = m(x1)
+
+
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+
+### ReshapeReshapeForwarding Optimization Trigger Characteristics
+
+The `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA is triggered when a TensorFlow model contains a sequence of two `tf.reshape` operations where the second reshape effectively reverts the tensor to its original shape before the first reshape. This means that the output shape of the second reshape matches exactly the input shape of the tensor fed into the first reshape.
+
+#### Example Pattern:
+```python
+import tensorflow as tf
+
+# Assume input_tensor has shape (e.g., [8, 3, 2])
+input_tensor = tf.random.normal([8, 3, 2])
+
+# First reshape operation changes the shape
+t1 = tf.reshape(input_tensor, [24, 2])
+
+# Second reshape operation reverts to the original shape of input_tensor
+t2 = tf.reshape(t1, [8, 3, 2])
+```
+In this scenario, the optimization would recognize that `t2` is simply reshaping `t1` back to the shape of `input_tensor`, allowing the optimizer to simplify the model by removing the redundant reshape operations and directly using `input_tensor` instead of `t2`.
+
+### HloElementTypeConverter Optimization Trigger Characteristics
+
+The `HloElementTypeConverter` optimization pass is triggered when a TensorFlow XLA model contains operations that use a specific primitive data type (`eliminate_type_`) which the optimization aims to replace with another type (`replace_with_type_`). This change is targeted at optimizing performance or compatibility by altering the data types used in computations.
+
+This optimization is particularly relevant in scenarios where operations are performed on tensors with a data type that is less efficient or incompatible with certain hardware accelerators. By converting these tensors to a more suitable data type, the model can achieve better performance or compatibility.
+
+#### Example Pattern:
+```python
+import tensorflow as tf
+
+# Assuming a model where 'float64' is less optimized on certain hardware
+input_tensor = tf.constant([1.0, 2.0, 3.0], dtype=tf.float64)
+
+# Operation that might benefit from being executed in 'float32'
+result = tf.math.sin(input_tensor)
+
+# The optimizer would convert input_tensor to 'float32' before the operation
+# and potentially convert 'result' back to 'float64' if necessary for subsequent operations
+```
+In this example, if `float64` is identified as `eliminate_type_` and `float32` as `replace_with_type_`, the `HloElementTypeConverter` would automatically adjust the data types to optimize the execution of the `sin` operation on the hardware that performs better with `float32`.
