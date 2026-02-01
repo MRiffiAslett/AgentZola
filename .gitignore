@@ -8,3 +8,6 @@ WhiteFox/logging/
 WhiteFox/hf_cache/
 WhiteFox/xilo_xla/artifacts/Prompts/
 
+WhiteFox/requirement/openai.key
+WhiteFox/requirement/venv/
+

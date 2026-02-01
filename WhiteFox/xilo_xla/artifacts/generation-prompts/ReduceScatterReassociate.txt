@@ -1,92 +1,42 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for ReduceScatterReassociate that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `ReduceScatterReassociate` optimization pass in TensorFlow XLA is triggered by specific patterns in a TensorFlow model's computational graph, particularly involving the `ReduceScatter` operation. Here are the characteristics of TensorFlow models that would trigger this optimization:
 
+1. **Presence of Sequential ReduceScatter Operations:**
+   The model must contain at least two sequential `ReduceScatter` operations that are directly connected. These operations are the operands of another operation, which typically would be another reduction operation.
 
-# Model
-class Model(tf.keras.Model):
+2. **Matching Reduction Operations:**
+   The `ReduceScatter` operations must be performing compatible reduction operations. This means they should not only have the same reduction kind (e.g., sum, product) but also operate over the same dimensions.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Single-Use ReduceScatter Operations:**
+   Each of the `ReduceScatter` operations involved should only be used once within the computational graph. This is typically a requirement to ensure that modifying or replacing these operations does not affect other parts of the graph.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Consistent Scatter Dimensions:**
+   The scatter dimensions of the `ReduceScatter` operations must match. This ensures that the data is scattered in the same way across operations, which is crucial for the correctness of the reassociation.
 
-# Initializing the model
-m = Model()
+5. **Absence of Layout Constraints:**
+   The model should not contain `ReduceScatter` operations with layout constraints. Such constraints could complicate the merging of operations, potentially leading to incorrect behavior or inefficiencies.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+6. **Matching or Absent Scheduling Annotations:**
+   If scheduling annotations (which control execution order or grouping) are present, they must either match or only be present on one of the operations to allow merging without execution order conflicts.
 
-# Call model
-y = m(x1)
+Here’s a simplified example to illustrate a scenario where this optimization might apply:
 
-
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
-
-### Characteristics of TensorFlow Models Triggering `ReshapeReshapeForwarding`
-
-The TensorFlow XLA optimization `ReshapeReshapeForwarding` is triggered under the following model characteristics:
-
-1. **Sequential Reshape Operations**: The model contains two consecutive reshape operations where:
-   - The first reshape changes an input tensor `input_tensor` into another shape.
-   - The second reshape attempts to revert the tensor back to its original shape, i.e., the shape of `input_tensor`.
-
-2. **Matching Input and Output Shapes**: The input shape of the first reshape and the output shape of the second reshape must match exactly.
-
-**Code Pattern Example**:
 ```python
 import tensorflow as tf
 
-# Original input tensor
-input_tensor = tf.random.normal([8, 16])
+# Assuming the existence of a custom ReduceScatter operation in TensorFlow
+x = tf.random.uniform([256, 256])
+y = tf.random.uniform([256, 256])
 
-# First reshape operation
-t1 = tf.reshape(input_tensor, [2, 64])
+# First ReduceScatter operation
+rs1 = custom_reduce_scatter(x, reduction='sum', scatter_dim=0)
 
-# Second reshape operation trying to revert back to the original shape
-t2 = tf.reshape(t1, [8, 16])
+# Second ReduceScatter operation
+rs2 = custom_reduce_scatter(y, reduction='sum', scatter_dim=0)
+
+# An operation combining outputs of the two ReduceScatters
+result = tf.add(rs1, rs2)
 ```
-In this example, `t2` is essentially the same tensor as `input_tensor` after the unnecessary reshapes, and this pattern would trigger the `ReshapeReshapeForwarding` optimization.
 
-### Characteristics of TensorFlow Models Triggering `ReduceScatterReassociate`
-
-For the `ReduceScatterReassociate` optimization in TensorFlow XLA to be triggered, a TensorFlow model must present the following characteristics:
-
-1. **Sequential ReduceScatter Operations**: The model includes two consecutive `ReduceScatter` operations.
-
-2. **Compatible Reduction Operations**: These `ReduceScatter` operations must:
-   - Utilize the same reduction operation (e.g., SUM, MAX).
-   - Scatter along the same dimension.
-   - Have compatible `AllReduceKeys`, which typically involves matching attributes like group assignments and reduction types.
-
-3. **Single-User Constraint**: Each of the `ReduceScatter` operations must be used exactly once in the model.
-
-4. **Matching Scheduling Annotations**: If scheduling annotations are present, they must match for both operations, indicating that they can be executed in a similar context or order.
-
-**Code Pattern Example**:
-```python
-# Hypothetical TensorFlow-like pseudocode as TensorFlow itself does not expose ReduceScatter directly in Python API.
-
-# Placeholder for the first ReduceScatter operation
-rs1 = reduce_scatter(input1, reduction='sum', scatter_dim=0)
-
-# Placeholder for the second ReduceScatter operation
-rs2 = reduce_scatter(input2, reduction='sum', scatter_dim=0)
-
-# A composite operation that uses rs1 and rs2
-result = some_composite_operation(rs1, rs2)
-```
-In this example, if `rs1` and `rs2` meet the compatibility requirements outlined, and if they are the only users of their respective outputs, this pattern would trigger the `ReduceScatterReassociate` optimization, potentially merging these operations into a more efficient form.
-
-These characteristics define the specific conditions under which each optimization pass would be applied, aiming to simplify the computational graph and improve execution efficiency.
+In the above example, if `custom_reduce_scatter` represents a compatible `ReduceScatter` operation in XLA, and both operations have the same reduction kind and scatter dimension, the `ReduceScatterReassociate` optimization could be triggered to merge these into a single, more efficient operation. This would change the graph structure to potentially increase execution efficiency by reducing the number of operations and communication overhead.

@@ -62,8 +62,6 @@ def main():
         skip_existing = gpt_config.get('skip_existing', False)
         system_message = gpt_config.get('system_message', None)
         
-        prefix_text = config.get('prefix', {}).get('text', '')
-        
         api_key_path = Path(api_key_file)
         if not api_key_path.exists():
             raise FileNotFoundError(
@@ -97,8 +95,7 @@ def main():
             n_samples=n_samples,
             skip_existing=skip_existing,
             fallback_optimizations=fallback_optimizations,
-            fallback_dir=str(fallback_dir),
-            prefix_text=prefix_text
+            fallback_dir=str(fallback_dir)
         )
         
     except Exception as e:

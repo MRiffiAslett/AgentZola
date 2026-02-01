@@ -1,86 +1,55 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for WhileLoopConstantSinking that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The TensorFlow XLA optimization pass `WhileLoopConstantSinking` is triggered when specific conditions are met in a TensorFlow model involving `while` loops. Below is a concise description of the model characteristics that would activate this pass:
 
+1. **While Loop with Tuple Initialization:**
+   The optimization targets `while` loops where the initial condition (`init_value`) is a tuple. Each element of this tuple is checked to determine if it can be treated as a constant or a broadcast of a constant throughout the loop.
 
-# Model
-class Model(tf.keras.Model):
+   ```python
+   init_value = (const1, const2, ..., constN)
+   while_loop = tf.while_loop(cond, body, [init_value])
+   ```
 
-  def __init__(self):
-    super(Model, self).__init__()
+2. **Invariant Loop Values:**
+   The optimization evaluates each element of the tuple used to initialize the loop. For an element to be considered, it must either be:
+   - A constant.
+   - A broadcast of a constant (if the `sink_broadcast_of_constants_` flag is enabled).
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+   This is checked using:
+   ```python
+   if invariant_value.opcode() == tf.constant or 
+      (sink_broadcast_of_constants_ and invariant_value.opcode() == tf.broadcast and invariant_value.operand(0).opcode() == tf.constant):
+   ```
 
-# Initializing the model
-m = Model()
+3. **Scalar Constants Condition:**
+   If the `sink_only_scalar_constants_` flag is enabled, the optimization is further restricted to only consider scalar constants. This means non-scalar constants (e.g., matrices or vectors) will not trigger this optimization unless they are scalar.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+   ```python
+   if sink_only_scalar_constants_ and not is_scalar(init_value.operand(index).shape()):
+       continue
+   ```
 
-# Call model
-y = m(x1)
+4. **Usage in While Loop Body:**
+   The target constant or broadcast constant must be used inside the loop body and not just be part of the loop's condition or solely passed through without modification. Specifically, it should have more than one usage in the loop body to be considered for sinking.
 
+5. **Effect on Loop Body and Condition:**
+   When these conditions are met, the optimization clones the loop body and condition where applicable, replacing the relevant uses of the loop-invariant value with the identified constant or broadcast of a constant. This reduces computation within the loop by eliminating the need to recompute or re-fetch these invariant values in each iteration.
 
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+Example TensorFlow model pattern in Python that would trigger this optimization:
 
-### Description of TensorFlow Model Characteristics for `ReshapeReshapeForwarding` Optimization
-
-The `ReshapeReshapeForwarding` optimization in TensorFlow XLA is triggered when a model contains a sequence of two reshape operations whereby the second reshape operation reverses the effect of the first reshape operation. Specifically, the characteristics that trigger this optimization are:
-
-1. There are two consecutive reshape operations in the model.
-2. The first reshape operation changes the shape of an input tensor to any arbitrary new shape.
-3. The second reshape operation changes the tensor back to its original shape.
-
-#### Code Example:
 ```python
-import tensorflow as tf
+x = tf.constant(5)  # Loop-invariant value
+y = tf.constant(10)  # Another loop-invariant value
 
-# Input tensor of arbitrary shape
-input_tensor = tf.random.uniform(shape=[4, 4])
-
-# First reshape operation to change the shape
-t1 = tf.reshape(input_tensor, [16])
-
-# Second reshape operation to revert to the original shape
-t2 = tf.reshape(t1, [4, 4])
-```
-In the above example, `t1` and `t2` correspond to the two reshape operations. The optimization would recognize that `t2` simply undoes the reshape performed by `t1` and would optimize this by eliminating the unnecessary reshaping, directly using `input_tensor` where `t2` is used.
-
-### Description of TensorFlow Model Characteristics for `WhileLoopConstantSinking` Optimization
-
-The `WhileLoopConstantSinking` optimization is triggered when there are constants that can be moved into the body of a while loop to potentially reduce the computational overhead. The characteristics that trigger this optimization are:
-
-1. The model contains a while loop.
-2. The initial values of the while loop (provided by the tuple at the beginning of the loop) contain constants or broadcasts of constants.
-3. These constants are invariant across iterations of the loop – they do not change as the loop executes.
-4. Optionally, if the `sink_only_scalar_constants` flag is set, these constants must be scalars.
-
-#### Code Example:
-```python
-import tensorflow as tf
-
-# Scalar constant to be sunk into the loop
-constant_value = tf.constant(5)
-
-def cond(i, max_iter):
+def condition(i, max_iter):
     return i < max_iter
 
-def body(i, val):
-    # Operations inside the loop that can use `val`
-    return i + 1, val * 2
+def body(i, max_iter):
+    # Operations inside the loop that use 'x' and 'y'
+    return i + 1, max_iter
 
-# While loop where `constant_value` can be sunk
-result = tf.while_loop(cond, body, [0, constant_value], maximum_iterations=10)
+max_iterations = tf.constant(100)
+result = tf.while_loop(condition, body, [0, max_iterations])
 ```
-In this example, `constant_value` is a constant that is passed into the while loop and used in the loop body. If the loop's operations do not modify `constant_value`, and it is eligible for sinking, the optimization would move `constant_value` directly into the loop body, potentially replacing multiple uses inside the loop with a single constant definition.
+
+In this example, constants `x`, `y`, and `max_iterations` could potentially be optimized by the `WhileLoopConstantSinking` pass if they are properly integrated and used within the loop's body and meet the conditions outlined above.
