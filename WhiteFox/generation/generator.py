@@ -24,7 +24,7 @@ for k, v in _temp_modules.items():
 
 from vllm import LLM, SamplingParams
 
-from models.generation import GeneratorConfig, TestExecutionTask, TestExecutionResult
+from domain.generation import GeneratorConfig, TestExecutionTask, TestExecutionResult
 
 from generation.prompts import load_optimization_specs
 from domain.bandit import (

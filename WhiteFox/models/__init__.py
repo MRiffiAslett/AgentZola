@@ -1,2 +1,0 @@
-"""WhiteFox models package."""
-
