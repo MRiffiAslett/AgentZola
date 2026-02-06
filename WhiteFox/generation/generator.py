@@ -103,18 +103,6 @@ class StarCoderGenerator:
         except Exception as e:
             raise ValueError(f"Invalid configuration file {config_path}: {e}") from e
         
-        # Log to diagnostic file (will be created when _setup_logging is called)
-        # For now, just print to stdout - diagnostic_logger created later
-        print(f"\n{'='*80}")
-        print(f"CONFIG LOADED: {config_path}")
-        print(f"tests_per_iteration = {config.generation.tests_per_iteration} (TOML=5, DEFAULT=10)")
-        print(f"max_iterations = {config.generation.max_iterations} (TOML=15, DEFAULT=100)")
-        if config.generation.max_iterations != 15:
-            print(f"⚠️  WARNING: max_iterations is {config.generation.max_iterations}, NOT 15!")
-        if config.generation.tests_per_iteration != 5:
-            print(f"⚠️  WARNING: tests_per_iteration is {config.generation.tests_per_iteration}, NOT 5!")
-        print(f"{'='*80}\n")
-        
         return cls(config, config_file_path=config_path)
     
     def _setup_environment(self) -> None:
@@ -145,24 +133,6 @@ class StarCoderGenerator:
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
-        
-        # Create separate diagnostic logger for detailed iteration tracking
-        diagnostic_log_path = logging_dir / "whitefox-diagnostic.log"
-        self.diagnostic_logger = logging.getLogger("whitefox.diagnostic")
-        self.diagnostic_logger.setLevel(logging.INFO)
-        
-        # Remove any existing handlers to avoid duplicates
-        self.diagnostic_logger.handlers = []
-        
-        # File handler for diagnostic log
-        diagnostic_handler = logging.FileHandler(str(diagnostic_log_path), mode='w')
-        diagnostic_handler.setLevel(logging.INFO)
-        diagnostic_formatter = logging.Formatter('%(message)s')  # Simple format for readability
-        diagnostic_handler.setFormatter(diagnostic_formatter)
-        self.diagnostic_logger.addHandler(diagnostic_handler)
-        
-        # Prevent propagation to root logger
-        self.diagnostic_logger.propagate = False
     
     def _initialize_llm(self) -> LLM:
         hf_cache_dir = (
@@ -362,30 +332,9 @@ class StarCoderGenerator:
         tests_per_iteration = self.config.generation.tests_per_iteration
         examples_per_prompt = self.config.generation.examples_per_prompt
         
-        # Log to diagnostic file
-        self.diagnostic_logger.info(f"\n{'='*80}")
-        self.diagnostic_logger.info(f"  STARTING OPTIMIZATION: {opt_name}")
-        self.diagnostic_logger.info(f"{'='*80}")
-        self.diagnostic_logger.info(
-            f"  Config: max_iterations={max_iterations} (expect 15), "
-            f"tests_per_iteration={tests_per_iteration} (expect 5)"
-        )
-        self.diagnostic_logger.info(
-            f"  Expected: {max_iterations} iterations × {tests_per_iteration} tests/iter "
-            f"= {max_iterations * tests_per_iteration} total tests"
-        )
-        if max_iterations != 15:
-            self.diagnostic_logger.warning(f"  ⚠️  WARNING: max_iterations={max_iterations}, NOT 15! Using DEFAULT?")
-        if tests_per_iteration != 5:
-            self.diagnostic_logger.warning(f"  ⚠️  WARNING: tests_per_iteration={tests_per_iteration}, NOT 5! Using DEFAULT?")
-        self.diagnostic_logger.info(f"{'='*80}\n")
-        self.logger.info(f"{'='*80}\n")
-        
-        iteration_count = 0
         for iteration in range(max_iterations):
-            iteration_count += 1
-            self.diagnostic_logger.info(
-                f"  [{opt_name}] Iteration {iteration}/{max_iterations-1} (#{iteration_count} started)"
+            self.logger.info(
+                f"  Iteration {iteration + 1}/{max_iterations} for {opt_name}"
             )
             
             import copy
@@ -420,9 +369,6 @@ class StarCoderGenerator:
             
             try:
                 sampling_params = self._create_sampling_params(tests_per_iteration)
-                self.diagnostic_logger.info(
-                    f"    [{opt_name}] Requesting {tests_per_iteration} samples from LLM (iter {iteration})"
-                )
                 
                 # CRITICAL: Lock LLM access to prevent race conditions in parallel execution
                 # Without this, concurrent generate() calls corrupt each other's results
@@ -437,26 +383,13 @@ class StarCoderGenerator:
                     {"prompt_type": prompt_type, "num_examples": len(example_tests)},
                     e
                 )
-                self.diagnostic_logger.error(
-                    f"❌ [{opt_name}] LLM ERROR at iter {iteration}: {e}. "
-                    f"SKIPPING THIS ITERATION (losing {tests_per_iteration} tests)!"
-                )
+                self.logger.error(f"LLM generation error for {opt_name} it{iteration}: {e}", exc_info=True)
                 continue
             
             generated_texts = []
             for output in outputs:
                 for text_output in output.outputs:
                     generated_texts.append(text_output.text)
-            
-            self.diagnostic_logger.info(
-                f"    [{opt_name}] LLM generated {len(generated_texts)} samples "
-                f"(expected {tests_per_iteration}) - iter {iteration}"
-            )
-            if len(generated_texts) != tests_per_iteration:
-                self.diagnostic_logger.warning(
-                    f"    ⚠️  [{opt_name}] Sample count mismatch at iter {iteration}! "
-                    f"Got {len(generated_texts)}, expected {tests_per_iteration}"
-                )
             
             
             execution_results = self._execute_tests_parallel(
@@ -577,12 +510,6 @@ class StarCoderGenerator:
                 example_tests
             )
             
-            # Log iteration completion
-            self.diagnostic_logger.info(
-                f"    [{opt_name}] ✓ Completed iter {iteration} "
-                f"({num_triggered} triggered, {num_not_triggered} not triggered)"
-            )
-            
             # Thread-safe state saving for parallel execution
             with self._state_lock:
                 logging_dir = self._get_logging_dir()
@@ -590,27 +517,6 @@ class StarCoderGenerator:
                 source_dir.mkdir(parents=True, exist_ok=True)
                 state_file = source_dir / "whitefox_state.json"
                 self.whitefox_state.save(state_file)
-        
-        # Log final summary for this optimization to diagnostic file
-        self.diagnostic_logger.info(f"  [{opt_name}] ✓ COMPLETED ALL ITERATIONS")
-        self.diagnostic_logger.info(f"  [{opt_name}] Ran {iteration_count} iterations (expected {max_iterations})")
-        
-        with self._state_lock:
-            opt_key = whitefox_logger._get_opt_key(opt_name)
-            if opt_key in whitefox_logger.opt_stats:
-                actual_created = whitefox_logger.opt_stats[opt_key]['generated']
-                expected_created = max_iterations * tests_per_iteration
-                self.diagnostic_logger.info(
-                    f"  [{opt_name}] Created {actual_created} tests "
-                    f"(expected {expected_created} = {max_iterations} iter × {tests_per_iteration} tests/iter)"
-                )
-                
-                if actual_created != expected_created:
-                    self.diagnostic_logger.warning(
-                        f"  ⚠️  [{opt_name}] TEST COUNT MISMATCH: "
-                        f"created {actual_created} but expected {expected_created} "
-                        f"(difference: {actual_created - expected_created:+d})"
-                    )
         
         # Generate/update run summary after this optimization completes
         # This ensures we have partial results even if the job doesn't finish
