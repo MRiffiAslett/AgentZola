@@ -1,74 +1,46 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for ShardingRemover that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `ShardingRemover` optimization pass in TensorFlow XLA is triggered by TensorFlow models that have specific custom call operations related to sharding in their computational graphs. These operations are primarily involved in managing tensor shapes and data distribution across different computational devices, often used in models designed for distributed execution. To elaborate, the characteristics of TensorFlow models that would typically trigger this optimization include:
 
+1. **Use of Sharding Operations:** The model must use one or more specific custom call operations that relate to sharding. These operations are identified by their custom call target names, which include:
+   - `"Sharding"`
+   - `"SPMDShardToFullShape"`
+   - `"SPMDFullToShardShape"`
+   - `sdy::kShardingGroupCustomCallTargetName`
+   - `sdy::kPropagationBarrierCustomCallTargetName`
+   - `sdy::kFuncResultShardingTargetName`
+   - `spmd::kShardBarrierFrom`
+   - `spmd::kShardBarrierTo`
 
-# Model
-class Model(tf.keras.Model):
+2. **Instruction Characteristics:** Each of these sharding-related instructions must:
+   - Be a `HloInstruction` of type `kCustomCall`.
+   - Have exactly one operand, which the optimization pass uses to replace the sharding instruction.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Model Distribution Strategy:** The model likely employs a distributed computation strategy, possibly using TensorFlow's SPMD (Single Program, Multiple Data) partitioner or similar tools. This is indicated by the presence of sharding and barrier operations that manage how data is partitioned and synchronized across multiple devices.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+### Example Model Code
+Here's a hypothetical example illustrating how a TensorFlow model might include such sharding operations, which would trigger the `ShardingRemover` optimization:
 
-# Initializing the model
-m = Model()
-
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
-
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of TensorFlow Model Triggering `ReshapeReshapeForwarding`
-For the `ReshapeReshapeForwarding` optimization in TensorFlow XLA to be triggered, the TensorFlow model must contain two consecutive `tf.reshape` operations where the output shape of the second reshape operation matches the input shape of the tensor fed into the first reshape operation. This specific sequence effectively reverses the first reshape operation, rendering the sequence redundant.
-
-**Illustrative TensorFlow Code:**
 ```python
 import tensorflow as tf
 
-input_tensor = tf.random.normal([8, 8])
-# First reshape
-t1 = tf.reshape(input_tensor, [64])
-# Second reshape that reverses the first
-t2 = tf.reshape(t1, [8, 8])
+# Example of a distributed TensorFlow setup that might use sharding
+strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+
+with strategy.scope():
+    # Dummy model
+    inputs = tf.keras.Input(shape=(10,))
+    x = tf.keras.layers.Dense(20)(inputs)
+    outputs = tf.keras.layers.Dense(5)(x)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
+    # Compiling the model might involve sharding operations for distributed execution
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy')
+
+# This setup might result in the generation of custom call operations related to sharding
 ```
-In this example, `input_tensor` has an initial shape of `[8, 8]`, which is reshaped to `[64]` by `t1` and then reshaped back to `[8, 8]` by `t2`. This scenario matches the pattern detected by the `ReshapeReshapeForwarding` optimization.
 
-### Characteristics of TensorFlow Model Triggering `ShardingRemover`
-The `ShardingRemover` optimization in TensorFlow XLA is activated when the model contains specific custom-call operations related to tensor sharding and reshaping. These operations are generally used in SPMD (Single Program, Multiple Data) partitioning strategies and include:
+In this example, the use of `MultiWorkerMirroredStrategy` in TensorFlow could lead to the generation of the relevant custom call operations if the model is compiled in a way that XLA can optimize, and XLA's SPMD partitioner or similar mechanisms are invoked.
 
-- `Sharding`
-- `SPMDShardToFullShape`
-- `SPMDFullToShardShape`
-- `ShardingGroupCustomCallTargetName`
-- `PropagationBarrierCustomCallTargetName`
-- `FuncResultShardingTargetName`
-- `ShardBarrierFrom`
-- `ShardBarrierTo`
-
-The optimization is triggered if any of these operations are present in the model and are effectively redundant, meaning they can be replaced by direct references to their operand tensors without loss of function or incorrect behavior.
-
-**Illustrative TensorFlow Code (Hypothetical):**
-```python
-# Example of a custom-call operation that could trigger ShardingRemover
-# Note: This is a conceptual illustration since TensorFlow Python API does not expose these low-level operations directly.
-sharded_tensor = some_custom_sharding_operation(input_tensor)
-restored_tensor = spmd_shard_to_full_shape(sharded_tensor)
-```
-Assuming `some_custom_sharding_operation` and `spmd_shard_to_full_shape` are placeholder names for operations that perform sharding and then reverse it, this pattern is what `ShardingRemover` seeks to optimize by removing the sharding operations and directly using `input_tensor` wherever `restored_tensor` is used.
-
-In both cases, the optimizations are focused on simplifying the computational graph by removing operations that are redundant or can be substituted without altering the model's output.
+### Summary
+The `ShardingRemover` pass will be triggered by models that include specific operations managing sharding and tensor shape transformations across distributed systems, with each operation needing to follow specific characteristics, such as having a single operand and being a custom call operation.

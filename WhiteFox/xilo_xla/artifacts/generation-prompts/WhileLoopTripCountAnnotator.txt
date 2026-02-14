@@ -1,79 +1,48 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for WhileLoopTripCountAnnotator that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `WhileLoopTripCountAnnotator` optimization pass in TensorFlow XLA is triggered for TensorFlow models that contain while loops with certain characteristics. These characteristics are primarily related to the loop's induction variable and its range. Here are the details:
 
+1. **Presence of a While Loop**:
+   The optimization targets HLO (High-Level Optimizer) instructions specifically with the opcode `kWhile`. This means the TensorFlow model must contain at least one while loop.
 
-# Model
-class Model(tf.keras.Model):
+2. **Identifiable Induction Variable**:
+   The loop must have an identifiable induction variable. This variable is typically used to control the number of iterations of the loop. The optimization pass attempts to extract the index of the tuple that represents this induction variable. If the loop does not use a clear induction variable or if it cannot be identified, this optimization will not be triggered.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Trivial Loop Range**:
+   If the induction variable and its range can be trivially analyzed (i.e., the bounds and step of the loop are straightforward to determine), the optimization is more likely to be applied. Specifically, the loop must have:
+   - A bounded range (`min` and `max` values are defined and computable).
+   - A known step value (the increment by which the induction variable changes in each iteration).
+   - All values (`min`, `max`, `step`) must fit within the signed integer range, and `step` must be positive.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Computable Trip Count**:
+   If the loop range and step are known, the trip count (total number of iterations the loop will run) is computed as `(max - min) / step + 1`. This calculation must be feasible with the provided loop bounds and step.
 
-# Initializing the model
-m = Model()
+5. **Fallback to Compute Trip Count**:
+   If the loop is not trivial but still has a structure that allows for computation of a trip count through potentially more complex means (not explicitly defined in the provided code), the optimization might still be applied.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+### Example Model
 
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of a TensorFlow Model That Triggers `WhileLoopTripCountAnnotator` in TensorFlow XLA
-
-The TensorFlow model must contain a `while` loop that meets specific criteria for the `WhileLoopTripCountAnnotator` optimization pass to be triggered in TensorFlow XLA:
-
-1. **Presence of a While Loop Instruction:**
-   The model must explicitly include a while loop, represented by an HloInstruction with the opcode `kWhile`.
-
-2. **Identifiable Induction Variable:**
-   The while loop must have a detectable loop induction variable. This requires the model's loop structure to maintain an induction variable that can be identified through analysis, such as a typical for-loop counter.
-
-3. **Computable Trip Count:**
-   - **Trivial Loop with Bounded Range and Known Step:**
-     If the loop is trivial (simple loop structure), it should have a bounded range and a known step size. The conditions include:
-       - The loop's maximum and minimum bounds are non-negative.
-       - The loop increment (step) is positive.
-       - The loop trip count can be computed using the formula `(max - min) / step + 1`.
-   - **Non-trivial Loop with Computable Trip Count:**
-     For more complex loops, there should still be a mechanism to compute the trip count, perhaps through more sophisticated static analysis techniques or estimations.
-
-### Illustrative Example
-
-Here’s an example TensorFlow model that would trigger this optimization:
+Here’s an example TensorFlow model with a simple loop structure that would likely trigger this optimization:
 
 ```python
 import tensorflow as tf
 
-# Assume `n` is a scalar tensor that defines the number of iterations
-n = tf.constant(10)
+i = tf.constant(0)
+max_val = tf.constant(100)
+step_val = tf.constant(1)
 
-def cond(i, max_iter):
-    return tf.less(i, max_iter)
+def condition(i):
+    return tf.less(i, max_val)
 
-def body(i, max_iter):
-    return (tf.add(i, 1), max_iter)
+def body(i):
+    return [tf.add(i, step_val)]
 
-# TensorFlow while loop; corresponds to HloOpcode::kWhile in XLA
-result = tf.while_loop(cond, body, [0, n])
-
-# This simple loop has a clear induction variable (i), a known step size (1),
-# and a bounded range (0 to n). It's a trivial loop where the trip count
-# can be directly computed.
+result = tf.while_loop(condition, body, [i])
 ```
 
-This simple model contains a while loop with straightforward characteristics suitable for the `WhileLoopTripCountAnnotator` optimization pass, leading to potential simplifications in the XLA compiled output.
+In this model:
+- The loop has a clear induction variable `i`.
+- The loop iterates from `0` to `100` with a step of `1`.
+- The loop bounds (`0` and `100`) and the step (`1`) are simple and fit within the signed integer range.
+  
+These characteristics match the criteria likely to trigger the `WhileLoopTripCountAnnotator` optimization pass in TensorFlow XLA.

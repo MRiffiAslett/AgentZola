@@ -1,85 +1,38 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for AllReduceCombiner that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The TensorFlow XLA optimization pass `AllReduceCombiner` is triggered for models that have multiple smaller AllReduce operations that can be combined into a single larger AllReduce operation. The characteristics of the TensorFlow model that would activate this optimization include:
 
+1. **Presence of Multiple AllReduce Operations:**
+   The model must contain multiple AllReduce instructions. These AllReduce operations should be combinable, meaning they should have the same reduction operation and operand count.
 
-# Model
-class Model(tf.keras.Model):
+2. **Same Reduction Operation Across AllReduces:**
+   Each AllReduce operation involved must use the same reduction operation (like sum, max, etc.). This means that the computation applied (`to_apply()`) in each AllReduce should either be the same across all operations or should involve the same root operation if the computations have more than one instruction.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Single Operand Per AllReduce:**
+   Each AllReduce operation must have exactly one operand. This simplifies the combination process, ensuring that operands from each AllReduce can be grouped together.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Array Shape of Outputs:**
+   The shape of the output of each AllReduce operation must be an array. This is necessary for the outputs to be combined into a tuple shape during the optimization.
 
-# Initializing the model
-m = Model()
+5. **Threshold Constraints:**
+   The model should have a sufficient number of AllReduce operations and the total size in bytes of the operations should meet specific thresholds (`combine_threshold_in_bytes` and `combine_threshold_count`) to make the combination worthwhile.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+Here is a conceptual TensorFlow code snippet that illustrates a scenario where `AllReduceCombiner` might be triggered:
 
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of the TensorFlow Model for `ReshapeReshapeForwarding` Optimization:
-
-The `ReshapeReshapeForwarding` optimization pass triggers when a TensorFlow model has sequential reshape operations where the output shape of the second reshape operation is identical to the input shape of the first reshape operation. This scenario effectively means that the two reshapes cancel each other out, creating an opportunity for optimization.
-
-**Model Pattern:**
 ```python
 import tensorflow as tf
 
-# Input tensor
-input_tensor = tf.random.normal([8, 8])
+# Assume `dist_strategy` is some form of distributed strategy that involves multiple devices.
+with dist_strategy.scope():
+    # Creating multiple tensors
+    tensor_a = tf.random.normal([1000, 1000])
+    tensor_b = tf.random.normal([1000, 1000])
 
-# First reshape operation (can be any shape transformation)
-t1 = tf.reshape(input_tensor, [64])
+    # Applying AllReduce individually
+    all_reduced_a = tf.raw_ops.AllReduce(input=tensor_a, reduction="Add", group_size=2)
+    all_reduced_b = tf.raw_ops.AllReduce(input=tensor_b, reduction="Add", group_size=2)
 
-# Second reshape operation that reverts t1 to the original shape of input_tensor
-t2 = tf.reshape(t1, [8, 8])
-
-# Usage of t2 in further model operations
-output = tf.nn.relu(t2)
+# Here, `all_reduced_a` and `all_reduced_b` are candidates for combination by `AllReduceCombiner` if they meet the threshold requirements.
 ```
 
-In this example, `t1` is reshaped to [64], and `t2` is reshaped back to [8, 8], which is the original shape of `input_tensor`. This triggers the `ReshapeReshapeForwarding` to optimize out the unnecessary reshape operations.
-
-### Characteristics of the TensorFlow Model for `AllReduceCombiner` Optimization:
-
-The `AllReduceCombiner` optimization is applicable when the model contains multiple `AllReduce` operations that can be combined into a single `AllReduce` operation. This is beneficial in distributed training where reducing the number of `AllReduce` operations can decrease communication overhead and improve performance.
-
-**Model Characteristics:**
-- Multiple `AllReduce` operations in the model.
-- The operations must have the same reduction operation (e.g., sum, max).
-- The operations should not be constrained by specific data layouts.
-- The combined size of the tensors involved in the `AllReduce` operations must meet specific byte and count thresholds set by the optimization configuration.
-
-**Model Example with Potential for Optimization:**
-```python
-import tensorflow as tf
-
-# Input tensors distributed across a cluster
-tensor_a = tf.random.normal([1024])
-tensor_b = tf.random.normal([1024])
-
-# AllReduce operations
-reduced_a = tf.raw_ops.AllReduce(input=tensor_a, reduction='sum', group_size=4)
-reduced_b = tf.raw_ops.AllReduce(input=tensor_b, reduction='sum', group_size=4)
-
-# Further computation using reduced tensors
-result = reduced_a + reduced_b
-```
-
-In this case, if `reduced_a` and `reduced_b` are eligible and meet the thresholds, the `AllReduceCombiner` can combine these two operations into a single `AllReduce` operation, enhancing the efficiency of the distributed computation. The combined operation effectively reduces the overhead of separate synchronization points for `tensor_a` and `tensor_b`.
+In this scenario, if `all_reduced_a` and `all_reduced_b` use identical reduction operations and there are enough such operations exceeding the byte and count thresholds, the `AllReduceCombiner` optimization might be applied to combine these into a single AllReduce operation.

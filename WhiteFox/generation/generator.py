@@ -24,7 +24,7 @@ for k, v in _temp_modules.items():
 
 from vllm import LLM, SamplingParams
 
-from models.generation import GeneratorConfig, TestExecutionTask, TestExecutionResult
+from domain.generation import GeneratorConfig, TestExecutionTask, TestExecutionResult
 
 from generation.prompts import load_optimization_specs
 from domain.bandit import (
@@ -87,6 +87,7 @@ class StarCoderGenerator:
         
         # Thread safety for parallel optimization execution
         self._state_lock = threading.RLock()  # Protects whitefox_state saves
+        self._llm_lock = threading.Lock()  # Protects LLM.generate() calls (NOT thread-safe!)
         
     @classmethod
     def from_config_file(cls, config_path: Path) -> "StarCoderGenerator":
@@ -368,7 +369,11 @@ class StarCoderGenerator:
             
             try:
                 sampling_params = self._create_sampling_params(tests_per_iteration)
-                outputs = self.llm.generate([prompt], sampling_params)
+                
+                # CRITICAL: Lock LLM access to prevent race conditions in parallel execution
+                # Without this, concurrent generate() calls corrupt each other's results
+                with self._llm_lock:
+                    outputs = self.llm.generate([prompt], sampling_params)
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_name,

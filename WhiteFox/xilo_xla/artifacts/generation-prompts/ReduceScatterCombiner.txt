@@ -1,81 +1,35 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for ReduceScatterCombiner that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The TensorFlow XLA `ReduceScatterCombiner` optimization pass is triggered for models that exhibit specific characteristics in their use of the `ReduceScatter` operation. Here are the key traits:
 
+1. **Multiple ReduceScatter Operations**: The model should contain multiple `ReduceScatter` operations. The combiner optimization looks to merge multiple such operations into a single, more efficient operation. Therefore, models that utilize only a single `ReduceScatter` operation or do not use `ReduceScatter` at all will not trigger this optimization.
 
-# Model
-class Model(tf.keras.Model):
+2. **Same Reduction Operation**: All `ReduceScatter` operations that are considered for combination must employ the same reduction operation (e.g., SUM, MAX). This is necessary because the combined operation will use a single reduction function applied across all inputs.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Consistent Scatter Dimensions (if combining by dimension)**: If the `combine_by_dim_` is set to true, then the `ReduceScatter` operations need to have the same scatter dimension, or at least a scatter dimension that can be aligned through permutations. This ensures that the data is scattered correctly in the combined operation.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Sufficient Size and Count**: The combined size of the tensors involved in the `ReduceScatter` operations should meet certain thresholds (`combine_threshold_in_bytes_` and `combine_threshold_count_`) to make the combination worthwhile. These thresholds help in deciding whether the overhead of combining operations is offset by the performance gain from reduced operation count and possibly more optimal memory access patterns.
 
-# Initializing the model
-m = Model()
+5. **Non-constrained Layouts**: The optimization is skipped if any of the `ReduceScatter` operations have layout constraints. This is because combining operations with different layout constraints can lead to incorrect results or require complex and costly data rearrangements.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+6. **Exclusion from While Loops**: If `combine_while_loops_` is false, then `ReduceScatter` operations that are part of a computation graph called within a `While` loop are not considered for combination. This is typically to avoid complications or inefficiencies arising from dynamic control flow.
 
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of TensorFlow Model for Optimization Pass: `ReshapeReshapeForwarding`
-
-The `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA is triggered when a TensorFlow model contains a specific pattern of reshape operations. The characteristics of such a model are as follows:
-
-1. **Sequential Reshape Operations**: The model must contain two consecutive reshape operations.
-2. **Shape Reversal Pattern**: The output shape of the first reshape operation must be reversed by the second reshape operation to match the original input shape of the first reshape.
-
-Here is a TensorFlow code example illustrating such a model pattern:
+### Example Model:
 
 ```python
 import tensorflow as tf
 
-# Input tensor of arbitrary shape
-input_tensor = tf.random.uniform(shape=[8, 2, 3])
+# Assume a distributed TensorFlow setup with multiple devices
+strategy = tf.distribute.MirroredStrategy(devices=["GPU:0", "GPU:1"])
 
-# First reshape operation changing the shape of the tensor
-t1 = tf.reshape(input_tensor, [4, 12])
+with strategy.scope():
+    # Input tensor
+    input_tensor = tf.random.normal([4, 1024])
 
-# Second reshape operation reversing t1's shape back to the original input_tensor's shape
-t2 = tf.reshape(t1, [8, 2, 3])
+    # Multiple ReduceScatter operations with the same reduction operation and scatter dimension
+    reduced_1 = tf.raw_ops.ReduceScatter(input=input_tensor, reduction="sum", scatter_dim=1)
+    reduced_2 = tf.raw_ops.ReduceScatter(input=input_tensor, reduction="sum", scatter_dim=1)
+
+    # The combined operation would replace reduced_1 and reduced_2 with a single ReduceScatter
 ```
-In this example, `t1` is reshaped to a new shape `[4, 12]`, and then `t2` restores it back to the original shape `[8, 2, 3]`. This triggers the `ReshapeReshapeForwarding` optimization, where the two reshapes are optimized out, effectively simplifying the operations while maintaining computational integrity.
-
-### Characteristics of TensorFlow Model for Optimization Pass: `ReduceScatterCombiner`
-
-The `ReduceScatterCombiner` optimization pass in TensorFlow XLA is triggered under the following model characteristics:
-
-1. **Multiple `ReduceScatter` Operations**: The model must contain multiple `ReduceScatter` operations that can potentially be combined into a single operation.
-2. **Matching Reduction Operations**: These `ReduceScatter` operations must use the same type of reduction operation (e.g., sum, min, max) across all instances.
-3. **Scatter Dimension Consistency or Adjustment**: Either all `ReduceScatter` operations share the same scatter dimension, or it must be feasible to adjust them to a common scatter dimension by reordering tensor dimensions.
-4. **Sufficient Number and Size of Operations**: The combined size of the `ReduceScatter` operations must meet certain thresholds that make the combination beneficial in terms of performance.
-
-A conceptual TensorFlow code example that could potentially trigger this optimization (if translated and applicable in XLA) might look like this:
-
-```python
-# Example using conceptual TensorFlow operations that would correspond to XLA's HLO ReduceScatter
-scatter_dim = 0
-reduction_op = tf.reduce_sum  # Simplified example; actual XLA uses more complex reduction descriptions
-
-# Multiple ReduceScatter operations
-rs1 = reduce_scatter(tensor1, scatter_dim, reduction_op)
-rs2 = reduce_scatter(tensor2, scatter_dim, reduction_op)
-rs3 = reduce_scatter(tensor3, scatter_dim, reduction_op)
-```
-
-In this simplified example, `rs1`, `rs2`, and `rs3` are candidates for combination if they meet the size and count thresholds and can effectively use the same scatter dimension and reduction operation across operations. This would result in a single, more efficient `ReduceScatter` operation handling the combined data from `tensor1`, `tensor2`, and `tensor3`.
+In this example, because there are multiple `ReduceScatter` operations with the same reduction type and scatter dimension, and assuming the size and count thresholds are met, the `ReduceScatterCombiner` optimization would likely be triggered.
