@@ -603,8 +603,14 @@ class StarCoderGenerator:
         source_dir = logging_dir / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
         
-        # Start resource profiling
-        self.profiler = WhiteFoxProfiler(logging_dir)
+        # Start resource profiling with config for estimation
+        config_dict = {
+            'generation': {
+                'parallel_test_workers': self.config.generation.parallel_test_workers,
+                'parallel_optimizations': self.config.generation.parallel_optimizations,
+            }
+        }
+        self.profiler = WhiteFoxProfiler(logging_dir, config=config_dict)
         self.profiler.start_monitoring(interval=5.0)
         
         state_file = source_dir / "whitefox_state.json"
