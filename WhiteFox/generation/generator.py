@@ -39,7 +39,7 @@ from generation.prompts import build_base_prompt, build_feedback_prompt
 from generation.harness import execute_test_in_subprocess
 from generation.oracle import check_oracles
 from generation.code_refiner import parse_generated_code, refine_generated_code
-from generation.logging import WhiteFoxLogger
+from generation.logging import WhiteFoxLogger, WhiteFoxProfiler
 
 import tomllib
 
@@ -603,6 +603,10 @@ class StarCoderGenerator:
         source_dir = logging_dir / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
         
+        # Start resource profiling
+        self.profiler = WhiteFoxProfiler(logging_dir)
+        self.profiler.start_monitoring(interval=5.0)
+        
         state_file = source_dir / "whitefox_state.json"
         old_state_file = Path(self.config.paths.bandit_state_file or "whitefox_state.json")
         if not old_state_file.is_absolute():
@@ -687,5 +691,9 @@ class StarCoderGenerator:
         
         # Generate run summary log once at the end
         whitefox_logger.generate_run_summary(self.whitefox_state)
+        
+        # Generate resource profile report
+        self.profiler.generate_report()
+        self.logger.info(f"Resource profile saved to {self.profiler.report_file}")
         
 
