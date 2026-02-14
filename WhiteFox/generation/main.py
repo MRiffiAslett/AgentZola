@@ -68,10 +68,15 @@ def main():
             
             # Generate run summary with partial results
             try:
-                from generation.logging import WhiteFoxLogger
+                from generation.logging import WhiteFoxLogger, WhiteFoxProfiler
                 whitefox_logger = WhiteFoxLogger(logging_dir, generator.logger)
                 whitefox_logger.generate_run_summary(generator.whitefox_state)
                 print(f"Run summary saved to {logging_dir / 'run_summary_detailed.log'}")
+                
+                # Generate resource profile if profiler exists
+                if hasattr(generator, 'profiler'):
+                    generator.profiler.generate_report()
+                    print(f"Resource profile saved to {logging_dir / 'resource_profile.log'}")
             except Exception as summary_error:
                 print(f"Warning: Could not generate run summary: {summary_error}", file=sys.stderr)
         sys.exit(0)
@@ -83,10 +88,15 @@ def main():
         try:
             logging_dir = generator._get_logging_dir() if hasattr(generator, '_get_logging_dir') else None
             if logging_dir and hasattr(generator, 'whitefox_state'):
-                from generation.logging import WhiteFoxLogger
+                from generation.logging import WhiteFoxLogger, WhiteFoxProfiler
                 whitefox_logger = WhiteFoxLogger(logging_dir, generator.logger)
                 whitefox_logger.generate_run_summary(generator.whitefox_state)
                 print(f"Run summary saved to {logging_dir / 'run_summary_detailed.log'}", file=sys.stderr)
+                
+                # Generate resource profile if profiler exists
+                if hasattr(generator, 'profiler'):
+                    generator.profiler.generate_report()
+                    print(f"Resource profile saved to {logging_dir / 'resource_profile.log'}", file=sys.stderr)
         except Exception as summary_error:
             print(f"Warning: Could not generate run summary: {summary_error}", file=sys.stderr)
         
