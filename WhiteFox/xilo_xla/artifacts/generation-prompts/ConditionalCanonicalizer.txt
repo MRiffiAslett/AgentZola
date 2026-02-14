@@ -1,85 +1,39 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for ConditionalCanonicalizer that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `ConditionalCanonicalizer` optimization pass in TensorFlow XLA targets TensorFlow models containing conditional (`tf.cond`) operations that do not use tuples for input, output, or branch parameters and results. This optimization pass will be triggered under the following characteristics in a TensorFlow model involving conditionals:
 
+1. **Non-Tuple Branch Parameters and Results:**
+   The TensorFlow model has conditional operations where the computations (branches) associated with the conditionals have parameters or outputs that are not tuples. If any branch computation in the conditional operation either takes a non-tuple parameter or produces a non-tuple output, the pass will modify these branches to work with tuple-shaped parameters and outputs.
 
-# Model
-class Model(tf.keras.Model):
+   ```python
+   # Example in Python pseudocode
+   def f1(x):
+       return x + 1
 
-  def __init__(self):
-    super(Model, self).__init__()
+   def f2(x):
+       return x * 2
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+   # Conditional operation without tuple parameters or outputs
+   result = tf.cond(pred, lambda: f1(x), lambda: f2(x))
+   ```
 
-# Initializing the model
-m = Model()
+2. **Non-Tuple Conditional Inputs and Outputs:**
+   If the inputs (excluding the predicate) or the output of the conditional itself are not tuples, the pass will modify the conditional to ensure that both the inputs and the output are tuples.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+   ```python
+   # Example in Python pseudocode
+   # Non-tuple input to conditional
+   result = tf.cond(pred, lambda: (x + 1,), lambda: (x * 2,))
+   ```
 
-# Call model
-y = m(x1)
+3. **Branch Modifications for Multiple Callers:**
+   If any branch computation is used by multiple callers and at least one caller is not a conditional, the pass will clone the computation for modification to prevent side effects on other callers.
 
+   ```python
+   # Example scenario where a computation is shared
+   shared_computation = some_complex_function()
+   result1 = tf.cond(pred1, lambda: shared_computation(x), lambda: other_function(x))
+   result2 = some_other_context(shared_computation(y))
+   ```
 
-
-
-### Description for `ReshapeReshapeForwarding` Optimization Trigger Characteristics
-
-For the `ReshapeReshapeForwarding` optimization pass in TensorFlow XLA to be triggered, the TensorFlow model must exhibit a specific pattern of reshape operations. This pattern involves two sequential reshape operations where the output shape of the second reshape operation matches the input shape of the tensor being reshaped by the first operation. Specifically:
-
-- The first reshape operation changes the shape of an input tensor to any arbitrary new shape.
-- The second reshape operation immediately follows the first and changes the tensor back to its original shape.
-
-Here is a code example that illustrates this pattern:
-
-```python
-import tensorflow as tf
-
-# Input tensor of shape (2, 3)
-input_tensor = tf.constant([[1, 2, 3], [4, 5, 6]])
-
-# First reshape operation: change shape
-t1 = tf.reshape(input_tensor, [6])
-
-# Second reshape operation: revert to original shape
-t2 = tf.reshape(t1, input_tensor.shape)
-
-# t2 will have the same shape as input_tensor, triggering the optimization
-```
-
-### Description for `ConditionalCanonicalizer` Optimization Trigger Characteristics
-
-The `ConditionalCanonicalizer` optimization pass is triggered in TensorFlow models that use conditional operations (`tf.cond` in TensorFlow or `kConditional` in XLA) where the inputs, outputs, or the computations within the branches of the conditional are not already in tuple form. The optimization aims to standardize these elements by ensuring they are all in tuple form. Characteristics that trigger this optimization include:
-
-1. **Non-Tuple Branch Inputs**: Any branch of the conditional operation receives non-tuple inputs.
-2. **Non-Tuple Branch Outputs**: Any branch of the conditional operation produces non-tuple outputs.
-3. **Non-Tuple Conditional Operands (Excluding the Predicate)**: If any operand (excluding the predicate) of the conditional operation is not a tuple.
-4. **Non-Tuple Conditional Output**: The output of the conditional operation itself is not a tuple.
-
-Here is a TensorFlow code example to illustrate these patterns:
-
-```python
-# Conditional operation with non-tuple inputs and outputs
-x = tf.constant(10)
-y = tf.constant(20)
-
-def f1(): return x * y
-def f2(): return x + y
-
-# The branches f1 and f2 return non-tuple outputs, and the inputs x and y are non-tuple.
-result = tf.cond(tf.less(x, y), f1, f2)
-
-# This setup will trigger the ConditionalCanonicalizer optimization to wrap inputs and outputs into tuples.
-```
-
-In summary, to trigger `ConditionalCanonicalizer`, the TensorFlow XLA model needs to use conditional operations where any of the inputs, outputs, or internal operations of branches are not already in tuple format, prompting the optimization pass to convert them into tuples.
+In summary, TensorFlow models with conditionals that have non-tuple parameters, non-tuple branch results, non-tuple conditional inputs, or non-tuple outputs will trigger the `ConditionalCanonicalizer` optimization. The optimization ensures that all involved shapes in conditional structures are canonicalized to tuples, which is necessary for uniformity and possibly for optimization of memory and computational efficiency in the XLA compiler backend.

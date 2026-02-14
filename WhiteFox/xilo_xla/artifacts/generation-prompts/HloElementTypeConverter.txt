@@ -1,69 +1,31 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for HloElementTypeConverter that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `HloElementTypeConverter` optimization pass in TensorFlow XLA is triggered for TensorFlow models that contain operations using a specific data type (`eliminate_type_`) which the optimization aims to replace with another type (`replace_with_type_`). Here are the characteristics of TensorFlow models that would trigger this optimization:
 
+1. **Presence of Specific Data Types**: The model must include operations where either the operands or the results are of a specific primitive data type (`eliminate_type_`). Typical scenarios involve operations originally performed with data types like `float32` that might be targeted for conversion to `float16` to leverage hardware optimizations.
 
-# Model
-class Model(tf.keras.Model):
+2. **Arithmetic and Non-Tuple Operations**: The optimization is specifically triggered by arithmetic operations (excluding certain operations that involve complex data dependencies or external binaries, like `CustomCall`). The operations should not be mere data movement or structural operations like `Tuple`, `GetTupleElement`, `Parameter`, or `Constant`.
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Exclusion of Specialized Operations**: Operations that inherently handle data types differently or have embedded computations (e.g., `While`, `Call`, `Fusion`, `Map`, `Reduce`, `Scatter`) are excluded because these often manage data types internally or involve multiple stages where data types are handled contextually.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Direct or Indirect Use of `eliminate_type_`**: The optimization pass checks for direct usage of `eliminate_type_` in the operation's result type or indirectly through its operands. Even if an operation does not directly output `eliminate_type_`, it can still trigger the optimization if its operands use `eliminate_type_`.
 
-# Initializing the model
-m = Model()
+5. **Non-Tuple to Tuple Conversions**: When dealing with operations that output tuple types involving `eliminate_type_`, the pass converts these elements within the tuples from `eliminate_type_` to `replace_with_type_` and then potentially back to match the original structure.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
-
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of TensorFlow models that trigger the `HloElementTypeConverter` optimization pass in TensorFlow XLA:
-
-The `HloElementTypeConverter` optimization pass is designed to replace operations that use a specific element type (`eliminate_type_`) with operations that use a different element type (`replace_with_type_`). This pass is triggered in a TensorFlow model under the following conditions:
-
-1. **Presence of Operations with Specific Element Type:** The model must contain operations where the element type of either the operands or the result matches `eliminate_type_`. This is checked across all computations within the model.
-
-2. **Absence of Specific OpCodes:** The model should not exclusively contain operations of types that are explicitly excluded from type conversion in the pass. These include:
-   - Parameter, Constant, Tuple, Convert, BitcastConvert, GetTupleElement
-   - Infeed, Outfeed, CustomCall, and other operations that embed computations like While, Call, AllReduce, ReduceScatter, AllReduceStart, Fusion, Map, Reduce, ReduceWindow, Scatter, SelectAndScatter, Sort, Conditional.
-
-3. **Applicability to Arithmetic and Other Non-Excluded Operations:** The operations that primarily trigger this optimization are non-trivial arithmetic or data manipulation operations that either produce or consume data of `eliminate_type_` and are not covered by the excluded opcodes listed above.
-
-4. **Change in Element Type:** The effective transformation is expected to occur when there is a valid conversion path between `eliminate_type_` and `replace_with_type_`, meaning that the types involved must be compatible for conversion within the TensorFlow XLA framework.
-
-### Example:
-Assume a TensorFlow XLA model contains operations with data of type `TFLOAT32` that we want to convert to `TFLOAT64`. Here's a simplified illustration:
+Here is a hypothetical example to illustrate:
 
 ```python
 import tensorflow as tf
 
-# Placeholder for input data
-input_data = tf.placeholder(tf.float32, shape=(1024, 1024))
+# Assuming 'float32' is to be eliminated in favor of 'float16'
+x = tf.constant([1.0, 2.0, 3.0], dtype=tf.float32)
+y = tf.constant([4.0, 5.0, 6.0], dtype=tf.float32)
 
-# Operation that will trigger the optimization if eliminate_type_ is TFLOAT32 and replace_with_type_ is TFLOAT64
-scaled_data = tf.math.multiply(input_data, 2.0)
+# Operation that would trigger the optimization if float32 is targeted for elimination
+z = tf.add(x, y)  # This operation's result is in float32, which is set to be eliminated
 
-# Further operations could follow that use scaled_data
+# If HloElementTypeConverter is set to replace float32 with float16,
+# it would convert the operands to float16, perform the addition, then possibly convert back.
 ```
 
-In this example:
-- `scaled_data` involves an arithmetic operation (multiplication) on `input_data`, which is of type `TFLOAT32`.
-- If the `HloElementTypeConverter` is configured to eliminate `TFLOAT32` and replace it with `TFLOAT64`, the multiplication operation in the example would be a candidate for this optimization pass, assuming the operation is not part of an excluded type set by the optimization logic.
-
-This optimization is particularly useful for models where precision adjustments are necessary or where performance characteristics are better suited to a different data type.
+In this example, the addition operation (`tf.add`) uses `float32` for both operands and output. If the optimization pass targets `float32` for conversion to `float16`, it would be triggered here, converting the operation internally within XLA to use `float16` for the computation, potentially improving performance on certain hardware.

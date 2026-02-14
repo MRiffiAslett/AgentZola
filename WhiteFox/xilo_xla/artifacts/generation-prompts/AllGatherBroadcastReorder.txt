@@ -1,74 +1,34 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for AllGatherBroadcastReorder that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The TensorFlow XLA optimization pass `AllGatherBroadcastReorder` is designed to optimize models where an `AllGather` operation directly follows a `Broadcast` operation within a computation graph. This optimization is triggered under specific conditions related to the arrangement and properties of these operations.
 
+### Characteristics of TensorFlow Models that Trigger this Optimization:
+1. **Presence of AllGather following a Broadcast:**
+   - The model must contain an `AllGather` operation whose input is the output of a `Broadcast` operation. The `AllGather` must be directly applied on the broadcasted data.
 
-# Model
-class Model(tf.keras.Model):
+2. **Data Layout and Dimensionality:**
+   - The `AllGather` operation should not be part of a sub-graph that includes collectives with layout constraints. If layout-constrained collectives are present, the optimization will not proceed.
+   - Both `Broadcast` and `AllGather` operations need to handle array data (i.e., their shapes must be array types).
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Dimension Considerations:**
+   - The optimization checks the dimensions involved in the `Broadcast` and `AllGather` operations. Specifically, it determines which dimensions are "uniform" (having the same data along those dimensions) and which are not. The `AllGather` dimension (the dimension along which data is gathered across devices) is inherently considered non-uniform.
+   - If there are uniform dimensions (i.e., dimensions not affected by the direct operation of `Broadcast` or `AllGather`) and the product of their sizes is greater than 1, then rearranging the operations to perform the `Broadcast` post `AllGather` is considered beneficial. This rearrangement reduces the amount of data involved in the `AllGather` operation, potentially improving efficiency.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
-
-# Initializing the model
-m = Model()
-
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
-
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of TensorFlow Model for `AllGatherBroadcastReorder` Optimization in TensorFlow XLA:
-
-The `AllGatherBroadcastReorder` optimization pass is triggered in a TensorFlow model when there is a specific composition and relationship between `AllGather` and `Broadcast` operations in the computational graph. Here are the detailed characteristics that would trigger this optimization:
-
-1. **Presence of an `AllGather` Operation**: The model must contain an `AllGather` operation. This operation typically gathers tensors across multiple devices or processes, which is a common scenario in distributed training.
-
-2. **`AllGather` Operates on a `Broadcast` Operand**: The tensor input to the `AllGather` operation should be the result of a `Broadcast` operation. This means the `AllGather` directly uses the output of a `Broadcast`.
-
-3. **Significant Uniform Dimension Size**: The optimization checks if performing the broadcast after the `AllGather` would involve fewer data movements. This is beneficial when the `AllGather` operation does not include all the dimensions that are broadcasted, and there are dimensions with size greater than 1 that remain uniform (i.e., they contain the same data across that dimension). These dimensions should not include the dimension along which the `AllGather` is performed.
-
-4. **No Layout-Constrained Collectives**: The optimization is skipped if the model contains `AllGather` operations with layout constraints.
-
-### Illustrative Code Example:
-
-Here's a TensorFlow code snippet that aligns with the above characteristics and would potentially trigger the `AllGatherBroadcastReorder` optimization:
-
+### Example Pattern:
 ```python
 import tensorflow as tf
 
-# Assume `strategy` is some distributed strategy
-strategy = tf.distribute.MirroredStrategy()
+# Example where the optimization might be applied
+# Assuming the dimensions and other model characteristics align with the optimizer's checks
 
-# Example input tensor
-x = tf.Variable([[1.0, 2.0], [3.0, 4.0]])
+# Model setup
+x = tf.random.uniform([128, 5])  # Random data tensor
+bc = tf.broadcast_to(x, [5, 4, 8, 128])  # Broadcast operation
+ag = tf.raw_ops.AllGatherV2(input=bc, group_size=1, group_key=1, instance_key=1, Tindices=tf.int32, all_gather_dimension=3)  # AllGather operation
 
-# Broadcasting the tensor
-broadcasted_x = tf.broadcast_to(x, [5, 2, 2])
-
-# Performing AllGather along a specific dimension
-# Let's say the all_gather_dimension is 1, and we're gathering across 3 devices
-all_gathered_x = strategy.experimental_distribute_values_from_function(
-    lambda ctx: tf.raw_ops.AllGatherV2(input=broadcasted_x, axis=1, num_devices=3)
-)
-
-# The AllGatherBroadcastReorder optimization can potentially reorder these operations to reduce
-# data movement by performing broadcast after the AllGather when beneficial.
+# This setup might be optimized by AllGatherBroadcastReorder to:
+# 1. Perform AllGather on the original tensor 'x'
+# 2. Broadcast the result of AllGather to the desired shape
 ```
 
-In this example, if the optimization finds it beneficial based on the uniform dimensions and the size of the data being moved, it might reorder the `AllGather` and `Broadcast` operations to reduce the overall computational cost and improve performance in a distributed setting.
+This optimization pass rearranges the operations to minimize the amount of data being transferred in collective operations like `AllGather`, which can be a significant bottleneck in distributed TensorFlow models. Models that fit the pattern of having `Broadcast` operations feeding directly into `AllGather` operations across specific dimensions are candidates for this optimization.

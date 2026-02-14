@@ -1,87 +1,41 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for ConvertAsyncCollectivesToSync that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The TensorFlow XLA optimization pass `ConvertAsyncCollectivesToSync` is triggered for models that use asynchronous collective operations, but where such operations are not effectively overlapped with other independent operations in the execution schedule. This specific optimization aims to replace asynchronous collective operations, which are not overlapped by other operations, with their synchronous counterparts. This is typically beneficial for improving execution determinism and potentially reducing complexity in the runtime handling of these operations.
 
+### Characteristics of TensorFlow Models to Trigger this Optimization:
 
-# Model
-class Model(tf.keras.Model):
+1. **Use of Asynchronous Collective Operations**: The model must employ asynchronous collective operations such as `AllReduceStart`, `AllGatherStart`, or `CollectivePermuteStart`. These operations are typically used in distributed training scenarios where aggregation or communication across different processing units is required.
 
-  def __init__(self):
-    super(Model, self).__init__()
+2. **Lack of Effective Overlapping in Execution Schedule**:
+   - The asynchronous operations (`async_start`) are followed directly by their corresponding completion operations (`async_done`) in the execution schedule without any intervening independent operations that could effectively overlap with these collectives.
+   - If any operations intervene between an `async_start` and an `async_done`, they must not be considered as NOPs (no-operation). NOPs are operations that do not have a significant computational load or side effects, thus not justifying the asynchronous operation setup.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+### Code Illustration:
 
-# Initializing the model
-m = Model()
-
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
-
-# Call model
-y = m(x1)
-
-
-
-
-### Characteristics of TensorFlow Model for `ReshapeReshapeForwarding` Optimization
-
-The TensorFlow XLA optimization pass `ReshapeReshapeForwarding` is triggered when a TensorFlow model includes two consecutive `tf.reshape` operations where:
-
-1. **First Reshape**: Transforms an input tensor (let's call it `input_tensor`) from its original shape to any other shape.
-2. **Second Reshape**: Transforms the output of the first reshape operation back to the original shape of `input_tensor`.
-
-This specific pattern is identified by the optimization pass as redundant and can be simplified by removing both reshape operations, directly using the `input_tensor` in subsequent computations.
-
-#### Code Example:
+Suppose a TensorFlow model is structured as follows:
 
 ```python
 import tensorflow as tf
 
-# Placeholder for an input tensor of shape (10, 10)
-input_tensor = tf.placeholder(tf.float32, [10, 10])
+# Placeholder for distributed TensorFlow setup
+strategy = tf.distribute.MirroredStrategy()
 
-# First reshape: Change shape, for example to (100,)
-reshaped_tensor = tf.reshape(input_tensor, [100])
+with strategy.scope():
+    # Input data and model definition
+    inputs = tf.keras.layers.Input(shape=(10,))
+    outputs = tf.keras.layers.Dense(10)(inputs)
+    model = tf.keras.Model(inputs=inputs, outputs=outputs)
 
-# Second reshape: Revert to the original shape (10, 10)
-output_tensor = tf.reshape(reshaped_tensor, [10, 10])
+    # Example of an asynchronous all-reduce operation
+    # This operation is simplified and may not directly reflect actual asynchronous collective usage
+    sum_gradients = tf.raw_ops.AllReduce(input=model.trainable_variables, reduction='sum', communication_hint='nccl', timeout_seconds=120, async=True)
+    # Corresponding completion of asynchronous operation
+    completed_op = tf.raw_ops.AllReduceDone(input=sum_gradients, async=True)
+
+    # Compile model
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy')
 ```
 
-In this example, the model containing these two reshapes will trigger the `ReshapeReshapeForwarding` optimization, which recognizes that the second reshape undoes the first reshape, allowing the model to directly use `input_tensor` instead of `output_tensor` for subsequent operations.
-
-### Characteristics of TensorFlow Model for `ConvertAsyncCollectivesToSync` Optimization
-
-The `ConvertAsyncCollectivesToSync` optimization pass is triggered in a TensorFlow model that has the following characteristics:
-
-1. **Presence of Asynchronous Collective Operations**: The model must utilize asynchronous collective operations like `AllReduceStart`, `AllGatherStart`, or `CollectivePermuteStart`. These operations are typically used in distributed TensorFlow to handle operations across multiple devices or nodes.
-
-2. **Lack of Overlapping Independent Operations**: The asynchronous collective operations should not be effectively overlapped by independent operations that could run concurrently. If all operations between an asynchronous start (`AsyncStart`) and its corresponding asynchronous complete (`AsyncDone`) are NOPs (no-operations) or can't be overlapped, this triggers the optimization.
-
-3. **Sequential Execution**: The asynchronous operations and their corresponding completions are executed sequentially without any overlapping operations that could utilize the computational resources concurrently.
-
-#### Code Example:
-
-```python
-import tensorflow as tf
-
-# Simulate a simple asynchronous collective operation
-input_tensor = tf.placeholder(tf.float32, shape=(100,))
-reduced_tensor = tf.raw_ops.CollectiveReduce(input_tensor, group_size=1, group_key=1, instance_key=1, merge_op='Add', final_op='Id', subdiv_offsets=[0])
-
-# Normally, there would be other operations here that could overlap with the collective operation
-# Since there is no real overlapping operation, this would trigger the optimization to convert it to synchronous
-
-output_tensor = tf.identity(reduced_tensor)
-```
-
-In this TensorFlow model, the use of a collective operation without effective overlapping independent operations makes it a candidate for the `ConvertAsyncCollectivesToSync` optimization. This optimization would replace the asynchronous collective with its synchronous counterpart, ensuring more predictable execution timing and potentially simplifying the execution model on distributed systems.
+In this example:
+- The model uses asynchronous collective operations (`AllReduce` with `async=True`).
+- If the actual execution does not involve other independent operations effectively overlapping with the `AllReduce` operation, and if the TensorFlow XLA compiler determines it based on the scheduling, then the `ConvertAsyncCollectivesToSync` optimization may convert these asynchronous operations into synchronous ones to streamline execution.

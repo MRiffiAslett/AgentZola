@@ -1,76 +1,31 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA.
+Generate a valid TensorFlow model for SortSimplifier that meets the requirements.
 
-# Description
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
-```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
+The `SortSimplifier` optimization pass in TensorFlow XLA is triggered by specific characteristics in TensorFlow models involving the `Sort` operation, particularly when it is used with tuple outputs. Here’s a breakdown of the characteristics that lead this optimization to be activated:
 
+1. **Tuple Output of Sort Instruction**: The optimization is specifically designed to handle `Sort` operations that produce a tuple output. This is typical in scenarios where multiple arrays are sorted simultaneously, and the results are grouped into a tuple.
 
-# Model
-class Model(tf.keras.Model):
+2. **Unused Tuple Elements**: The simplifier checks if all elements of the tuple output from the `Sort` operation are actually used later in the model. If any elements (or operands corresponding to those elements) are not used, the optimization considers these operands for removal. 
 
-  def __init__(self):
-    super(Model, self).__init__()
+3. **Usage Restricted to Certain Operations**: For the optimization to be triggered, all uses of the tuple elements must be through `GetTupleElement` operations. If there are other kinds of operations using the tuple elements, the optimization does not proceed.
 
-  def call(self, x1):
-    x2 = tf.reshape(x1, [2,2])
-    return tf.reshape(x2, [4])
+4. **Comparator Uses**: The optimization also inspects the comparator function used by the `Sort`. It checks which parameters of the comparator (representing the operands being sorted) are actually used. If a parameter (operand) is not used in the comparator logic, it’s considered redundant and eligible for removal.
 
-# Initializing the model
-m = Model()
+5. **Preservation of Necessary Operands and Comparator Adjustments**: If it’s determined that some operands are unused, they are removed, and the sort operation’s shape and operands are adjusted accordingly. Similarly, the comparator function is modified to only include parameters that correspond to the remaining (used) operands.
 
-# Inputs to the model
-input_shape = [4]
-x1 = tf.constant([4.,5.,6.,7.], shape=input_shape)
+### Example Model Pattern
 
-# Call model
-y = m(x1)
-
-
-
-
-### Model Characteristics for `ReshapeReshapeForwarding` Optimization in TensorFlow XLA
-
-This optimization is triggered when a TensorFlow model contains two consecutive `reshape` operations where the output shape of the second reshape matches the input shape of the first reshape. Essentially, this indicates that the second reshape operation is reversing the transformation performed by the first reshape operation, making the overall transformation redundant.
-
-#### Pattern:
-1. **First Reshape**: Transforms an input tensor `input_tensor` from its original shape to any new shape. This can be any valid transformation as long as it is a legal reshape.
-2. **Second Reshape**: Transforms the tensor back to the original shape of `input_tensor`.
+Consider a TensorFlow model where a `Sort` operation outputs a tuple, but only one element of the tuple is used later in the model. For example:
 
 ```python
 import tensorflow as tf
 
-# Example of triggering the optimization
-input_tensor = tf.random.normal([8, 2])
-t1 = tf.reshape(input_tensor, [4, 4])  # First reshape to a new shape
-t2 = tf.reshape(t1, [8, 2])           # Second reshape back to the original shape
+# Assuming `x`, `y`, and `z` are pre-defined tensors.
+sorted_tuple = tf.raw_ops.Sort(input=[x, y, z], direction='ASCENDING')
+useful_output = sorted_tuple[0]  # Only the first element is used.
 
-# t2 is equivalent to input_tensor after the optimization
+# further operations using useful_output
 ```
 
-In this scenario, after the optimization, the model will directly use `input_tensor` instead of going through two reshape operations, effectively simplifying the computational graph.
+In this scenario, if `y` and `z` are not used after sorting, the `SortSimplifier` can optimize the sort operation to only sort `x` and adjust the comparator accordingly.
 
-### Model Characteristics for `SortSimplifier` Optimization in TensorFlow XLA
-
-This optimization targets sorting operations within TensorFlow models, particularly when the output of a sort operation is a tuple, and some elements of this tuple are unused in subsequent computations or in the output of the model.
-
-#### Pattern:
-1. **Sort Operation**: The model should include a sort operation where the result is a tuple of multiple sorted values or keys.
-2. **Usage of Tuple Elements**: Not all elements of the tuple resulting from the sort operation are utilized in further operations or in the model's output. This can occur, for example, if only specific indices of the tuple are accessed using operations like `tf.gather`.
-
-```python
-# Example TensorFlow code that might trigger the optimization
-input_tensor = tf.random.uniform([10, 2])
-values, indices = tf.math.top_k(input_tensor, k=5, sorted=True)  # Sort operation creating a tuple
-
-# Use only values for further computation
-result = values + 10  # Further use only values, indices are unused
-```
-
-In this case, the optimization would potentially modify the sort operation to only compute and return the `values` since `indices` are not used in any subsequent operations, simplifying the computation and potentially improving memory usage and performance.
-
-Both optimizations aim to simplify the computational graph by removing redundant operations or outputs, leading to more efficient execution of the model.
+This optimization is beneficial for reducing the computational overhead by minimizing the number of operations and the complexity of the operations performed, especially in large-scale models where sorting can be a significant bottleneck.
