@@ -1,19 +1,8 @@
-"""
-Bug detection oracles for WhiteFox.
-
-Applies oracles to detect bugs in test execution results, including
-crashes, status mismatches, and result inconsistencies (miscompilation).
-
-This implementation matches the original WhiteFox oracle logic.
-"""
-
-from typing import List, Tuple, Optional
 from enum import IntEnum, auto
+from typing import List, Optional, Tuple
 
 import numpy as np
-import tensorflow as tf
-
-from domain.harness import ExecutionResult, BugReport
+from domain.harness import BugReport, ExecutionResult
 
 
 class ResType(IntEnum):
@@ -44,6 +33,7 @@ class DataType(IntEnum):
     List = auto()
     TFTensor = auto()
     KerasTensor = auto()
+    TorchTensor = auto()
     Unknown = auto()
 
 
@@ -74,35 +64,51 @@ def get_type(output_data) -> DataType:
         return DataType.Tuple
     elif isinstance(output_data, list):
         return DataType.List
-    elif isinstance(output_data, tf.Tensor):
-        return DataType.TFTensor
-    elif hasattr(tf.keras.backend, 'is_keras_tensor') and tf.keras.backend.is_keras_tensor(output_data):
-        return DataType.KerasTensor
     else:
+        try:
+            import tensorflow as tf
+
+            if isinstance(output_data, tf.Tensor):
+                return DataType.TFTensor
+            if hasattr(
+                tf.keras.backend, "is_keras_tensor"
+            ) and tf.keras.backend.is_keras_tensor(output_data):
+                return DataType.KerasTensor
+        except (ImportError, Exception):
+            pass
+
+        try:
+            import torch
+
+            if isinstance(output_data, torch.Tensor):
+                return DataType.TorchTensor
+        except (ImportError, Exception):
+            pass
+
         return DataType.Unknown
 
 
 def is_equal(x, y) -> Tuple[bool, Optional[str]]:
     x_type, y_type = get_type(x), get_type(y)
-    
-    if x_type != y_type and not (x_type in [DataType.List, DataType.Tuple] and 
-                                  y_type in [DataType.List, DataType.Tuple]):
+
+    if x_type != y_type and not (
+        x_type in [DataType.List, DataType.Tuple]
+        and y_type in [DataType.List, DataType.Tuple]
+    ):
         try:
             equal = np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True)
             return equal, "Value mismatch: {} vs {}".format(x, y)
-        except:
+        except (ValueError, TypeError):
             return False, "Type mismatch: {} vs {}".format(str(x_type), str(y_type))
-    
+
     if x_type in [DataType.Int, DataType.Bool, DataType.Null, DataType.Str]:
         return x == y, "Value mismatch: {} vs {}".format(x, y)
     elif x_type == DataType.Float:
         return abs(x - y) < 1e-2, "Value mismatch: {} vs {}".format(x, y)
-    elif x_type == DataType.TFTensor:
-        return np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True), \
-               "Value mismatch: {} vs {}".format(x, y)
-    elif x_type == DataType.KerasTensor:
-        return np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True), \
-               "Value mismatch: {} vs {}".format(x, y)
+    elif x_type in [DataType.TFTensor, DataType.KerasTensor, DataType.TorchTensor]:
+        return np.allclose(
+            np.array(x), np.array(y), atol=1e-02, equal_nan=True
+        ), "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.List, DataType.Tuple]:
         if len(x) != len(y):
             return False, "Length mismatch: {} vs {}".format(len(x), len(y))
@@ -116,7 +122,7 @@ def is_equal(x, y) -> Tuple[bool, Optional[str]]:
 
 
 def check_code_randomness(code: str) -> bool:
-    if "tf.random" in code:
+    if "tf.random" in code or "torch.rand" in code:
         return True
     if "dropout" in code.lower():
         return True
@@ -139,21 +145,10 @@ def value_diff_type(code: str, msg: str) -> ResType:
     return ResType.AllDiff
 
 
-def is_allowed_err(error) -> bool:
+def is_allowed_err(error, allowed_errors: Optional[List[str]] = None) -> bool:
     error = str(error)
-    allowed_errors = [
-        'tf.function only supports singleton tf.Variables created on the first call',
-        'Using a symbolic `tf.Tensor` as a Python `bool` is not allowed',
-        'len is not well defined for a symbolic Tensor',
-        'To allow the shape to vary across iterations, use the `shape_invariants` argument of tf.while_loop to specify a less-specific shape.',
-        'Python functions must return zero or more Tensors or ExtensionTypes or None values',
-        'out of scope and cannot be used here',
-        "This error may indicate that you're trying to pass a Tensor to a NumPy call, which is not supported.",
-        "'SymbolicTensor' object has no attribute",
-        "Iterating over a symbolic `tf.Tensor` is not allowed",
-        "We failed to lift variable creations out of this tf.functio",
-        "Attempting to capture an EagerTensor without building a function",
-    ]
+    if allowed_errors is None:
+        allowed_errors = []
     for err in allowed_errors:
         if err in error:
             return True
@@ -162,146 +157,130 @@ def is_allowed_err(error) -> bool:
 
 def check_oracles(
     result: ExecutionResult,
-    test_code: Optional[str] = None
+    test_code: Optional[str] = None,
+    allowed_errors: Optional[List[str]] = None,
 ) -> List[BugReport]:
     bug_reports = []
     test_id = result.test_file.stem
     optimizations_triggered = list(result.triggered_passes)
-    
-    fail = [0, 0, 0]
-    allowed = [0, 0, 0]
+
+    modes = result.modes
+    if not modes:
+        return bug_reports
+
+    fail = []
+    allowed = []
     outputs = []
-    
-    if not result.runtime_success_naive:
-        fail[0] = 1
-        error_msg = result.runtime_error_naive or result.compile_error_naive
-        if error_msg and is_allowed_err(error_msg):
-            allowed[0] = 1
-    else:
-        outputs.append(result.output_naive)
-    
-    if not result.runtime_success_xla:
-        fail[1] = 1
-        error_msg = result.runtime_error_xla or result.compile_error_xla
-        if error_msg and is_allowed_err(error_msg):
-            allowed[1] = 1
-    else:
-        outputs.append(result.output_xla)
-    
-    if not result.runtime_success_autocluster:
-        fail[2] = 1
-        error_msg = result.runtime_error_autocluster or result.compile_error_autocluster
-        if error_msg and is_allowed_err(error_msg):
-            allowed[2] = 1
-    else:
-        outputs.append(result.output_autocluster)
-    
-    if fail != [0, 0, 0]:
-        temp = []
-        for i in range(3):
-            temp.append(fail[i] - allowed[i])
-        
-        if temp == [0, 0, 0]:
+    mode_names = []
+
+    for mode in modes:
+        mr = result.get_mode(mode)
+        if not mr.runtime_success:
+            fail.append(1)
+            error_msg = mr.runtime_error or mr.compile_error
+            if error_msg and is_allowed_err(error_msg, allowed_errors):
+                allowed.append(1)
+            else:
+                allowed.append(0)
+        else:
+            fail.append(0)
+            allowed.append(0)
+            outputs.append(mr.output)
+        mode_names.append(mode)
+
+    if any(f == 1 for f in fail):
+        temp = [fail[i] - allowed[i] for i in range(len(fail))]
+
+        if all(t == 0 for t in temp):
             return bug_reports
-        
+
         fail_str = str(fail)
         if fail_str in FAIL_MAPPING:
             res_type = FAIL_MAPPING[fail_str]
-            
+
             if res_type == ResType.AllFail:
                 return bug_reports
-            
-            error_details = {
-                "Naive Fail": result.runtime_error_naive or result.compile_error_naive if fail[0] else None,
-                "XLA Fail": result.runtime_error_xla or result.compile_error_xla if fail[1] else None,
-                "AC Fail": result.runtime_error_autocluster or result.compile_error_autocluster if fail[2] else None,
-                "Num Diff": None,
-            }
-            
-            bug_reports.append(BugReport(
-                test_id=test_id,
-                optimizations_triggered=optimizations_triggered,
-                oracle_type=res_type.name,
-                details=error_details,
-                test_file=result.test_file,
-                logs_file=result.test_file.with_suffix(".log"),
-            ))
-        
-        return bug_reports
-    
-    if len(outputs) == 3:
-        equal, msg = is_equal(outputs[0], outputs[1])
-        if not equal:
-            error_details = {
-                "Naive Fail": None,
-                "XLA Fail": None,
-                "AC Fail": None,
-                "Num Diff": msg,
-            }
-            
-            if test_code:
-                res_type = value_diff_type(test_code, msg)
-            else:
-                res_type = ResType.AllDiff_TypeMismatch if "Type mismatch" in msg else ResType.AllDiff
-            
-            bug_reports.append(BugReport(
-                test_id=test_id,
-                optimizations_triggered=optimizations_triggered,
-                oracle_type=res_type.name,
-                details=error_details,
-                test_file=result.test_file,
-                logs_file=result.test_file.with_suffix(".log"),
-            ))
-            return bug_reports
-        
-        equal, msg = is_equal(outputs[0], outputs[2])
-        if not equal:
-            error_details = {
-                "Naive Fail": None,
-                "XLA Fail": None,
-                "AC Fail": None,
-                "Num Diff": msg,
-            }
-            
-            if test_code:
-                res_type = value_diff_type(test_code, msg)
-            else:
-                res_type = ResType.AllDiff_TypeMismatch if "Type mismatch" in msg else ResType.AllDiff
-            
-            bug_reports.append(BugReport(
-                test_id=test_id,
-                optimizations_triggered=optimizations_triggered,
-                oracle_type=res_type.name,
-                details=error_details,
-                test_file=result.test_file,
-                logs_file=result.test_file.with_suffix(".log"),
-            ))
-            return bug_reports
-    
-    elif len(outputs) == 2:
-        equal, msg = is_equal(outputs[0], outputs[1])
-        if not equal:
-            error_details = {
-                "Naive Fail": None,
-                "XLA Fail": None,
-                "AC Fail": None,
-                "Num Diff": msg,
-            }
-            
-            if test_code:
-                res_type = value_diff_type(test_code, msg)
-            else:
-                res_type = ResType.AllDiff_TypeMismatch if "Type mismatch" in msg else ResType.AllDiff
-            
-            bug_reports.append(BugReport(
-                test_id=test_id,
-                optimizations_triggered=optimizations_triggered,
-                oracle_type=res_type.name,
-                details=error_details,
-                test_file=result.test_file,
-                logs_file=result.test_file.with_suffix(".log"),
-            ))
-            return bug_reports
-    
-    return bug_reports
 
+            error_details = {}
+            for i, mode in enumerate(mode_names):
+                mr = result.get_mode(mode)
+                if fail[i]:
+                    error_details[f"{mode} Fail"] = mr.runtime_error or mr.compile_error
+                else:
+                    error_details[f"{mode} Fail"] = None
+            error_details["Num Diff"] = None
+
+            bug_reports.append(
+                BugReport(
+                    test_id=test_id,
+                    optimizations_triggered=optimizations_triggered,
+                    oracle_type=res_type.name,
+                    details=error_details,
+                    test_file=result.test_file,
+                    logs_file=result.test_file.with_suffix(".log"),
+                )
+            )
+        else:
+            if not all(f == 1 for f in fail):
+                error_details = {}
+                for i, mode in enumerate(mode_names):
+                    mr = result.get_mode(mode)
+                    if fail[i]:
+                        error_details[f"{mode} Fail"] = (
+                            mr.runtime_error or mr.compile_error
+                        )
+                    else:
+                        error_details[f"{mode} Fail"] = None
+                error_details["Num Diff"] = None
+
+                failed_modes = [mode_names[i] for i in range(len(fail)) if fail[i]]
+                oracle_type = "_".join(m.capitalize() for m in failed_modes) + "Fail"
+
+                bug_reports.append(
+                    BugReport(
+                        test_id=test_id,
+                        optimizations_triggered=optimizations_triggered,
+                        oracle_type=oracle_type,
+                        details=error_details,
+                        test_file=result.test_file,
+                        logs_file=result.test_file.with_suffix(".log"),
+                    )
+                )
+
+        return bug_reports
+
+    def create_diff_bug_report(msg: str) -> BugReport:
+        error_details = {f"{mode} Fail": None for mode in mode_names}
+        error_details["Num Diff"] = msg
+
+        if test_code:
+            res_type = value_diff_type(test_code, msg)
+        else:
+            res_type = (
+                ResType.AllDiff_TypeMismatch
+                if "Type mismatch" in msg
+                else ResType.AllDiff
+            )
+
+        return BugReport(
+            test_id=test_id,
+            optimizations_triggered=optimizations_triggered,
+            oracle_type=res_type.name,
+            details=error_details,
+            test_file=result.test_file,
+            logs_file=result.test_file.with_suffix(".log"),
+        )
+
+    if len(outputs) >= 2:
+        equal, msg = is_equal(outputs[0], outputs[1])
+        if not equal:
+            bug_reports.append(create_diff_bug_report(msg))
+            return bug_reports
+
+        for i in range(2, len(outputs)):
+            equal, msg = is_equal(outputs[0], outputs[i])
+            if not equal:
+                bug_reports.append(create_diff_bug_report(msg))
+                return bug_reports
+
+    return bug_reports

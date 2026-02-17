@@ -1,3 +1,0 @@
-"""WhiteFox package."""
-
-

@@ -6,8 +6,7 @@ from typing import Dict, List, Tuple
 from openai import OpenAI
 
 
-class GPTModel:
-    DEFAULT_SYSTEM_MESSAGE = "You are a source code analyzer for TensorFlow XLA."
+class GPTClient:
 
     def __init__(
         self,
@@ -16,7 +15,7 @@ class GPTModel:
         temperature: float = 1.0,
         max_tokens: int = 512,
         timeout: int = 300,
-        system_message: str = None,
+        system_message: str = "",
     ):
         api_key_path = Path(api_key_file)
         if not api_key_path.exists():
@@ -30,7 +29,7 @@ class GPTModel:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
-        self.system_message = system_message or self.DEFAULT_SYSTEM_MESSAGE
+        self.system_message = system_message
 
     def process_response(self, response_text: str) -> str:
         return response_text.strip()
@@ -45,61 +44,45 @@ class GPTModel:
         retry_count = 0
 
         while retry_count < max_retries:
-            try:
-                t_start = time.time()
+            t_start = time.time()
 
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": self.system_message},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    top_p=1.0,
-                    n=n_samples,
-                    timeout=self.timeout,
-                )
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.system_message},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                top_p=1.0,
+                n=n_samples,
+                timeout=self.timeout,
+            )
 
-                generation_time = time.time() - t_start
+            generation_time = time.time() - t_start
 
-                descriptions = [
-                    self.process_response(choice.message.content)
-                    for choice in response.choices
-                ]
+            descriptions = [
+                self.process_response(choice.message.content)
+                for choice in response.choices
+            ]
 
-                metadata = {
-                    "model": self.model,
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                    "n_samples": n_samples,
-                    "generation_time": generation_time,
-                    "raw_response": response.model_dump(),
-                }
+            metadata = {
+                "model": self.model,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "n_samples": n_samples,
+                "generation_time": generation_time,
+                "raw_response": response.model_dump(),
+            }
 
-                return descriptions, metadata
-
-            except Exception as e:
-                retry_count += 1
-                print(
-                    f"[ERROR] API call failed (attempt {retry_count}/{max_retries}): {e}"
-                )
-                if retry_count < max_retries:
-                    print(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                else:
-                    raise RuntimeError(
-                        f"Failed to generate requirement after {max_retries} attempts"
-                    ) from e
+            return descriptions, metadata
 
     def batch_generate_requirements(
         self,
         prompts: Dict[str, str],
         output_dir: Path,
         instruction_template: str = (
-            "### Please generate one valid TensorFlow model that satisfies requirements below.\n"
-            "You should only use public TensorFlow APIs. The model can be used as the input "
-            "to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n"
+            "### Please generate one valid model that satisfies requirements below.\n\n"
             "# Description\n"
         ),
         n_samples: int = 1,

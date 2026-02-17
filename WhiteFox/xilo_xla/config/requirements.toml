@@ -1,12 +1,12 @@
 [gpt]
 api_key_file = "openai.key"       
-model = "gpt-4-turbo"              
-temperature = 0.7                      
-max_tokens = 2048                      
+model = "gpt-4"              
+temperature = 0.0                      
+max_tokens = 512                      
 timeout = 300                      
 n_samples = 1                         
 max_retries = 3                     
 retry_delay = 10                      
 skip_existing = false
-use_mini = false                      # Use mini version of source code files
-system_message = """You are an expert in TensorFlow XLA compiler optimizations. Your task is to analyze optimization pass source code and describe the characteristics of TensorFlow models that would trigger these optimizations. Be concise, clear, and use code examples to illustrate patterns."""
+use_mini = false
+system_message = "You are a source code analyzer for TensorFlow XLA."

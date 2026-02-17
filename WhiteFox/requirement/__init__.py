@@ -15,4 +15,3 @@ __all__ = [
     "generate_requirement_prompts",
     "GPTModel",
 ]
-

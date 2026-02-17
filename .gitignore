@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 
+# IDE
+.vscode/
+
 # WhiteFox generated artifacts
 WhiteFox/slurm/output_tf
 WhiteFox/logging/
