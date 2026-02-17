@@ -4,36 +4,10 @@ from pathlib import Path
 from prompt_exec import GPTModel
 from prompt_gen import generate_requirement_prompts
 
-_SUT_GENERATORS = {
-    "xla": "requirement.suts.xla.XLARequirementGenerator",
-    "inductor": "requirement.suts.inductor.InductorRequirementGenerator",
-    "tflite": "requirement.suts.tflite.TFLiteRequirementGenerator",
-}
-
 _SUT_DIR_MAP = {
     "xla": "xilo_xla",
     "inductor": "xilo_inductor",
     "tflite": "xilo_tflite",
-}
-
-_SUT_INSTRUCTION_TEMPLATES = {
-    "xla": (
-        "### Please generate one valid TensorFlow model that satisfies requirements below.\n"
-        "You should only use public TensorFlow APIs. The model can be used as the input "
-        "to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n"
-        "# Description\n"
-    ),
-    "inductor": (
-        "### Please generate a valid PyTorch model example with public PyTorch APIs "
-        "meets the specified requirements.\n\n"
-        "# Description\n"
-    ),
-    "tflite": (
-        "### Please generate one valid TensorFlow model that satisfies requirements below.\n"
-        "You should only use public TensorFlow APIs. The model can be used as the input "
-        "to trigger the optimization pass `{opt_name}` in TensorFlow Lite.\n\n"
-        "# Description\n"
-    ),
 }
 
 
@@ -51,7 +25,6 @@ def main():
 
     sut = args.sut
     sut_dir_name = _SUT_DIR_MAP[sut]
-    instruction_template = _SUT_INSTRUCTION_TEMPLATES[sut]
 
     base_dir = Path(__file__).parent.parent
 
@@ -113,7 +86,6 @@ def main():
         results = gpt.batch_generate_requirements(
             prompts=prompts,
             output_dir=gpt_output_dir,
-            instruction_template=instruction_template,
             n_samples=n_samples,
             skip_existing=skip_existing,
             fallback_optimizations=fallback_optimizations,

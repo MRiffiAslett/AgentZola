@@ -96,12 +96,6 @@ class GPTModel:
         self,
         prompts: Dict[str, str],
         output_dir: Path,
-        instruction_template: str = (
-            "### Please generate one valid TensorFlow model that satisfies requirements below.\n"
-            "You should only use public TensorFlow APIs. The model can be used as the input "
-            "to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n"
-            "# Description\n"
-        ),
         n_samples: int = 1,
         skip_existing: bool = True,
         fallback_optimizations: set = None,
@@ -125,20 +119,16 @@ class GPTModel:
             if skip_existing and output_file.exists():
                 continue
 
-            instruction = instruction_template.format(opt_name=opt_name)
-
             if opt_name in fallback_optimizations:
                 fallback_file = fallback_path / f"{opt_name}.txt"
-                description = fallback_file.read_text()
-
-                full_prompt = instruction + description
+                description = fallback_file.read_text().strip()
 
                 with open(output_file, "w") as f:
-                    f.write(full_prompt)
+                    f.write(description)
 
                 results[opt_name] = {
                     "status": "success",
-                    "descriptions": [full_prompt],
+                    "descriptions": [description],
                     "metadata": {
                         "source": "fallback",
                         "fallback_file": str(fallback_file),
@@ -152,14 +142,12 @@ class GPTModel:
 
             description = descriptions[0] if descriptions else ""
 
-            full_prompt = instruction + description
-
             with open(output_file, "w") as f:
-                f.write(full_prompt)
+                f.write(description)
 
             results[opt_name] = {
                 "status": "success",
-                "descriptions": [full_prompt],
+                "descriptions": [description],
                 "metadata": metadata,
             }
 
