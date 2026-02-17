@@ -1,0 +1,69 @@
+[paths]
+prompt_dir = "prompts"
+output_dir = "generated-outputs"
+hf_home = "hf_cache"
+log_file = "whitefox-llm-gen.log"
+bandit_state_file = "whitefox_state.json"
+
+[sut]
+name = "tflite"
+framework = "tensorflow"
+
+[model]
+name = "bigcode/starcoder"
+dtype = "float16"
+max_model_len = 8192
+gpu_memory_utilization = 0.85
+swap_space = 4
+
+[generation]
+num_samples = 1     
+max_tokens = 4096   
+temperature = 1.0    
+top_p = 1.0        
+split_size = 20      
+unit_num = 2       
+optimizations_dir = "xilo_tflite/artifacts/Prompts/test"
+tests_per_optimization = 10
+tests_per_iteration = 5
+max_iterations = 15
+examples_per_prompt = 3
+test_timeout = 30
+parallel_test_workers = 4
+parallel_optimizations = 2
+
+# TODO: Add TensorFlow Lite specific optimizations
+optimizations = [
+    # "QuantizationPass",
+    # "OperatorFusion",
+    # "ConstantFolding",
+    # etc.
+]
+
+[prompts]
+feedback_instruction = """Please generate different valid TensorFlow model (targeting TFLite conversion) that satisfies requirements below.
+You should only use public TensorFlow APIs. The new model MUST be semantically different from
+the examples shown below (no trivial renames or copy-paste)."""
+
+[stopping]
+eof_strings = [
+    "<|endoftext|>",
+    "###",
+    "__output__ =",
+    "if __name__",
+    '"""',
+    "'''",
+    "# Model ends",
+]
+
+[oracles]
+float_rtol = 1e-5
+float_atol = 1e-8
+
+allowed_errors = [
+    # TODO: Add TFLite specific allowed errors
+]
+
+[pass_name_aliases]
+# TODO: Add TFLite pass name aliases
+
