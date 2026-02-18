@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for StochasticConvertDecomposer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `StochasticConvertDecomposer` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `StochasticConvertDecomposer` is specifically triggered by TensorFlow models that contain at least one `StochasticConvert` operation. This operation is designed to convert numerical values from one type to another using a stochastic rounding method, which involves randomness to decide the rounding direction when the values are in-between integer representations.
 
 ### Characteristics of TensorFlow Models That Trigger This Optimization:

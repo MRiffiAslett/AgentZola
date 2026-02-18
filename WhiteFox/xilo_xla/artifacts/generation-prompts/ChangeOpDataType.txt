@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ChangeOpDataType that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ChangeOpDataType` in TensorFlow XLA.
 
+# Description
 The `ChangeOpDataType` optimization pass in TensorFlow XLA is triggered based on certain characteristics of the TensorFlow model's operations and data types. Here are the characteristics that would lead this optimization to execute and potentially return `true`:
 
 1. **Uniform Operand Data Types:**

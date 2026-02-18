@@ -1,71 +1,16 @@
-Generate a valid TensorFlow model for ReshapeBroadcastForwarding that meets the requirements.
-
-### Please describe the characteristics of the TensorFlow model that trigger the optimization pass `ReshapeReshapeForwarding` in TensorFlow XLA. The model can be used to reach out the `return true;` line in function `ReshapeReshapeForwarding`, leading the function to return true. The description should be concise and clear. Use code to illustrate patterns or constraints as needed. Please only describe the characteristics of the model. Do not describe the function code or what happens after the optimization is triggered.
-
-# The code of the function and its helper functions:
-
-```cpp
-// Reshape(Reshape(A, []->[1]), [1]->[]) ==> A
-StatusOr<bool> ReshapeReshapeForwarding(HloInstruction* reshape) {
-  if (reshape->opcode() != HloOpcode::kReshape) {
-    return false;
-  }
-  auto reshape_2 = reshape->mutable_operand(0);
-  if (reshape_2->opcode() != HloOpcode::kReshape) {
-    return false;
-  }
-
-  if (!Shape::Equal()(reshape->shape(), reshape_2->operand(0)->shape())) {
-    return false;
-  }
-  TF_RETURN_IF_ERROR(
-      reshape->ReplaceAllUsesWith(reshape_2->mutable_operand(0)));
-
-  return true;
-}
-```
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeBroadcastForwarding` in TensorFlow XLA.
 
 # Description
-The model should contain the following pattern:
+The model should contain a pattern where a scalar tensor is broadcast to a 1-D tensor
+of size 1, and then reshaped back to a scalar:
 ```
-t1 = tf.reshape(input_tensor, ...)
-t2 = tf.reshape(t1, input_tensor.shape)
+x = tf.constant(3.14)               # scalar, shape []
+b = tf.broadcast_to(x, [1])         # broadcast scalar -> shape [1]
+result = tf.reshape(b, [])          # reshape back to scalar []
 ```
-The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
-
-
-### Please describe the characteristics of the TensorFlow model that trigger the optimization pass `ReshapeBroadcastForwarding` in TensorFlow XLA. The model can be used to reach out the `return true;` line in function `ReshapeBroadcastForwarding`, leading the function to return true. The description should be concise and clear. Use code to illustrate patterns or constraints as needed. Please only describe the characteristics of the model. Do not describe the function code or what happens after the optimization is triggered.
-
-# The code of the function and its helper functions:
-
-```cpp
-// Reshape(Broadcast(A, []->[1]), [1]->[]) ==> A
-StatusOr<bool> ReshapeBroadcastForwarding(HloInstruction* reshape) {
-  if (reshape->opcode() != HloOpcode::kReshape) {
-    return false;
-  }
-  auto broadcast = reshape->mutable_operand(0);
-  if (broadcast->opcode() != HloOpcode::kBroadcast) {
-    return false;
-  }
-
-  if (reshape->shape().rank() != 0) {
-    return false;
-  }
-
-  if (broadcast->shape().rank() != 1) {
-    return false;
-  }
-
-  if (broadcast->mutable_operand(0)->shape().rank() != 0) {
-    return false;
-  }
-
-  TF_RETURN_IF_ERROR(
-      reshape->ReplaceAllUsesWith(broadcast->mutable_operand(0)));
-
-  return true;
-}
-```
-
-# Description
+The optimization detects this round-trip pattern (scalar -> [1] -> scalar) and replaces
+it with the original scalar tensor directly. Requirements:
+- The input to broadcast must be a scalar (rank 0).
+- The broadcast output must be rank 1 (shape [1]).
+- The reshape output must be rank 0 (scalar).

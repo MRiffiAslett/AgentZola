@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for Defuser that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `Defuser` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA `Defuser` optimization pass is specifically triggered by the presence of fusion computations within a TensorFlow model when compiled with XLA. This optimization targets the defusion of these computations under certain conditions. Here are the characteristics of a TensorFlow model that would lead to this optimization being activated:
 
 1. **Presence of Fusion Computations**: The model must contain one or more fusion computations. Fusion in XLA combines multiple operations into a single, more efficient operation, reducing memory bandwidth and improving execution speed. However, in some scenarios, defusion might be necessary to meet specific constraints or improve debuggability.

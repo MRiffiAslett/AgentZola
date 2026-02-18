@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for SortSimplifier that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `SortSimplifier` in TensorFlow XLA.
 
+# Description
 The `SortSimplifier` optimization pass in TensorFlow XLA is triggered by specific characteristics in TensorFlow models involving the `Sort` operation, particularly when it is used with tuple outputs. Here’s a breakdown of the characteristics that lead this optimization to be activated:
 
 1. **Tuple Output of Sort Instruction**: The optimization is specifically designed to handle `Sort` operations that produce a tuple output. This is typical in scenarios where multiple arrays are sorted simultaneously, and the results are grouped into a tuple.

@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllGatherDecomposer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllGatherDecomposer` in TensorFlow XLA.
 
+# Description
 To trigger the `AllGatherDecomposer` optimization pass in TensorFlow XLA, the TensorFlow model must have specific characteristics related to its use of the `AllGather` operation. Here are the detailed characteristics:
 
 1. **Presence of `AllGather` Operations:**

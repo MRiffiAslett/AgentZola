@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for WhileLoopInvariantCodeMotion that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `WhileLoopInvariantCodeMotion` in TensorFlow XLA.
 
+# Description
 The `WhileLoopInvariantCodeMotion` optimization in TensorFlow XLA is designed to identify and hoist invariant computations outside of the while loop to improve performance by reducing redundant computations across loop iterations. The characteristics of TensorFlow models that would trigger this optimization include:
 
 1. **Presence of While Loops with Tuple Outputs:** The model must contain at least one while loop whose output is a tuple. This is a prerequisite since the optimization logic checks if the while loop's shape is a tuple before proceeding with any invariant code motion.

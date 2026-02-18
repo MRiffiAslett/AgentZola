@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for DotDecomposer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `DotDecomposer` in TensorFlow XLA.
 
+# Description
 The `DotDecomposer` optimization pass in TensorFlow XLA is triggered by characteristics in the TensorFlow model where a `Dot` (matrix multiplication) operation does not conform to a canonical form based on specific conditions related to the shapes of its operands and their dimensional properties. The following characteristics would cause this optimization to activate:
 
 1. **Multiple Contracting Dimensions**: If a `Dot` operation has more than one dimension designated as contracting (i.e., the dimensions over which the summation happens), it is considered non-canonical. Typically, a canonical dot operation should involve a single contracting dimension.

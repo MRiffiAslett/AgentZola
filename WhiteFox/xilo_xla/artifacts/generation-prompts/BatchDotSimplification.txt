@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for BatchDotSimplification that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `BatchDotSimplification` in TensorFlow XLA.
 
+# Description
 The `BatchDotSimplification` optimization in TensorFlow XLA targets specific characteristics and patterns within a TensorFlow model's batch dot operations. This optimization is triggered when the following conditions are met in a model's batch dot operation:
 
 1. **Batch Dimensions Match and Are Ascending**: The batch dimensions of the left-hand side (LHS) and right-hand side (RHS) of the dot operation must be identical and in strictly ascending order. This means that if the batch dimensions are represented as an array, the values should be consecutive integers starting from zero. For example, valid batch dimensions could be `[0, 1, 2]`.

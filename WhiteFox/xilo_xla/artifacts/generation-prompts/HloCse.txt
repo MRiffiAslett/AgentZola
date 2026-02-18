@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for HloCse that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `HloCse` in TensorFlow XLA.
 
+# Description
 The `HloCse` optimization pass in TensorFlow XLA is triggered by certain characteristics in a TensorFlow model which make it possible to simplify the computational graph by eliminating redundant computations. This pass identifies and removes identical computations across the model. Here are the specific characteristics of TensorFlow models that would trigger these optimizations:
 
 1. **Presence of Identical Computations:**

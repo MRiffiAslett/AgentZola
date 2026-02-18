@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for LoopScheduleLinearizer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `LoopScheduleLinearizer` in TensorFlow XLA.
 
+# Description
 ### Characteristics of TensorFlow Models Triggering `LoopScheduleLinearizer` Optimization
 
 The `LoopScheduleLinearizer` optimization in TensorFlow XLA is specifically designed to handle scenarios in TensorFlow models containing `While` loops where additional control dependencies can be introduced to prevent hazards such as write-after-read or read-after-write. The key characteristics of models that trigger this optimization are:

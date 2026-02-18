@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for HloConstantFolding that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `HloConstantFolding` in TensorFlow XLA.
 
+# Description
 The `HloConstantFolding` optimization pass in TensorFlow XLA is triggered for a TensorFlow model when specific characteristics and patterns are met in the model's HLO (High-Level Optimizer) instructions. Below are the key characteristics that can lead this optimization to be triggered:
 
 ### Characteristics of the Model

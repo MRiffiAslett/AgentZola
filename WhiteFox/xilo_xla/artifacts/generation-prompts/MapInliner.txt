@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for MapInliner that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `MapInliner` in TensorFlow XLA.
 
+# Description
 The `MapInliner` optimization pass in TensorFlow XLA is designed to inline `Map` operations under specific circumstances to simplify the computation graph and potentially improve performance. A TensorFlow model will trigger this optimization when it contains `Map` operations satisfying the following characteristics:
 
 1. **Single Operation Sub-Computation**: The function applied by the `Map` operation (referred to as `to_apply` in the XLA code) must consist of exactly one operation, which is the root operation of the sub-computation.

@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ReduceScatterReassociate that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReduceScatterReassociate` in TensorFlow XLA.
 
+# Description
 The `ReduceScatterReassociate` optimization pass in TensorFlow XLA is triggered by specific patterns in a TensorFlow model's computational graph, particularly involving the `ReduceScatter` operation. Here are the characteristics of TensorFlow models that would trigger this optimization:
 
 1. **Presence of Sequential ReduceScatter Operations:**

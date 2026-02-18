@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for TransposeFolding that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `TransposeFolding` in TensorFlow XLA.
 
+# Description
 The `TransposeFolding` optimization pass in TensorFlow XLA specifically targets situations where transpose operations can be merged into neighboring convolution or dot (matrix multiplication) operations, thereby simplifying the overall computation and potentially enhancing performance. This optimization is triggered under the following conditions in a TensorFlow model:
 
 1. **Convolution with Transposed Input or Kernel:**

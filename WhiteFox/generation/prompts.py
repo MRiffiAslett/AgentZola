@@ -23,24 +23,19 @@ class OptimizationSpec:
         return bool(set(self.pass_log_names) & triggered_passes)
 
 
-def _create_optimization_spec(
-    opt_name: str, txt_file: Path, aliases_mapping: Dict[str, List[str]]
+def _make_spec(
+    name: str, txt_file: Path, aliases: Dict[str, List[str]]
 ) -> OptimizationSpec:
-
-    requirement_text = txt_file.read_text()
-    pass_log_names = aliases_mapping.get(opt_name)
-    if pass_log_names is None:
-        logger.warning(
-            f"Optimization '{opt_name}' not found in pass name aliases mapping. "
-            f"Using optimization name as-is. Consider adding it to the mapping."
-        )
-        pass_log_names = [opt_name]
-
+    text = txt_file.read_text()
+    log_names = aliases.get(name)
+    if log_names is None:
+        logger.warning(f"No pass alias for '{name}', using as-is.")
+        log_names = [name]
     return OptimizationSpec(
-        internal_name=opt_name,
-        pass_log_names=pass_log_names,
+        internal_name=name,
+        pass_log_names=log_names,
         requirement_prompt_path=txt_file,
-        requirement_text=requirement_text,
+        requirement_text=text,
     )
 
 
@@ -49,73 +44,53 @@ def load_optimization_specs(
     optimizations: Optional[List[str]] = None,
     pass_name_aliases: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, OptimizationSpec]:
-    specs = {}
-
-    aliases_mapping = pass_name_aliases or {}
+    specs: Dict[str, OptimizationSpec] = {}
+    aliases = pass_name_aliases or {}
 
     if not req_dir.exists():
         raise FileNotFoundError(f"Requirement directory not found: {req_dir}")
 
     if optimizations is not None:
-        for opt_name in optimizations:
-            txt_file = req_dir / f"{opt_name}.txt"
-            if not txt_file.exists():
-                raise FileNotFoundError(f"Requirement file not found: {txt_file}")
+        for name in optimizations:
+            txt = req_dir / f"{name}.txt"
 
-            specs[opt_name] = _create_optimization_spec(
-                opt_name, txt_file, aliases_mapping
-            )
+            specs[name] = _make_spec(name, txt, aliases)
     else:
-        for txt_file in sorted(req_dir.glob("*.txt")):
-            internal_name = txt_file.stem
-            specs[internal_name] = _create_optimization_spec(
-                internal_name, txt_file, aliases_mapping
-            )
+        for txt in sorted(req_dir.glob("*.txt")):
+            specs[txt.stem] = _make_spec(txt.stem, txt, aliases)
 
     return specs
 
 
-def build_base_prompt(spec: OptimizationSpec) -> str:
-    opt_name = spec.internal_name
+def build_base_prompt(
+    spec: OptimizationSpec,
+    prompt_style: str = "paper",
+    seed_qa: str = "",
+) -> str:
+    target_q = spec.requirement_text.strip()
 
-    return (
-        f"### Please generate one valid TensorFlow model that satisfies requirements below.\n"
-        f"You should only use public TensorFlow APIs. The model can be used as the input "
-        f"to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n"
-        f"\n"
-        f"# Description\n"
-        f"{spec.requirement_text.strip()}\n"
-        f"\n"
-        f"# Model"
-    )
+    if prompt_style == "stacked" and seed_qa:
+        return f"{seed_qa}\n\n{target_q}\n\n# Model"
+
+    return f"{target_q}\n\n# Model"
 
 
 def build_feedback_prompt(
     spec: OptimizationSpec,
     example_tests: List[TriggeringTest],
-    feedback_instruction: str,
+    feedback_instruction: str = "",
+    prompt_style: str = "paper",
 ) -> str:
-    opt_name = spec.internal_name
+    target_q = spec.requirement_text.strip()
 
-    examples = []
+    examples: List[str] = []
     for test in example_tests:
         try:
-            test_content = test.file_path.read_text()
-            examples.append(f"# Model begins\n{test_content.strip()}\n# Model ends")
+            code = test.file_path.read_text().strip()
+            if code:
+                examples.append(f"# Model begins\n{code}\n# Model ends")
         except Exception:
             continue
 
-    examples_section = "\n\n".join(examples)
-
-    return (
-        f"### Please generate a valid TensorFlow model with public TensorFlow APIs. "
-        f"The model can trigger the optimization pass `{opt_name}` in TensorFlow XLA. "
-        f"Additionally, please generate valid input tensors for the model and pass to the model.\n"
-        f"\n"
-        f"# Description\n"
-        f"{spec.requirement_text.strip()}\n"
-        f"\n"
-        f"{examples_section}\n"
-        f"\n"
-        f"# Model begins"
-    )
+    body = "\n\n".join(examples)
+    return f"{target_q}\n\n{body}\n\n# Model begins"

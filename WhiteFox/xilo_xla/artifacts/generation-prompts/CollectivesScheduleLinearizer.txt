@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for CollectivesScheduleLinearizer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `CollectivesScheduleLinearizer` in TensorFlow XLA.
 
+# Description
 The TensorFlow model characteristics that would trigger the `CollectivesScheduleLinearizer` optimization pass in TensorFlow XLA and lead the function `CollectivesScheduleLinearizer::Run` to return `true` are as follows:
 
 1. **Presence of Collective Operations**: The model must contain collective operations such as `AllReduce`, `AllGather`, `CollectivePermute`, or their asynchronous variants (`AllReduceStart`, `AllGatherStart`, `CollectivePermuteStart`, etc.). These operations are typically used in distributed training scenarios where tensors need to be synchronized across multiple devices or replicas.

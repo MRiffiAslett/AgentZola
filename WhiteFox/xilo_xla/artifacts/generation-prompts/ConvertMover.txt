@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ConvertMover that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ConvertMover` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA compiler optimization pass `ConvertMover` is triggered by certain characteristics in a TensorFlow model that involve precision conversion (`kConvert` operations) and their interaction with other operations. To maximize the efficiency of these models, `ConvertMover` rearranges the `kConvert` operations under specific circumstances to optimize computational precision and performance. Below are the key characteristics that would trigger this optimization:
 
 1. **Presence of Convert Operations with Specific Combinational Patterns:**

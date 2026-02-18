@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for DotMerger that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `DotMerger` in TensorFlow XLA.
 
+# Description
 The `DotMerger` optimization in TensorFlow XLA is triggered for TensorFlow models that contain multiple dot product operations (`tf.linalg.matmul` in TensorFlow's Python API) sharing common operands and meeting specific dimensional and layout requirements. This optimization aims to merge these dot operations into a single, more efficient operation. Characteristics of models that would lead to triggering this optimization include:
 
 1. **Multiple Dot Operations with Shared Operands**: Models where several dot operations share the same left-hand-side (LHS) or right-hand-side (RHS) operand. For example, if `A` and `B` are matrices, models performing multiple operations like `dot(A, B)` and `dot(A, C)` can be optimized.

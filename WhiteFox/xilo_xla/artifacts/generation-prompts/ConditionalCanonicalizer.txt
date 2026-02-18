@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ConditionalCanonicalizer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ConditionalCanonicalizer` in TensorFlow XLA.
 
+# Description
 The `ConditionalCanonicalizer` optimization pass in TensorFlow XLA targets TensorFlow models containing conditional (`tf.cond`) operations that do not use tuples for input, output, or branch parameters and results. This optimization pass will be triggered under the following characteristics in a TensorFlow model involving conditionals:
 
 1. **Non-Tuple Branch Parameters and Results:**

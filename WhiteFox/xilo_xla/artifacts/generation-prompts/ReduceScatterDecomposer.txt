@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ReduceScatterDecomposer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReduceScatterDecomposer` in TensorFlow XLA.
 
+# Description
 The optimization pass `ReduceScatterDecomposer` in TensorFlow XLA is triggered by TensorFlow models that specifically use the `ReduceScatter` operation. Here are the characteristics of the TensorFlow models that would activate this pass:
 
 1. **Presence of ReduceScatter Operations:**

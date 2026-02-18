@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ShardingRemover that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ShardingRemover` in TensorFlow XLA.
 
+# Description
 The `ShardingRemover` optimization pass in TensorFlow XLA is triggered by TensorFlow models that have specific custom call operations related to sharding in their computational graphs. These operations are primarily involved in managing tensor shapes and data distribution across different computational devices, often used in models designed for distributed execution. To elaborate, the characteristics of TensorFlow models that would typically trigger this optimization include:
 
 1. **Use of Sharding Operations:** The model must use one or more specific custom call operations that relate to sharding. These operations are identified by their custom call target names, which include:

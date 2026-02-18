@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllReduceFolder that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceFolder` in TensorFlow XLA.
 
+# Description
 The `AllReduceFolder` optimization in TensorFlow XLA is triggered when specific characteristics or patterns are identified within a TensorFlow model, particularly regarding consecutive `AllReduce` operations. Here are the characteristics that would trigger this optimization:
 
 1. **Sequential AllReduce Operations**: The model must contain at least two consecutive `AllReduce` operations. This means one `AllReduce` operation feeds directly into another `AllReduce` operation as its input.

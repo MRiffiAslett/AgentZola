@@ -93,6 +93,9 @@ class StarCoderGenerator:
         self._setup_logging()
         self.llm = self._initialize_llm()
 
+        self._prompt_style = config.prompts.prompt_style if config.prompts else "paper"
+        self._seed_qa = self._load_seed_qa()
+
         self._state_lock = threading.RLock()
         self._llm_lock = threading.Lock()
 
@@ -120,6 +123,18 @@ class StarCoderGenerator:
         generation_dir = Path(__file__).parent
         whitefox_dir = generation_dir.parent
         return whitefox_dir / "logging"
+
+    def _load_seed_qa(self) -> str:
+        if self._prompt_style != "stacked":
+            return ""
+        seed_file = self.config.prompts.seed_file if self.config.prompts else ""
+        if not seed_file:
+            return ""
+        path = self._resolve_path(Path(seed_file))
+        if not path.exists():
+            self.logger.warning(f"Seed file not found: {path}")
+            return ""
+        return path.read_text().strip()
 
     def _get_state_file_path(self) -> Path:
         return self.source_dir / "whitefox_state.json"
@@ -339,12 +354,17 @@ class StarCoderGenerator:
                     else ""
                 )
                 prompt = build_feedback_prompt(
-                    opt_state.spec, example_tests, feedback_instruction
+                    opt_state.spec,
+                    example_tests,
+                    feedback_instruction,
+                    self._prompt_style,
                 )
                 prompt_type = "feedback"
             else:
                 example_tests = []
-                prompt = build_base_prompt(opt_state.spec)
+                prompt = build_base_prompt(
+                    opt_state.spec, self._prompt_style, self._seed_qa
+                )
                 prompt_type = "base"
 
             whitefox_logger.log_prompt(

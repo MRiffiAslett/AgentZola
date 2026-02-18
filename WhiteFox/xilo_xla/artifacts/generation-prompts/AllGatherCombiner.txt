@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllGatherCombiner that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllGatherCombiner` in TensorFlow XLA.
 
+# Description
 The optimization pass `AllGatherCombiner` in TensorFlow XLA is triggered by TensorFlow models that meet specific criteria related to the usage of the `AllGather` operation. Here are the characteristics of models that would cause this optimization to be activated, leading the `AllGatherCombiner::Run` function to return `true`:
 
 1. **Multiple `AllGather` Operations**: The model should contain multiple `AllGather` operations. The optimization aims to combine these into a single, more efficient operation. The combination is beneficial when there are several `AllGather` operations that can be merged based on specific attributes such as gathered dimensions or data types.
