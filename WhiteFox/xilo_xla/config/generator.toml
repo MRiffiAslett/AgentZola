@@ -86,8 +86,8 @@ optimizations = [
 ]
 
 [prompts]
-prompt_style = "paper"   # "paper" (single-pass, Fig 4) or "stacked" (repo-style with seed Q/A prefix)
-seed_file = ""            # path to seed Q+A file, only used when prompt_style = "stacked"
+prompt_style = "stacked"  # "paper" (single-pass, Fig 4) or "stacked" (repo-style with seed Q/A prefix)
+seed_file = "xilo_xla/artifacts/seed_qa.txt"  # path to seed Q+A file, only used when prompt_style = "stacked"
 feedback_instruction = ""
 
 [stopping]
