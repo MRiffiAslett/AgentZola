@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for WhileLoopConstantSinking that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `WhileLoopConstantSinking` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `WhileLoopConstantSinking` is triggered when specific conditions are met in a TensorFlow model involving `while` loops. Below is a concise description of the model characteristics that would activate this pass:
 
 1. **While Loop with Tuple Initialization:**

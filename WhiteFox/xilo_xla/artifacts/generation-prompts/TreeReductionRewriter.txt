@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for TreeReductionRewriter that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `TreeReductionRewriter` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `TreeReductionRewriter` is triggered for models that use the `Reduce` operation in scenarios where at least one of the dimensions being reduced has a size greater than a predefined window size (`reduce_window_size_`). The characteristics of such a model include:
 
 1. **Use of Reduction Operations**: The model must include an operation that performs reduction, such as summing elements across specified dimensions of a tensor.

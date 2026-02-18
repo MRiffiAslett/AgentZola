@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AsyncCollectiveCreator that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AsyncCollectiveCreator` in TensorFlow XLA.
 
+# Description
 The TensorFlow model characteristics that would trigger the `AsyncCollectiveCreator` optimization primarily revolve around the presence and configuration of collective operations within the model's computations. Here are the details:
 
 ### Presence of Specific Collective Operations

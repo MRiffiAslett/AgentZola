@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ConvertAsyncCollectivesToSync that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ConvertAsyncCollectivesToSync` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `ConvertAsyncCollectivesToSync` is triggered for models that use asynchronous collective operations, but where such operations are not effectively overlapped with other independent operations in the execution schedule. This specific optimization aims to replace asynchronous collective operations, which are not overlapped by other operations, with their synchronous counterparts. This is typically beneficial for improving execution determinism and potentially reducing complexity in the runtime handling of these operations.
 
 ### Characteristics of TensorFlow Models to Trigger this Optimization:

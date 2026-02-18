@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for TopkRewriter that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `TopkRewriter` in TensorFlow XLA.
 
+# Description
 The `TopkRewriter` optimization pass in TensorFlow XLA is triggered for TensorFlow models containing a `Sort` operation that can be specialized to a `TopK` operation. This optimization is applicable under certain conditions, primarily when the `Sort` operation is used in a manner consistent with extracting the top `k` elements along a specified dimension. The characteristics of the TensorFlow model that would trigger this optimization include:
 
 1. **Sort Operation with Specific Usage Patterns:** The optimization is triggered when a `Sort` operation is followed by a `Slice` operation that extracts the first `k` elements along the sorted dimension. This pattern typically indicates an intent to retrieve the top `k` elements.

@@ -77,12 +77,12 @@ class PassAliasesConfig(BaseModel):
 
 
 class PromptsConfig(BaseModel):
+    prompt_style: str = "paper"
+    seed_file: str = ""
     feedback_instruction: str = ""
 
 
 class SUTConfig(BaseModel):
-    """SUT identity read from the [sut] section of a generator.toml."""
-
     name: str  # e.g. "xla", "inductor", "tflite"
     framework: str  # e.g. "tensorflow", "pytorch"
 

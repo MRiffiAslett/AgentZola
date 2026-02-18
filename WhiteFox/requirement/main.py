@@ -81,7 +81,9 @@ def main():
             system_message=system_message,
         )
 
-        fallback_dir = base_dir / sut_dir_name / "artifacts" / "Prompts" / "req"
+        fallback_dir = (
+            base_dir / sut_dir_name / "artifacts" / "whitefox_original" / "req"
+        )
 
         results = gpt.batch_generate_requirements(
             prompts=prompts,

@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for HloDce that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `HloDce` in TensorFlow XLA.
 
+# Description
 The `HloDCE` (Dead Code Elimination) optimization in TensorFlow XLA targets TensorFlow models that contain specific characteristics of redundant or unused operations. The primary triggers for this optimization include:
 
 1. **Unused Operations:** If an operation in the model does not contribute to the final output or its outputs are not used by any other operation, it becomes a candidate for elimination. For instance, operations that compute values but are never used in subsequent computations or the output.

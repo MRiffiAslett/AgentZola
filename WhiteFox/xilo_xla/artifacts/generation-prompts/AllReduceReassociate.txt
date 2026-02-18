@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllReduceReassociate that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceReassociate` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `AllReduceReassociate` is triggered by specific patterns in the TensorFlow model involving all-reduce operations that can be reassociated for efficiency. Below are the characteristics and patterns that would trigger this optimization:
 
 1. **Presence of All-Reduce Operations**: The model should contain all-reduce operations. Specifically, the optimization looks for patterns where two all-reduce operations are used as inputs to another operation (typically a binary operation like addition).

@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllReduceCombiner that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `AllReduceCombiner` is triggered for models that have multiple smaller AllReduce operations that can be combined into a single larger AllReduce operation. The characteristics of the TensorFlow model that would activate this optimization include:
 
 1. **Presence of Multiple AllReduce Operations:**

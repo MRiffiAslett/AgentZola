@@ -92,7 +92,7 @@ def generate_requirement_prompts(
 
     if fallback_dir is None:
         optpath_parent = Path(optpath).parent
-        fallback_dir = str(optpath_parent / "Prompts" / "req")
+        fallback_dir = str(optpath_parent / "whitefox_original" / "req")
 
     fallback_path = Path(fallback_dir) if fallback_dir else None
 

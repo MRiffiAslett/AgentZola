@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for HloElementTypeConverter that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `HloElementTypeConverter` in TensorFlow XLA.
 
+# Description
 The `HloElementTypeConverter` optimization pass in TensorFlow XLA is triggered for TensorFlow models that contain operations using a specific data type (`eliminate_type_`) which the optimization aims to replace with another type (`replace_with_type_`). Here are the characteristics of TensorFlow models that would trigger this optimization:
 
 1. **Presence of Specific Data Types**: The model must include operations where either the operands or the results are of a specific primitive data type (`eliminate_type_`). Typical scenarios involve operations originally performed with data types like `float32` that might be targeted for conversion to `float16` to leverage hardware optimizations.

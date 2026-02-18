@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllReduceSimplifier that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceSimplifier` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization `AllReduceSimplifier` targets specific characteristics in a TensorFlow model's distributed training setup. Here are the main characteristics that trigger this optimization, causing the function to return `true`:
 
 1. **AllGather or ReduceScatter with Compatible Shapes**: The model contains either AllGather or ReduceScatter operations where the input and output shapes are identical. This pattern suggests redundancy, as reshaping without dimension change doesn't require any actual data movement or computation.

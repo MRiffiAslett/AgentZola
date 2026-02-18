@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for ZeroSizedHloElimination that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ZeroSizedHloElimination` in TensorFlow XLA.
 
+# Description
 The `ZeroSizedHloElimination` optimization in TensorFlow XLA targets TensorFlow models that contain operations producing zero-sized tensors. These are tensors with shapes where one or more dimensions have a size of zero. This optimization is specifically designed to identify and replace such operations with constants, provided they meet certain conditions. Here are the characteristics of a TensorFlow model that would trigger this optimization:
 
 1. **Presence of Zero-Sized Arrays**: The primary characteristic is the presence of operations that result in zero-sized arrays. These are tensors where the total number of elements calculated by the product of its dimensions is zero.

@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for AllGatherBroadcastReorder that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllGatherBroadcastReorder` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `AllGatherBroadcastReorder` is designed to optimize models where an `AllGather` operation directly follows a `Broadcast` operation within a computation graph. This optimization is triggered under specific conditions related to the arrangement and properties of these operations.
 
 ### Characteristics of TensorFlow Models that Trigger this Optimization:

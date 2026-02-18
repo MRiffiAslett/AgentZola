@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for BroadcastCanonicalizer that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `BroadcastCanonicalizer` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `BroadcastCanonicalizer` is triggered when specific characteristics are met within the TensorFlow model, particularly concerning the use of broadcast operations. Here are the key characteristics that lead to the triggering of this optimization:
 
 1. **Broadcast Operations with Unsorted Dimensions**:

@@ -1,5 +1,7 @@
-Generate a valid TensorFlow model for WhileLoopExpensiveInvariantCodeMotion that meets the requirements.
+### Please generate one valid TensorFlow model that satisfies requirements below.
+You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `WhileLoopExpensiveInvariantCodeMotion` in TensorFlow XLA.
 
+# Description
 The TensorFlow XLA optimization pass `WhileLoopExpensiveInvariantCodeMotion` triggers when specific conditions regarding the invariance and computational expense of operations within a TensorFlow model's while loop body are met. Here are the characteristics of a TensorFlow model that would activate this optimization:
 
 1. **Tuple-Shaped While Instruction**: The while loop must operate on a tuple-shaped state. This is a requirement because the optimization pass does not generalize to non-tuple states. If the while loop state is not a tuple, the function returns false early.
