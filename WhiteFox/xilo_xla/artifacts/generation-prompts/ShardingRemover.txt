@@ -1,48 +1,20 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ShardingRemover` in TensorFlow XLA.
+The model should contain a `CustomCall` operation with a target that matches one of the following:
 
-# Description
-The `ShardingRemover` optimization pass in TensorFlow XLA is triggered by TensorFlow models that have specific custom call operations related to sharding in their computational graphs. These operations are primarily involved in managing tensor shapes and data distribution across different computational devices, often used in models designed for distributed execution. To elaborate, the characteristics of TensorFlow models that would typically trigger this optimization include:
+- "Sharding"
+- "SPMDShardToFullShape"
+- "SPMDFullToShardShape"
+- "ShardingGroupCustomCallTargetName"
+- "PropagationBarrierCustomCallTargetName"
+- "FuncResultShardingTargetName"
+- "ShardBarrierFrom"
+- "ShardBarrierTo"
 
-1. **Use of Sharding Operations:** The model must use one or more specific custom call operations that relate to sharding. These operations are identified by their custom call target names, which include:
-   - `"Sharding"`
-   - `"SPMDShardToFullShape"`
-   - `"SPMDFullToShardShape"`
-   - `sdy::kShardingGroupCustomCallTargetName`
-   - `sdy::kPropagationBarrierCustomCallTargetName`
-   - `sdy::kFuncResultShardingTargetName`
-   - `spmd::kShardBarrierFrom`
-   - `spmd::kShardBarrierTo`
+These operations are used for sharding in distributed TensorFlow. The `ShardingRemover` optimization pass is triggered when these operations are found in the model. The pass replaces these operations with their operands, effectively removing the sharding operations from the model. 
 
-2. **Instruction Characteristics:** Each of these sharding-related instructions must:
-   - Be a `HloInstruction` of type `kCustomCall`.
-   - Have exactly one operand, which the optimization pass uses to replace the sharding instruction.
-
-3. **Model Distribution Strategy:** The model likely employs a distributed computation strategy, possibly using TensorFlow's SPMD (Single Program, Multiple Data) partitioner or similar tools. This is indicated by the presence of sharding and barrier operations that manage how data is partitioned and synchronized across multiple devices.
-
-### Example Model Code
-Here's a hypothetical example illustrating how a TensorFlow model might include such sharding operations, which would trigger the `ShardingRemover` optimization:
+For example, if the model contains the following pattern:
 
 ```python
-import tensorflow as tf
-
-# Example of a distributed TensorFlow setup that might use sharding
-strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
-
-with strategy.scope():
-    # Dummy model
-    inputs = tf.keras.Input(shape=(10,))
-    x = tf.keras.layers.Dense(20)(inputs)
-    outputs = tf.keras.layers.Dense(5)(x)
-    model = tf.keras.Model(inputs=inputs, outputs=outputs)
-
-    # Compiling the model might involve sharding operations for distributed execution
-    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy')
-
-# This setup might result in the generation of custom call operations related to sharding
+t1 = tf.raw_ops.CustomCall(input=input_tensor, custom_call_target="Sharding")
 ```
 
-In this example, the use of `MultiWorkerMirroredStrategy` in TensorFlow could lead to the generation of the relevant custom call operations if the model is compiled in a way that XLA can optimize, and XLA's SPMD partitioner or similar mechanisms are invoked.
-
-### Summary
-The `ShardingRemover` pass will be triggered by models that include specific operations managing sharding and tensor shape transformations across distributed systems, with each operation needing to follow specific characteristics, such as having a single operand and being a custom call operation.
+The `ShardingRemover` optimization pass will replace `t1` with `input_tensor`, removing the sharding operation.

@@ -1,12 +1,5 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `IdentityConvertRemoving` in TensorFlow XLA.
-
-# Description
-The model should contain a type-cast operation where the input and output data types
-are identical:
+The model should contain the following pattern:
 ```
-x = tf.constant([1.0, 2.0, 3.0], dtype=tf.float32)
-y = tf.cast(x, dtype=tf.float32)   # identity cast: float32 -> float32
+t1 = tf.cast(input_tensor, dtype=input_tensor.dtype)
 ```
-The optimization removes redundant `tf.cast` calls where the source and destination
-data types are the same, directly forwarding the input tensor.
+The pattern describes that there is a `cast` operator in the model that attempts to convert a tensor `input_tensor` from its original data type to the same data type. This is essentially an identity operation and does not change the tensor.

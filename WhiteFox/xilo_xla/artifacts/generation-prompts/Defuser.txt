@@ -1,42 +1,5 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `Defuser` in TensorFlow XLA.
+The model should contain a fusion computation. A fusion computation is a sub-computation that is fused into a single HLO instruction. This is typically done for performance reasons, to reduce memory bandwidth requirements or to expose more opportunities for compiler optimizations.
 
-# Description
-The TensorFlow XLA `Defuser` optimization pass is specifically triggered by the presence of fusion computations within a TensorFlow model when compiled with XLA. This optimization targets the defusion of these computations under certain conditions. Here are the characteristics of a TensorFlow model that would lead to this optimization being activated:
+In the context of the `Defuser` optimization pass, the model should have a fusion computation that is only called from a single callsite. This is indicated by the check `call_graph_node.caller_callsites().size() == 1`.
 
-1. **Presence of Fusion Computations**: The model must contain one or more fusion computations. Fusion in XLA combines multiple operations into a single, more efficient operation, reducing memory bandwidth and improving execution speed. However, in some scenarios, defusion might be necessary to meet specific constraints or improve debuggability.
-
-2. **Single Caller Requirement**: Each fusion computation must be referenced by exactly one caller. This is checked by ensuring that the size of `caller_callsites()` for the computation node is exactly one. This characteristic implies that the fused operation is used exactly once, making it a candidate for defusion without affecting multiple parts of the graph.
-
-### Illustrative TensorFlow Model Code Example
-
-Below is a simplified example to illustrate a TensorFlow model that might trigger the `Defuser` optimization when compiled with XLA:
-
-```python
-import tensorflow as tf
-
-@tf.function
-def model(x):
-    # Example operation that could potentially be fused by XLA
-    y = tf.square(x)
-    z = tf.sin(y)
-    w = tf.cos(z)
-    # A sequence of operations that might be fused together
-    result = y + z + w
-    return result
-
-# Create a TensorFlow graph from the model function
-x = tf.constant([1.0, 2.0, 3.0])
-result = model(x)
-
-# Compile the model with XLA
-tf.config.optimizer.set_jit(True)  # Enable XLA
-print(result)
-```
-
-In the above TensorFlow code:
-
-- The operations within the `model` function could be candidates for fusion by XLA depending on the heuristics and optimizations applied by the compiler.
-- If these operations are fused into a single computation but are only used once (as in this scenario), the `Defuser` pass would trigger, checking for the possibility of defusing this computation if it meets the criteria specified in the `Defuser` optimization logic.
-
-The effect of triggering this pass results in the defusion of the specified fused operations, potentially reverting them back to their individual components, depending on the internal logic and constraints defined by XLA's optimization strategies.
+The `Defuser` optimization pass is triggered when such a fusion computation is found in the model. The fusion instruction is then defused, which means it is replaced by its constituent instructions. This changes the structure of the model, which is why the function returns `true` for `changed`.

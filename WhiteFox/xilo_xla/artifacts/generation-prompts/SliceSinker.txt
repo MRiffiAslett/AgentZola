@@ -1,37 +1,25 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `SliceSinker` in TensorFlow XLA.
+The TensorFlow model triggers the optimization pass `SliceSinker` in TensorFlow XLA when it contains a group of elementwise operations on slices that meet the following conditions:
 
-# Description
-In TensorFlow models, the `SliceSinker` optimization pass in TensorFlow XLA is triggered under specific conditions related to how elementwise operations interact with slice operations. The characteristics of the TensorFlow model that would lead to this optimization involve:
+1. The operands of each operation are slices taken from the same indices of larger tensors with the same dimensions.
+2. All operations have the same opcode.
+3. The corresponding operands of all operations are slices taken from the same larger tensors.
+4. The accumulated size of the group of operations is not less than the size of such a larger tensor. This is a heuristic to ensure that the transformation never causes us to do more elementwise operations.
 
-1. **Elementwise Operations on Sliced Tensors**:
-   The model includes elementwise operations where each operand of the operation is a slice from a larger tensor. These operations should all be similar in terms of the operation type (i.e., all adds, multiplies, etc.) and should operate on tensors sliced in an identical manner (same start, end, and strides).
-
-2. **Same Slice Configuration Across Operands**:
-   For the `SliceSinker` pass to be triggered, all operands of a given elementwise operation must be slices from tensors with the same dimensions, and the slices themselves must be configured identically across these tensors. This means the start indices, end indices, and strides in the slice operations should be the same.
-
-3. **Operational Cost-Effectiveness**:
-   The combined size of the outputs from the elementwise operations should not be smaller than the size of the slices' source tensors. This is checked to ensure that the optimization does not increase the computational load.
-
-### Example Model
-
-Consider a TensorFlow model where a tensor is sliced into smaller parts, and each part is processed using the same elementwise operation:
+Here is an example of a model that would trigger this optimization:
 
 ```python
 import tensorflow as tf
 
-# Assume a large tensor
-large_tensor = tf.random.normal([10, 10])
+# Define a tensor
+p = tf.constant([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=tf.float32)
 
-# Slicing the tensor
-slice1 = large_tensor[0:5, :]
-slice2 = large_tensor[5:10, :]
+# Define slices
+a = tf.slice(p, [0], [6])
+b = tf.slice(p, [6], [4])
 
-# Elementwise operations on slices
-result1 = tf.add(slice1, slice1)
-result2 = tf.add(slice2, slice2)
+# Define elementwise operations
+aa = tf.add(a, a)
+bb = tf.add(b, b)
 ```
 
-In the above example, both `result1` and `result2` are performing an addition operation on slices of `large_tensor`. If these slices are adjacent and the operations are the same (both are additions), the `SliceSinker` could optimize this by performing the addition on the entire `large_tensor` first, and then slicing the result accordingly.
-
-This model characteristic leverages the `SliceSinker` optimization because it meets the criteria of having elementwise operations on similarly configured slices of tensors, potentially reducing the number of operations and hence computational overhead.
+In this example, the operations `aa` and `bb` are elementwise operations on slices `a` and `b` of tensor `p`. They meet the conditions described above, so they would trigger the `SliceSinker` optimization pass.

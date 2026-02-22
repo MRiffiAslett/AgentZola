@@ -1,31 +1,12 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `DotDecomposer` in TensorFlow XLA.
+The model should contain a non-canonical dot operation. A dot operation is considered non-canonical if it has more than one contracting dimension, or if it has more than one non-contracting dimension, or if it has no batch dimensions and no contracting dimensions. 
 
-# Description
-The `DotDecomposer` optimization pass in TensorFlow XLA is triggered by characteristics in the TensorFlow model where a `Dot` (matrix multiplication) operation does not conform to a canonical form based on specific conditions related to the shapes of its operands and their dimensional properties. The following characteristics would cause this optimization to activate:
+In addition, the batch dimensions, if present, must be canonical. This means that the batch dimensions should be in ascending order starting from 0. 
 
-1. **Multiple Contracting Dimensions**: If a `Dot` operation has more than one dimension designated as contracting (i.e., the dimensions over which the summation happens), it is considered non-canonical. Typically, a canonical dot operation should involve a single contracting dimension.
-
-2. **Excess Non-contracting Dimensions**: A `Dot` operation is non-canonical if the number of non-contracting dimensions (those not involved in the summation or batch processing) plus the batch dimensions is less than the total number of dimensions of the operands minus two. This essentially checks if there are extra dimensions that are neither batch nor contracting dimensions, which complicates the operation's structure.
-
-3. **Misaligned Batch Dimensions**: For a `Dot` operation to be canonical, the batch dimensions (if any) should be sequentially aligned starting from the zeroth dimension. Any deviation from this sequence (e.g., batch dimensions scattered or starting from a non-zero dimension) will trigger the optimization.
-
-4. **Absence of Batch and Contracting Dimensions**: A completely flat operation with no batch or contracting dimensions is also considered non-canonical.
-
-Here's a simple illustrative example in Python using TensorFlow (assuming equivalent XLA lowerings):
+Here is an example of a non-canonical dot operation in TensorFlow:
 
 ```python
-import tensorflow as tf
-
-# Example of a non-canonical dot operation due to multiple contracting dimensions
-a = tf.random.normal([4, 5, 6, 7])
-b = tf.random.normal([4, 5, 7, 8])
-result = tf.tensordot(a, b, axes=[[2, 3], [2, 1]])
-
-# This operation might cause DotDecomposer to trigger because:
-# - It uses two contracting dimensions (dimensions 2 and 3 of `a` and dimensions 2 and 1 of `b`).
+# Assume a and b are tensors with shapes (3, 2, 4) and (3, 4, 2) respectively
+c = tf.tensordot(a, b, axes=[[1, 2], [2, 1]])
 ```
 
-In this example, if the `tensordot` operation is decomposed into an XLA graph and the dimensions of the operands are as specified, the `DotDecomposer` would likely trigger because the operation involves multiple contracting dimensions, which is non-canonical. This would lead the `DotDecomposer` to attempt to restructure this operation into a canonical form that might involve reshaping or transposing the operands to align with the expected canonical structure.
-
-The presence of any of these characteristics in a TensorFlow model where `Dot` operations are used will lead to the activation of the `DotDecomposer` optimization pass when compiling with XLA.
+In this example, the dot operation is non-canonical because it has more than one contracting dimension. The `DotDecomposer` optimization pass will be triggered to canonicalize this dot operation.

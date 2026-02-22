@@ -1,42 +1,23 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `LoopScheduleLinearizer` in TensorFlow XLA.
+The model should contain a loop structure (i.e., a `while` operation) that does not contain any asynchronous collective operations. The loop's body computation should have a specific pattern of data dependencies where a value is written and then read in the same loop iteration. 
 
-# Description
-### Characteristics of TensorFlow Models Triggering `LoopScheduleLinearizer` Optimization
+The `LoopScheduleLinearizer` optimization pass is triggered when it can add control dependencies to ensure that these reads happen before the corresponding writes, without introducing a cycle in the computation graph. 
 
-The `LoopScheduleLinearizer` optimization in TensorFlow XLA is specifically designed to handle scenarios in TensorFlow models containing `While` loops where additional control dependencies can be introduced to prevent hazards such as write-after-read or read-after-write. The key characteristics of models that trigger this optimization are:
+The optimization pass is not applied if the loop body contains asynchronous collective operations, as the additional control dependencies could constrain scheduling and hamper compute and communication overlap. 
 
-1. **Presence of `While` Loops:**
-   The model must contain at least one `While` loop. The optimization pass scans through the instructions of each computation in the model, looking specifically for instructions with an opcode of `kWhile`.
+Here is an example of a TensorFlow model that could trigger this optimization pass:
 
-   ```python
-   tf.while_loop(cond, body, [initial_values])
-   ```
+```python
+i = tf.constant(0)
+c = lambda i: tf.less(i, 10)
 
-2. **Absence of Async Collectives in Loop Body:**
-   The body of the `While` loop should not contain asynchronous collective operations. These include operations that start or end asynchronous collectives, as their presence skips the optimization to avoid potential scheduling constraints that could affect performance.
+def body(i):
+    v = tf.Variable(tf.zeros([10, 10]))
+    v = v + i  # write
+    i = i + 1
+    v = v + i  # read
+    return i
 
-   ```python
-   # Example of what should not be present in the loop body
-   tf.raw_ops.CollectiveReduce(...)
-   ```
+r = tf.while_loop(c, body, [i])
+```
 
-3. **Simple Data Dependencies:**
-   The optimization targets `While` loops where there are straightforward data dependencies that do not involve complex scenarios like nested tuples or aliasing issues. The primary focus is on single values or simple structures that can be traced back directly to their defining instructions within the loop.
-
-   ```python
-   # Simplified example of loop variables being traced
-   i = loop_var
-   result = i + 1  # Direct dependency
-   ```
-
-4. **Potential to Introduce Control Dependencies:**
-   The optimization can be applied when it is feasible to add control dependencies between read and write operations within the loop without introducing cycles in the computation graph. This is assessed dynamically by attempting to insert edges in a computation graph model and checking for cycles.
-
-   ```python
-   # Hypothetical scenario where adding control dependency is considered
-   if not already_dependent(read_op, write_op):
-       try_add_dependency(read_op, write_op)
-   ```
-
-A TensorFlow model that includes such characteristics, particularly `While` loops with simple and direct data dependencies and without asynchronous collectives, is a candidate for this optimization pass. The purpose is to ensure more predictable execution by linearizing the schedule of operations within the loop, thereby potentially improving the performance and stability of the model during execution.
+In this example, the variable `v` is written and then read in the same loop iteration. The `LoopScheduleLinearizer` optimization pass could add a control dependency to ensure that the read of `v` happens after the write.

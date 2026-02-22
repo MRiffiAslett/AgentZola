@@ -1,52 +1,10 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReduceScatterDecomposer` in TensorFlow XLA.
+The model should contain a `HloReduceScatterInstruction` operation that is an array. This operation is a collective operation that combines values across multiple devices and scatters the result. 
 
-# Description
-The optimization pass `ReduceScatterDecomposer` in TensorFlow XLA is triggered by TensorFlow models that specifically use the `ReduceScatter` operation. Here are the characteristics of the TensorFlow models that would activate this pass:
+The `ReduceScatterDecomposer` optimization pass is triggered when the model contains a `HloReduceScatterInstruction` that meets the following conditions:
 
-1. **Presence of ReduceScatter Operations:**
-   The model must contain at least one `ReduceScatter` operation. This is an operation used typically in distributed training to reduce and then scatter the result to different parts of a cluster.
+1. The `HloReduceScatterInstruction` operation is an array. This is checked by `rs->shape().IsArray()`.
+2. The `should_decompose_` function, if provided, returns true when called with the `HloReduceScatterInstruction` as an argument. This is checked by `should_decompose_ && !should_decompose_(rs)`.
 
-2. **Array Shapes:**
-   The `ReduceScatter` operation must operate on data with array shapes. If the data shapes are not arrays, the optimization will not be triggered.
+The `ReduceScatterDecomposer` optimization pass decomposes the `HloReduceScatterInstruction` into an all-reduce operation followed by a dynamic slice operation. The all-reduce operation combines values across multiple devices, and the dynamic slice operation scatters the result. 
 
-3. **Decomposition Conditions:**
-   There has to be a specific decomposition requirement or condition set (possibly via conditions or configurations external to this code snippet), which is checked by the `should_decompose_` condition. If this condition or configuration is set not to decompose (i.e., returns false), the optimization will not proceed even if other conditions are met.
-
-4. **Channel Management:**
-   If the `ReduceScatter` operation specifies a channel_id, a new channel ID is generated, implying that this optimization can involve creating separate communication channels for the newly decomposed operations. This is important for operations that might need isolated or specific communication paths in distributed environments.
-
-5. **Use of the Original Reduction Computation:**
-   The optimization clones the original reduction computation (`to_apply()`) used in the `ReduceScatter` operation. This means that the models which use custom or specific reduction functions in their `ReduceScatter` operations will have these functions preserved and reused in the decomposed operations.
-
-6. **Dynamic Slicing Based on Start Indices:**
-   The optimization involves creating dynamic slices of the result of an all-reduce operation based on calculated start indices. This indicates that the model should be compatible with or expect operations that can segment data dynamically post-reduction, according to the collective operation's configuration (like `replica_groups`).
-
-### Example Model Pattern:
-
-Here's a simplified example pattern in Python using TensorFlow that might trigger this optimization when compiled with XLA:
-
-```python
-import tensorflow as tf
-
-# Assuming a distributed strategy context is appropriately set
-dist_strategy = tf.distribute.MirroredStrategy()
-
-with dist_strategy.scope():
-    # Input tensor
-    tensor = tf.ones([4, 5])  # Shape is an array which is necessary
-
-    # Custom reduction operation (sum in this case)
-    def reduce_op(x, y):
-        return x + y
-
-    # ReduceScatter operation
-    output = tf.raw_ops.ReduceScatter(
-        input=tensor,
-        group_assignment=[[0, 1], [2, 3]],
-        reduce_op=reduce_op,
-        scatter_dim=1
-    )
-```
-
-In this example, if compiled under XLA and with specific settings or flags that allow decomposition, the `ReduceScatterDecomposer` might be triggered due to the presence of the `ReduceScatter` operation with an array shape and specific reduction operation.
+The model triggers the `ReduceScatterDecomposer` optimization pass if it contains a `HloReduceScatterInstruction` that meets the conditions above. The pass will return true if it successfully decomposes at least one `HloReduceScatterInstruction`.

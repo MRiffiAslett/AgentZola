@@ -1,30 +1,13 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `Bfloat16ConversionFolding` in TensorFlow XLA.
+The model should contain the following pattern:
 
-# Description
-The `Bfloat16ConversionFolding` optimization in TensorFlow XLA is triggered by specific characteristics in a TensorFlow model related to the usage of BF16 and F32 data types. This optimization aims to fold BF16 to F32 conversions, and vice versa, directly into the operations when certain conditions are met. Here are the key characteristics that can trigger this optimization:
-
-1. **Model contains BF16 to F32 conversions as inputs to operations**: If an operation has an operand that is a conversion from BF16 to F32, and the operation supports BF16 inputs directly (as indicated by `bfloat16_support_->SupportsLowPrecisionOperand`), then this conversion can be folded into the operation.
-
-2. **Model contains F32 to BF16 conversions as outputs from operations**: If all users of an operation's output are converting from F32 to BF16, and the operation supports BF16 outputs directly (as determined by `bfloat16_support_->SupportsLowPrecisionOutput`), these conversions can be folded into the operation.
-
-3. **Operations that do not support mixed precision**: If an operation does not support mixed precision inputs/outputs (as determined by `bfloat16_support_->SupportsMixedPrecisions`), then the optimization checks if either all inputs can be converted to BF16 or if the output can remain in F32 to apply the optimization. 
-
-4. **Avoidance of specific operations**: The optimization does not apply to operations associated with tuples, constants, parameters, fusion, casting, control flow, or those that have side effects or in-place modifications.
-
-### Example Patterns in TensorFlow Model:
-```python
-import tensorflow as tf
-
-# Example where BF16 to F32 conversion can be folded
-input_tensor = tf.constant([1.0, 2.0], dtype=tf.bfloat16)
-converted_tensor = tf.cast(input_tensor, tf.float32)  # BF16 -> F32 conversion
-result = tf.nn.relu(converted_tensor)  # This operation can directly take BF16
-
-# Example where F32 to BF16 conversion can be folded
-float_tensor = tf.constant([1.0, 2.0], dtype=tf.float32)
-result = tf.nn.relu(float_tensor)  # Operation outputting F32
-converted_result = tf.cast(result, tf.bfloat16)  # F32 -> BF16 conversion
+```
+t1 = tf.cast(input_tensor, tf.bfloat16)
+t2 = tf.some_operation(t1)
+t3 = tf.cast(t2, tf.float32)
 ```
 
-In these examples, the `Bfloat16ConversionFolding` optimization would check if the operations (`tf.nn.relu` in this case) support direct BF16 inputs/outputs, and if all conditions are satisfied, the conversions would be folded into the operation, potentially improving performance by reducing unnecessary data type conversions.
+The pattern describes that there is a cast operation from `float32` to `bfloat16` on the input tensor, followed by some operation, and then a cast operation from `bfloat16` back to `float32`. The operation in the middle should be one that supports mixed precision, meaning it can accept `bfloat16` and `float32` inputs and produce `bfloat16` and `float32` outputs. 
+
+The optimization pass `Bfloat16ConversionFolding` is triggered when all users of the operation are conversions from `float32` to `bfloat16` and the operation supports low precision output. The optimization pass is also triggered when the operation has a `bfloat16` to `float32` conversion as input and supports low precision operand. 
+
+The optimization pass folds the conversions into the operation itself, meaning it changes the operation to directly produce or consume `bfloat16` data, eliminating the need for the conversions. This can improve performance by reducing the amount of data that needs to be converted.

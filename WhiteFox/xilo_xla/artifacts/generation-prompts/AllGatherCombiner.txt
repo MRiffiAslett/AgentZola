@@ -1,42 +1,19 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllGatherCombiner` in TensorFlow XLA.
+The model should contain multiple AllGather operations that can be combined into a single AllGather operation. The characteristics of these AllGather operations are:
 
-# Description
-The optimization pass `AllGatherCombiner` in TensorFlow XLA is triggered by TensorFlow models that meet specific criteria related to the usage of the `AllGather` operation. Here are the characteristics of models that would cause this optimization to be activated, leading the `AllGatherCombiner::Run` function to return `true`:
+1. They are in the same computation.
+2. They have the same all_gather_dimension if the `combine_by_dim` flag is set.
+3. They have the same data type if the `combine_different_dtypes` flag is not set.
+4. They have the same replica groups.
+5. They have the same channel_id if it exists.
+6. They use the same global device ids.
 
-1. **Multiple `AllGather` Operations**: The model should contain multiple `AllGather` operations. The optimization aims to combine these into a single, more efficient operation. The combination is beneficial when there are several `AllGather` operations that can be merged based on specific attributes such as gathered dimensions or data types.
+The total size of the operands of these AllGather operations should exceed the `combine_threshold_in_bytes` and the total number of these AllGather operations should exceed the `combine_threshold_count`.
 
-2. **Same All-Gather Dimension (if combined by dimension)**: If the `combine_by_dim` flag is `true`, all `AllGather` operations considered for merging should gather data along the same dimension. This is checked by comparing the `all_gather_dimension` of each operation.
-
-3. **Data Type Consistency (when not combining different data types)**: If the `combine_different_dtypes` flag is `false`, all `AllGather` operations must have the same data type to be eligible for combination.
-
-4. **Thresholds**: The combined size of the `AllGather` operations must meet certain thresholds (`combine_threshold_in_bytes` and `combine_threshold_count`) for the optimization to be considered worthwhile. These thresholds ensure that the combination is beneficial in terms of computational and memory efficiency.
-
-5. **Absence of Layout Constraints**: The model should not contain `AllGather` operations with layout constraints as these could complicate or invalidate the combining process.
-
-6. **Computation Context**: The optimization avoids combining `AllGather` operations within computations that are part of a `while` loop if the `combine_while_loops` flag is `false`. This is to prevent potential complications in control flow structures.
-
-7. **Consistent Replication and Device Settings**: The `AllGather` operations must share similar settings concerning replication groups, channel IDs, and whether global device IDs are used. These settings ensure that the combined operation can function correctly across multiple devices or replicas.
-
-### Illustrative Code Example
-Here’s a simplified Python example using TensorFlow and simulating conditions that might trigger this optimization:
+Here is an example of such a pattern:
 
 ```python
-import tensorflow as tf
-
-# Assume a distributed strategy context
-strategy = tf.distribute.MirroredStrategy(devices=["GPU:0", "GPU:1"])
-
-with strategy.scope():
-    # Input tensors
-    tensor1 = tf.ones([10, 100])
-    tensor2 = tf.ones([10, 100])
-
-    # Multiple AllGather operations
-    gathered1 = tf.raw_ops.AllGatherV2(input=tensor1, group_size=2, axis=0)
-    gathered2 = tf.raw_ops.AllGatherV2(input=tensor2, group_size=2, axis=0)
-
-# This setup might trigger the AllGatherCombiner if other conditions (like thresholds) are met.
+t1 = tf.distribute.all_gather(input_tensor1, axis=0)
+t2 = tf.distribute.all_gather(input_tensor2, axis=0)
 ```
 
-This TensorFlow code defines multiple `AllGather` operations which, under the right conditions (like identical `axis` and sufficient `group_size`), might be combined through the `AllGatherCombiner` optimization in an XLA compilation context.
+In this example, `t1` and `t2` are AllGather operations that can be combined into a single AllGather operation if `input_tensor1` and `input_tensor2` have the same data type and the total size of `input_tensor1` and `input_tensor2` exceeds the `combine_threshold_in_bytes`.

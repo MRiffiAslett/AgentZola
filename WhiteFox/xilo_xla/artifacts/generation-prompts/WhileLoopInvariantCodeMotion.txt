@@ -1,37 +1,29 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `WhileLoopInvariantCodeMotion` in TensorFlow XLA.
+The TensorFlow model should contain a while loop where certain instructions within the loop body are invariant, meaning they produce the same output regardless of the loop iteration. These instructions can be hoisted out of the loop to improve performance. 
 
-# Description
-The `WhileLoopInvariantCodeMotion` optimization in TensorFlow XLA is designed to identify and hoist invariant computations outside of the while loop to improve performance by reducing redundant computations across loop iterations. The characteristics of TensorFlow models that would trigger this optimization include:
+The `WhileLoopInvariantCodeMotion` optimization pass is triggered when the following conditions are met:
 
-1. **Presence of While Loops with Tuple Outputs:** The model must contain at least one while loop whose output is a tuple. This is a prerequisite since the optimization logic checks if the while loop's shape is a tuple before proceeding with any invariant code motion.
+1. The while loop's body computation is a tuple. This is because the optimization pass currently only supports hoisting from tuple computations. 
 
-2. **Loop Trip Count Greater Than One:** The optimization pass skips loops that are determined to have a trip count of at most one. For the optimization to be triggered, the loop should potentially execute more than once.
+2. The while loop has more than one iteration. If the loop has a trip count of at most 1, the optimization pass is skipped.
 
-3. **Invariant Computations Inside the While Loop:** The loop should contain computations that are invariant, meaning they compute the same value in every iteration of the loop. These include operations on constants, computations that depend only on loop-invariant inputs, and certain operations like reshapes or broadcasts which are determined to be hoistable as per the optimization logic.
+3. The while loop's body computation contains instructions that are invariant and worth hoisting. These instructions do not have side effects, are not parameters, do not have control predecessors or successors, and their operands are also invariant. 
 
-4. **Profitability of Hoisting:** Even if an instruction is invariant, it won't be hoisted unless it's also deemed profitable. For example, reshapes and constants can be hoisted based on the flags `hoist_reshapes_` and `hoist_constants_`. Other operations like bitcasts, broadcasts, and slices are typically not hoisted unless doing so enables the hoisting of other dependent computations.
+4. The hoisting of the invariant instructions does not cause a significant memory blow-up. This is checked by comparing the output size of the instruction to the input size. If the output size is significantly larger than the input size, the instruction is not hoisted.
 
-5. **Absence of Certain Conditions:** The optimization will not proceed if any of the instructions in the loop has side effects, certain custom calls (e.g., related to sharding or memory annotations), or if the instructions are involved in complex control flow scenarios (like having control predecessors or successors).
+5. The while loop does not contain domain instructions or host offloading annotations. These instructions should stay in their original position.
 
-6. **Memory and Computational Cost Considerations:** The optimization evaluates the memory footprint and computational cost. For instance, it checks whether hoisting an instruction would significantly increase memory usage relative to the inputs of the instruction.
-
-7. **Absence of Specific Frontend Attributes:** If the while loop has a frontend attribute `_xla_disable_loop_instr_hoisting`, the optimization will be skipped for that loop.
-
-### Example:
-Here’s an example TensorFlow model snippet where the optimization might be triggered:
+Here is an example of a TensorFlow model that would trigger this optimization pass:
 
 ```python
 import tensorflow as tf
 
-# A simple loop where the body reshapes a tensor, which is an invariant operation.
-i = tf.constant(0)
-c = lambda i: tf.less(i, 10)
-b = lambda i: (tf.reshape(i, [1, 1]),)
-r = tf.while_loop(c, b, [i])
+@tf.function(jit_compile=True)
+def foo(x):
+    for _ in tf.range(10):
+        x = tf.constant(1) + x  # This constant can be hoisted out of the loop
+    return x
 
-with tf.Session() as sess:
-    print(sess.run(r))
+foo(tf.constant(0))
 ```
 
-In this example, the reshape operation inside the while loop does not depend on the loop variable in a way that changes across iterations, making it a candidate for hoisting out of the loop. The output of the loop is also a tuple, fitting the optimization's requirements. If hoisting is considered profitable and there are no disqualifying conditions, the `WhileLoopInvariantCodeMotion` might be triggered to optimize this loop.
+In this example, the constant `tf.constant(1)` is invariant and can be hoisted out of the loop by the `WhileLoopInvariantCodeMotion` optimization pass.

@@ -1,33 +1,5 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `HloElementTypeConverter` in TensorFlow XLA.
+The TensorFlow model should contain operations that use a specific primitive type that needs to be replaced with another primitive type. The `HloElementTypeConverter` optimization pass is triggered when the model contains operations that use the `eliminate_type_` and these operations are not among the ones that are excluded from conversion (e.g., `kParameter`, `kConstant`, `kTuple`, `kConvert`, `kBitcastConvert`, `kGetTupleElement`, `kInfeed`, `kOutfeed`, `kCustomCall`, and others with embedded computations). 
 
-# Description
-The `HloElementTypeConverter` optimization pass in TensorFlow XLA is triggered for TensorFlow models that contain operations using a specific data type (`eliminate_type_`) which the optimization aims to replace with another type (`replace_with_type_`). Here are the characteristics of TensorFlow models that would trigger this optimization:
+The model should contain operations that perform arithmetic operations and contain operands with `eliminate_type_`. These operands are converted to `replace_with_type_`. If the result of the operation is also of `eliminate_type_`, it is converted to `replace_with_type_` and then back to `eliminate_type_`. If the result is a tuple, the elements of the tuple that are of `eliminate_type_` are converted to `replace_with_type_` and then back to `eliminate_type_`. 
 
-1. **Presence of Specific Data Types**: The model must include operations where either the operands or the results are of a specific primitive data type (`eliminate_type_`). Typical scenarios involve operations originally performed with data types like `float32` that might be targeted for conversion to `float16` to leverage hardware optimizations.
-
-2. **Arithmetic and Non-Tuple Operations**: The optimization is specifically triggered by arithmetic operations (excluding certain operations that involve complex data dependencies or external binaries, like `CustomCall`). The operations should not be mere data movement or structural operations like `Tuple`, `GetTupleElement`, `Parameter`, or `Constant`.
-
-3. **Exclusion of Specialized Operations**: Operations that inherently handle data types differently or have embedded computations (e.g., `While`, `Call`, `Fusion`, `Map`, `Reduce`, `Scatter`) are excluded because these often manage data types internally or involve multiple stages where data types are handled contextually.
-
-4. **Direct or Indirect Use of `eliminate_type_`**: The optimization pass checks for direct usage of `eliminate_type_` in the operation's result type or indirectly through its operands. Even if an operation does not directly output `eliminate_type_`, it can still trigger the optimization if its operands use `eliminate_type_`.
-
-5. **Non-Tuple to Tuple Conversions**: When dealing with operations that output tuple types involving `eliminate_type_`, the pass converts these elements within the tuples from `eliminate_type_` to `replace_with_type_` and then potentially back to match the original structure.
-
-Here is a hypothetical example to illustrate:
-
-```python
-import tensorflow as tf
-
-# Assuming 'float32' is to be eliminated in favor of 'float16'
-x = tf.constant([1.0, 2.0, 3.0], dtype=tf.float32)
-y = tf.constant([4.0, 5.0, 6.0], dtype=tf.float32)
-
-# Operation that would trigger the optimization if float32 is targeted for elimination
-z = tf.add(x, y)  # This operation's result is in float32, which is set to be eliminated
-
-# If HloElementTypeConverter is set to replace float32 with float16,
-# it would convert the operands to float16, perform the addition, then possibly convert back.
-```
-
-In this example, the addition operation (`tf.add`) uses `float32` for both operands and output. If the optimization pass targets `float32` for conversion to `float16`, it would be triggered here, converting the operation internally within XLA to use `float16` for the computation, potentially improving performance on certain hardware.
+For example, if `eliminate_type_` is `F32` and `replace_with_type_` is `F64`, an operation in the model like `t1 = tf.add(tf.constant([1.0, 2.0], dtype=tf.float32), tf.constant([3.0, 4.0], dtype=tf.float32))` would trigger the optimization pass.

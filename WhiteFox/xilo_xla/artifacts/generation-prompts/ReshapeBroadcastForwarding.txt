@@ -1,16 +1,6 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReshapeBroadcastForwarding` in TensorFlow XLA.
-
-# Description
-The model should contain a pattern where a scalar tensor is broadcast to a 1-D tensor
-of size 1, and then reshaped back to a scalar:
+The model should contain the following pattern:
 ```
-x = tf.constant(3.14)               # scalar, shape []
-b = tf.broadcast_to(x, [1])         # broadcast scalar -> shape [1]
-result = tf.reshape(b, [])          # reshape back to scalar []
+t1 = tf.broadcast_to(input_tensor, [1])
+t2 = tf.reshape(t1, [])
 ```
-The optimization detects this round-trip pattern (scalar -> [1] -> scalar) and replaces
-it with the original scalar tensor directly. Requirements:
-- The input to broadcast must be a scalar (rank 0).
-- The broadcast output must be rank 1 (shape [1]).
-- The reshape output must be rank 0 (scalar).
+The pattern describes that there is a `broadcast_to` operator that transforms a scalar `input_tensor` to a 1D tensor with a single element, and then a `reshape` operator transforms this 1D tensor back to a scalar. The `broadcast_to` operator's output shape should be `[1]` and the `reshape` operator's output shape should be `[]` (scalar).

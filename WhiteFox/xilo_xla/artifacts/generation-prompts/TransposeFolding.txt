@@ -1,46 +1,19 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `TransposeFolding` in TensorFlow XLA.
+The model should contain the following patterns:
 
-# Description
-The `TransposeFolding` optimization pass in TensorFlow XLA specifically targets situations where transpose operations can be merged into neighboring convolution or dot (matrix multiplication) operations, thereby simplifying the overall computation and potentially enhancing performance. This optimization is triggered under the following conditions in a TensorFlow model:
+1. A dot operation where at least one of the operands is a non-identity transpose operation. A non-identity transpose operation is one where the dimensions of the transpose operation are not in the same order as the original dimensions. For example:
 
-1. **Convolution with Transposed Input or Kernel:**
-   - The model has a convolution operation (`kConvolution`) where either the input or the kernel (or both) is preceded by a transpose operation (`kTranspose`).
-   - The transpositions of the operands (input or kernel) must align with the convolution's dimension numbers in a way that they can be "folded" into the convolution operation itself. This means adjusting the convolution's dimension numbers according to the permutations specified by the transposes.
-   - An example scenario is when a convolution's input feature or batch dimension is permuted, and this permutation can be directly absorbed into the convolution's specification.
+```python
+t1 = tf.transpose(input_tensor, perm=[1, 0, 2])
+t2 = tf.linalg.matmul(t1, another_tensor)
+```
 
-   ```python
-   # Example TensorFlow (Python) code:
-   import tensorflow as tf
+In this case, `t1` is a non-identity transpose operation because the permutation `[1, 0, 2]` is not the same as the original order `[0, 1, 2]`. The `matmul` operation is equivalent to a dot operation in TensorFlow.
 
-   # Input and filter with a transpose operation before convolution
-   input_tensor = tf.random.normal([1, 28, 28, 3])  # [batch, height, width, channels]
-   filter_tensor = tf.random.normal([5, 5, 3, 32])
+2. A convolution operation where at least one of the operands is a transpose operation. For example:
 
-   # Transposed input and/or filter
-   transposed_input = tf.transpose(input_tensor, perm=[0, 3, 1, 2])  # Transposing to [batch, channels, height, width]
-   transposed_filter = tf.transpose(filter_tensor, perm=[1, 0, 2, 3])  # Example permutation
+```python
+t1 = tf.transpose(input_tensor, perm=[1, 0, 2])
+t2 = tf.nn.conv2d(t1, filter, strides, padding)
+```
 
-   # Convolution operation
-   result = tf.nn.conv2d(transposed_input, transposed_filter, strides=[1, 1, 1, 1], padding="SAME")
-   ```
-
-2. **Dot Product with Transposed Operands:**
-   - The model includes a dot product (`kDot`) where one or both operands are preceded by a transpose operation.
-   - The transpose operations adjust the contracting and/or batch dimensions of the dot product operands.
-   - The transpose can be folded if it results in a configuration where the transposed dimensions of the operands align appropriately with the dot product's dimension requirements.
-   - This optimization is particularly relevant when handling matrix multiplications in neural networks, where transposing matrices can reorder dimensions for alignment or other reasons.
-
-   ```python
-   # Example TensorFlow (Python) code:
-   a = tf.random.normal([10, 64])  # Operand 1
-   b = tf.random.normal([64, 10])  # Operand 2
-
-   # Transposing operand b
-   transposed_b = tf.transpose(b)  # Transpose to align for matrix multiplication
-
-   # Dot product
-   result = tf.linalg.matmul(a, transposed_b)
-   ```
-
-These optimizations reduce the computational overhead by eliminating unnecessary transpose operations, thereby streamlining the execution of the model on hardware accelerators supported by XLA. Such optimizations are crucial for performance-sensitive applications like deep learning inference and training.
+In this case, `t1` is a transpose operation and `conv2d` is equivalent to a convolution operation in TensorFlow. The `TransposeFolding` optimization pass can fold the transpose operation into the convolution operation, effectively removing the transpose operation.

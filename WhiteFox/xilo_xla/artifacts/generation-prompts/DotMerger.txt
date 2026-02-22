@@ -1,50 +1,15 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `DotMerger` in TensorFlow XLA.
+The model should contain the following pattern:
 
-# Description
-The `DotMerger` optimization in TensorFlow XLA is triggered for TensorFlow models that contain multiple dot product operations (`tf.linalg.matmul` in TensorFlow's Python API) sharing common operands and meeting specific dimensional and layout requirements. This optimization aims to merge these dot operations into a single, more efficient operation. Characteristics of models that would lead to triggering this optimization include:
-
-1. **Multiple Dot Operations with Shared Operands**: Models where several dot operations share the same left-hand-side (LHS) or right-hand-side (RHS) operand. For example, if `A` and `B` are matrices, models performing multiple operations like `dot(A, B)` and `dot(A, C)` can be optimized.
-
-   ```python
-   # TensorFlow equivalent
-   A = tf.random.normal([200, 100])
-   B = tf.random.normal([100, 10])
-   C = tf.random.normal([100, 50])
-   dot1 = tf.linalg.matmul(A, B)
-   dot2 = tf.linalg.matmul(A, C)
-   ```
-
-2. **Matching Dimension and Element Types**: The dot operations must have operands with matching element types. If the element types of the operands in the dot products don't match, the optimization won't trigger.
-
-3. **Consistency in Dimension Numbers**: The contracting and batch dimensions of the dot operations must be consistent. If two dot operations have different contracting dimensions, they cannot be merged.
-
-4. **Layout Compatibility**: The layouts (memory order of dimensions) of the operands involved in the dot operations should be compatible or identical. This is crucial for efficient concatenation and slicing during the merging process.
-
-5. **Absence of Batch Dimensions**: The current implementation does not support batch dimensions in the dot operations. Only dot operations without batch dimensions and of rank 2 are considered for merging.
-
-6. **Size Limitations**: The combined size of the operands and the output of the dot operations must not exceed a predefined maximum size (`max_size_to_merge`). This ensures that the merged operation does not consume excessive memory or computational resources.
-
-7. **No Transitive Dependencies**: The dot operations to be merged should not have dependencies on each other's values, meaning one operation’s output should not be an input to the other in any form that affects ordering constraints.
-
-8. **Absence of Control Dependencies**: Dot operations with control dependencies are not considered for merging. Control dependencies can affect the execution order and merging such operations could lead to incorrect results or execution failures.
-
-Here is an example of a TensorFlow model where `DotMerger` might be applied:
-
-```python
-import tensorflow as tf
-
-# Assume A, B, C are defined as compatible matrices for dot products
-A = tf.random.normal([200, 100])
-B = tf.random.normal([100, 10])
-C = tf.random.normal([100, 50])
-
-# Multiple dot products sharing the same operand `A`
-dot1 = tf.linalg.matmul(A, B)
-dot2 = tf.linalg.matmul(A, C)
-
-# Further operations might depend on dot1 and dot2
-result = tf.add(dot1, tf.reduce_sum(dot2))
+```
+lhs = tf.Variable(...)
+rhs0 = tf.Variable(...)
+rhs1 = tf.Variable(...)
+dot0 = tf.linalg.matmul(lhs, rhs0)
+dot1 = tf.linalg.matmul(lhs, rhs1)
 ```
 
-In this scenario, if `dot1` and `dot2` are eligible based on the criteria above, they could be merged into a single operation to improve computational efficiency. The optimization would replace multiple smaller dot operations with a single larger one, potentially concatenating `B` and `C` and then splitting the result after the combined dot product.
+The pattern describes that there are two `matmul` operators in the model. Both `matmul` operators share the same left-hand-side operand `lhs` but have different right-hand-side operands `rhs0` and `rhs1`. 
+
+The `DotMerger` optimization pass in TensorFlow XLA is triggered when there are multiple dot (matrix multiplication) operations in the model that share an operand. The optimization pass attempts to merge these operations into a single dot operation followed by slice operations to achieve the same result. This can potentially reduce the computational cost and memory usage. 
+
+The `MergeDots` function checks if the two dot operations can be merged based on several conditions, such as whether they share an operand, whether they have the same layout, and whether they have the same operand precision. If all conditions are met, the function attempts to merge the two dot operations. If the merge is successful, the function returns true, indicating that the optimization pass has been triggered.

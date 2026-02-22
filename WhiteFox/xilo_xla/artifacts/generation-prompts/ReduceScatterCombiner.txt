@@ -1,37 +1,19 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReduceScatterCombiner` in TensorFlow XLA.
+The model should contain multiple `tf.raw_ops.ReduceScatter` operations that can be combined into a single `ReduceScatter` operation. The `ReduceScatter` operations must have the same reduction operation and exactly one operand. 
 
-# Description
-The TensorFlow XLA `ReduceScatterCombiner` optimization pass is triggered for models that exhibit specific characteristics in their use of the `ReduceScatter` operation. Here are the key traits:
+The `ReduceScatter` operation in TensorFlow is used to perform a reduction operation on a tensor and then scatter the result across devices. The operation takes a tensor, performs a reduction operation (such as sum, prod, max, min, etc.) along a specified dimension, and then scatters the reduced tensor across a list of devices.
 
-1. **Multiple ReduceScatter Operations**: The model should contain multiple `ReduceScatter` operations. The combiner optimization looks to merge multiple such operations into a single, more efficient operation. Therefore, models that utilize only a single `ReduceScatter` operation or do not use `ReduceScatter` at all will not trigger this optimization.
+The `ReduceScatterCombiner` optimization pass in TensorFlow XLA is triggered when there are multiple `ReduceScatter` operations that can be combined into a single `ReduceScatter` operation. This can reduce the overhead of launching multiple operations and improve performance.
 
-2. **Same Reduction Operation**: All `ReduceScatter` operations that are considered for combination must employ the same reduction operation (e.g., SUM, MAX). This is necessary because the combined operation will use a single reduction function applied across all inputs.
-
-3. **Consistent Scatter Dimensions (if combining by dimension)**: If the `combine_by_dim_` is set to true, then the `ReduceScatter` operations need to have the same scatter dimension, or at least a scatter dimension that can be aligned through permutations. This ensures that the data is scattered correctly in the combined operation.
-
-4. **Sufficient Size and Count**: The combined size of the tensors involved in the `ReduceScatter` operations should meet certain thresholds (`combine_threshold_in_bytes_` and `combine_threshold_count_`) to make the combination worthwhile. These thresholds help in deciding whether the overhead of combining operations is offset by the performance gain from reduced operation count and possibly more optimal memory access patterns.
-
-5. **Non-constrained Layouts**: The optimization is skipped if any of the `ReduceScatter` operations have layout constraints. This is because combining operations with different layout constraints can lead to incorrect results or require complex and costly data rearrangements.
-
-6. **Exclusion from While Loops**: If `combine_while_loops_` is false, then `ReduceScatter` operations that are part of a computation graph called within a `While` loop are not considered for combination. This is typically to avoid complications or inefficiencies arising from dynamic control flow.
-
-### Example Model:
+Here is an example of a TensorFlow model that can trigger this optimization pass:
 
 ```python
 import tensorflow as tf
 
-# Assume a distributed TensorFlow setup with multiple devices
-strategy = tf.distribute.MirroredStrategy(devices=["GPU:0", "GPU:1"])
+# Assume we have a tensor 'input_tensor' and a list of devices 'devices'
 
-with strategy.scope():
-    # Input tensor
-    input_tensor = tf.random.normal([4, 1024])
-
-    # Multiple ReduceScatter operations with the same reduction operation and scatter dimension
-    reduced_1 = tf.raw_ops.ReduceScatter(input=input_tensor, reduction="sum", scatter_dim=1)
-    reduced_2 = tf.raw_ops.ReduceScatter(input=input_tensor, reduction="sum", scatter_dim=1)
-
-    # The combined operation would replace reduced_1 and reduced_2 with a single ReduceScatter
+# Multiple ReduceScatter operations
+reduced1 = tf.raw_ops.ReduceScatter(input=input_tensor, reduction_op='sum', devices=devices)
+reduced2 = tf.raw_ops.ReduceScatter(input=input_tensor, reduction_op='sum', devices=devices)
 ```
-In this example, because there are multiple `ReduceScatter` operations with the same reduction type and scatter dimension, and assuming the size and count thresholds are met, the `ReduceScatterCombiner` optimization would likely be triggered.
+
+In this example, the two `ReduceScatter` operations perform the same reduction operation ('sum') on the same input tensor and scatter the result across the same list of devices. Therefore, these two operations can be combined into a single `ReduceScatter` operation by the `ReduceScatterCombiner` optimization pass.

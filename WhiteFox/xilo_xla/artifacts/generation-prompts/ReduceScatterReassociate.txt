@@ -1,44 +1,13 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ReduceScatterReassociate` in TensorFlow XLA.
-
-# Description
-The `ReduceScatterReassociate` optimization pass in TensorFlow XLA is triggered by specific patterns in a TensorFlow model's computational graph, particularly involving the `ReduceScatter` operation. Here are the characteristics of TensorFlow models that would trigger this optimization:
-
-1. **Presence of Sequential ReduceScatter Operations:**
-   The model must contain at least two sequential `ReduceScatter` operations that are directly connected. These operations are the operands of another operation, which typically would be another reduction operation.
-
-2. **Matching Reduction Operations:**
-   The `ReduceScatter` operations must be performing compatible reduction operations. This means they should not only have the same reduction kind (e.g., sum, product) but also operate over the same dimensions.
-
-3. **Single-Use ReduceScatter Operations:**
-   Each of the `ReduceScatter` operations involved should only be used once within the computational graph. This is typically a requirement to ensure that modifying or replacing these operations does not affect other parts of the graph.
-
-4. **Consistent Scatter Dimensions:**
-   The scatter dimensions of the `ReduceScatter` operations must match. This ensures that the data is scattered in the same way across operations, which is crucial for the correctness of the reassociation.
-
-5. **Absence of Layout Constraints:**
-   The model should not contain `ReduceScatter` operations with layout constraints. Such constraints could complicate the merging of operations, potentially leading to incorrect behavior or inefficiencies.
-
-6. **Matching or Absent Scheduling Annotations:**
-   If scheduling annotations (which control execution order or grouping) are present, they must either match or only be present on one of the operations to allow merging without execution order conflicts.
-
-Here’s a simplified example to illustrate a scenario where this optimization might apply:
-
-```python
-import tensorflow as tf
-
-# Assuming the existence of a custom ReduceScatter operation in TensorFlow
-x = tf.random.uniform([256, 256])
-y = tf.random.uniform([256, 256])
-
-# First ReduceScatter operation
-rs1 = custom_reduce_scatter(x, reduction='sum', scatter_dim=0)
-
-# Second ReduceScatter operation
-rs2 = custom_reduce_scatter(y, reduction='sum', scatter_dim=0)
-
-# An operation combining outputs of the two ReduceScatters
-result = tf.add(rs1, rs2)
+The model should contain the following pattern:
 ```
+t1 = tf.raw_ops.ReduceScatter(input_tensor1, ...)
+t2 = tf.raw_ops.ReduceScatter(input_tensor2, ...)
+t3 = tf.some_reduction_op(t1, t2)
+```
+The pattern describes that there are two `ReduceScatter` operations in the model, followed by a reduction operation that takes the outputs of the `ReduceScatter` operations as inputs. The `ReduceScatter` operations must be compatible, meaning they belong to the same domain, have the same reduction kind, and scatter along the same dimension. 
 
-In the above example, if `custom_reduce_scatter` represents a compatible `ReduceScatter` operation in XLA, and both operations have the same reduction kind and scatter dimension, the `ReduceScatterReassociate` optimization could be triggered to merge these into a single, more efficient operation. This would change the graph structure to potentially increase execution efficiency by reducing the number of operations and communication overhead.
+The reduction operation can be any operation that matches the `MatchReductionInstruction` function, such as `tf.add`, `tf.multiply`, `tf.minimum`, `tf.maximum`, etc. 
+
+The `ReduceScatter` operations must have exactly one user, and if they have scheduling annotations, the annotations must be the same. 
+
+The model should not contain any `ReduceScatter` operations with constrained layouts.

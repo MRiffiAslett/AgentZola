@@ -1,0 +1,8 @@
+### Please describe the characteristics of the TensorFlow model that trigger the optimization pass `PLACEHOLDER_TFXLA_OPTIMIZATION_NAME` in TensorFlow XLA. The model can be used to reach out the `PLACEHOLDER_TARGET_LINE` line in function `PLACEHOLDER_FUNC_NAME`, leading the function to return true. The description should be concise and clear. Use code to illustrate patterns or constraints as needed. Please only describe the characteristics of the model. Do not describe the function code or what happens after the optimization is triggered.
+
+# The code of the function and its helper functions:
+
+PLACEHOLDER_SRC_CODE
+
+# Description
+

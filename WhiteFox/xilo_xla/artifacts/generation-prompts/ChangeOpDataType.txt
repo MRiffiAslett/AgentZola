@@ -1,31 +1,11 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ChangeOpDataType` in TensorFlow XLA.
+The model should contain an operation that matches the pattern defined by `op_matcher_` and has all its operands of the same data type, which is also present in the `to_type_map_`. The operation should not be a parameter and its output should be an array. 
 
-# Description
-The `ChangeOpDataType` optimization pass in TensorFlow XLA is triggered based on certain characteristics of the TensorFlow model's operations and data types. Here are the characteristics that would lead this optimization to execute and potentially return `true`:
+Here is an example of such a pattern:
 
-1. **Uniform Operand Data Types:**
-   - The operation must have operands with uniform data types. If an operation has operands of different data types, this optimization will not be triggered for that operation.
-   - This is checked using the `GetUniformOperandType` function, which returns `std::nullopt` if operand data types are not uniform.
+```python
+t1 = tf.constant([1, 2, 3], dtype=tf.float32)
+t2 = tf.constant([4, 5, 6], dtype=tf.float32)
+result = tf.add(t1, t2)
+```
 
-2. **Matching Operation Type:**
-   - The operation must match certain criteria defined by `op_matcher_`. While the specifics of this matcher are not detailed in the provided code, typically, this would be a lambda or function that filters operations based on certain characteristics like operation type or attributes.
-
-3. **Exclusion of Parameters and Non-Array Shapes:**
-   - The operation should not be a `Parameter` type operation, and its output shape should be an array. Operations outputting non-array types (like tuples or scalars) will not trigger this optimization.
-
-4. **Data Type Conversion Mapping:**
-   - There must exist a mapping for converting the operation's current data type (`from_type`) to a target data type (`to_type`). This mapping is stored in `to_type_map_`. If no such mapping exists for the operation’s data type, the optimization does not apply.
-
-5. **Special Handling Under OneDNN Conditions (if applicable):**
-   - If OneDNN settings are enabled (via debug options), and the operation is suitable for OneDNN rewriting according to `OneDnnContractionRewriter::ShouldRewriteInstr`, the optimization will skip changing the data type of the operation. This is to avoid conflicts with OneDNN optimizations.
-
-### Example Model Characteristics:
-
-Suppose you have a TensorFlow model with the following characteristics:
-- It includes operations like matrix multiplications or convolutions where all operands are of a uniform data type, say `float32`.
-- These operations are not parameters and produce array outputs.
-- You have a data type conversion map that includes a conversion from `float32` to `float16`.
-- The operations do not fall under special OneDNN rewriting rules or the model is not configured to use OneDNN.
-
-In such scenarios, the `ChangeOpDataType` pass would likely be triggered, converting the data type of the operands from `float32` to `float16` and then back to `float32` after the operation, optimizing the model's computational efficiency by utilizing lower precision calculations where possible.
+In this example, the `tf.add` operation matches the `op_matcher_` pattern, all its operands are of the same data type (`tf.float32`), and its output is an array. If `tf.float32` is present in the `to_type_map_`, then the `ChangeOpDataType` optimization pass will be triggered.

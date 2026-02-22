@@ -1,49 +1,8 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `SimplifyFpConversions` in TensorFlow XLA.
-
-# Description
-### Characteristics of TensorFlow Model for `SimplifyFpConversions` Optimization
-
-The `SimplifyFpConversions` optimization pass in TensorFlow XLA is triggered when a TensorFlow model contains a specific pattern of floating-point conversion operations. Here are the key characteristics:
-
-1. **Sequential Floating-Point Conversions:**
-   The model must have a sequence of at least two consecutive `Convert` operations where each operation is converting between floating-point data types. This pattern can be represented in a TensorFlow model where data is cast from one floating-point type to another and then to another.
-
-2. **Same Start and End Types:**
-   The initial floating-point type of the first conversion in the sequence and the final type after the last conversion must be the same. This means the optimizations can simplify the entire sequence to either a no-op (if the types are the same) or a single conversion operation (if the types are different initially but end up the same).
-
-### Example Model
-
-Here is a TensorFlow model example in Python that would trigger this optimization:
-
-```python
-import tensorflow as tf
-
-# Assuming a TensorFlow setup that uses XLA compilation:
-tf.config.optimizer.set_jit(True)  # Enable XLA
-
-# Define a simple model
-class MyModel(tf.Module):
-    @tf.function
-    def convert_sequence(self, x):
-        x = tf.cast(x, tf.float32)  # First conversion
-        x = tf.cast(x, tf.float64)  # Second conversion
-        x = tf.cast(x, tf.float32)  # Third conversion, converting back to the original type
-        return x
-
-# Create an instance of the model and apply a sequence of conversions
-model = MyModel()
-input_tensor = tf.constant(1.0, dtype=tf.float16)  # Starting with float16
-output_tensor = model.convert_sequence(input_tensor)
-
-# Print the output
-print(output_tensor)
+The model should contain the following pattern:
 ```
-
-In this example:
-- The tensor `x` is initially in `float16`.
-- It is first converted to `float32`, then to `float64`, and finally back to `float32`.
-- The `SimplifyFpConversions` pass would detect this pattern since it involves multiple conversions ending in the same type as one of the previous types in the sequence.
-- As a result, the optimization could simplify this to either no conversion if deemed unnecessary or just a single conversion directly from `float16` to `float32`, depending on intermediate usage and computational requirements.
-
-This TensorFlow model illustrates the type of data manipulation and operation sequence that would activate the `SimplifyFpConversions` optimization pass in TensorFlow XLA.
+t1 = tf.cast(input_tensor, dtype1)
+t2 = tf.cast(t1, dtype2)
+...
+tn = tf.cast(tn-1, dtypeN)
+```
+The pattern describes that there are multiple consecutive cast operators in the model. Each `tf.cast` operator transforms a tensor from one floating-point data type to another. The optimization is triggered when there are at least two consecutive cast operations and the final data type is the same as the initial data type.

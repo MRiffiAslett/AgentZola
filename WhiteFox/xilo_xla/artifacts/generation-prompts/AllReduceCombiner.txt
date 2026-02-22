@@ -1,40 +1,16 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceCombiner` in TensorFlow XLA.
+The model should contain multiple AllReduce operations that can be combined into a single AllReduce operation. The AllReduce operations must have the same reduction operation and each AllReduce operation must have exactly one operand. 
 
-# Description
-The TensorFlow XLA optimization pass `AllReduceCombiner` is triggered for models that have multiple smaller AllReduce operations that can be combined into a single larger AllReduce operation. The characteristics of the TensorFlow model that would activate this optimization include:
-
-1. **Presence of Multiple AllReduce Operations:**
-   The model must contain multiple AllReduce instructions. These AllReduce operations should be combinable, meaning they should have the same reduction operation and operand count.
-
-2. **Same Reduction Operation Across AllReduces:**
-   Each AllReduce operation involved must use the same reduction operation (like sum, max, etc.). This means that the computation applied (`to_apply()`) in each AllReduce should either be the same across all operations or should involve the same root operation if the computations have more than one instruction.
-
-3. **Single Operand Per AllReduce:**
-   Each AllReduce operation must have exactly one operand. This simplifies the combination process, ensuring that operands from each AllReduce can be grouped together.
-
-4. **Array Shape of Outputs:**
-   The shape of the output of each AllReduce operation must be an array. This is necessary for the outputs to be combined into a tuple shape during the optimization.
-
-5. **Threshold Constraints:**
-   The model should have a sufficient number of AllReduce operations and the total size in bytes of the operations should meet specific thresholds (`combine_threshold_in_bytes` and `combine_threshold_count`) to make the combination worthwhile.
-
-Here is a conceptual TensorFlow code snippet that illustrates a scenario where `AllReduceCombiner` might be triggered:
+The pattern in the model would look something like this:
 
 ```python
-import tensorflow as tf
-
-# Assume `dist_strategy` is some form of distributed strategy that involves multiple devices.
-with dist_strategy.scope():
-    # Creating multiple tensors
-    tensor_a = tf.random.normal([1000, 1000])
-    tensor_b = tf.random.normal([1000, 1000])
-
-    # Applying AllReduce individually
-    all_reduced_a = tf.raw_ops.AllReduce(input=tensor_a, reduction="Add", group_size=2)
-    all_reduced_b = tf.raw_ops.AllReduce(input=tensor_b, reduction="Add", group_size=2)
-
-# Here, `all_reduced_a` and `all_reduced_b` are candidates for combination by `AllReduceCombiner` if they meet the threshold requirements.
+t1 = tf.reduce_sum(input_tensor1)
+t2 = tf.reduce_sum(input_tensor2)
+...
+tn = tf.reduce_sum(input_tensorn)
 ```
 
-In this scenario, if `all_reduced_a` and `all_reduced_b` use identical reduction operations and there are enough such operations exceeding the byte and count thresholds, the `AllReduceCombiner` optimization might be applied to combine these into a single AllReduce operation.
+In this pattern, each `tf.reduce_sum` operation is an AllReduce operation. The `AllReduceCombiner` optimization pass will combine these separate AllReduce operations into a single AllReduce operation, which can improve the performance of the model. 
+
+The optimization pass is triggered when the total size of the operands of the AllReduce operations exceeds a certain threshold (`combine_threshold_in_bytes_`) and the number of AllReduce operations exceeds another threshold (`combine_threshold_count_`). 
+
+Note that the optimization pass will not be triggered if the model contains AllReduce operations with constrained layouts.

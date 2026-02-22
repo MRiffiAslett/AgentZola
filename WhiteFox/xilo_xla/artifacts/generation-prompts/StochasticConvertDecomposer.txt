@@ -1,47 +1,9 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `StochasticConvertDecomposer` in TensorFlow XLA.
+The model should contain a `stochastic_convert` operation with two operands. The `stochastic_convert` operation is used to convert a floating-point number to an integer stochastically. The first operand is the floating-point number to be converted, and the second operand is a random number used for the stochastic rounding.
 
-# Description
-The TensorFlow XLA optimization pass `StochasticConvertDecomposer` is specifically triggered by TensorFlow models that contain at least one `StochasticConvert` operation. This operation is designed to convert numerical values from one type to another using a stochastic rounding method, which involves randomness to decide the rounding direction when the values are in-between integer representations.
-
-### Characteristics of TensorFlow Models That Trigger This Optimization:
-
-1. **Use of StochasticConvert Operation:**
-   The model must explicitly include the `StochasticConvert` operation. This operation is not standard in most TensorFlow operations but can be custom-defined or used in specialized scenarios involving probabilistic rounding.
-
-2. **Two Operands Requirement:**
-   The `StochasticConvert` operation must have exactly two operands:
-   - The first operand (`operand`) is the tensor whose elements are to be converted.
-   - The second operand (`random`) is a tensor of random numbers used to determine the rounding behavior.
-
-3. **Data Types:**
-   - The first operand can be of any floating-point type (e.g., `float16`, `float32`).
-   - The second operand (random values) typically should be a floating-point type to interact correctly with the stochastic rounding mechanisms described in the code.
-   - The target data type (`to_type`) to which the conversion is performed must be a signed integral type (e.g., `int32`, `int64`). Currently, the code does not support conversion to floating-point types.
-
-4. **Shape Compatibility:**
-   The shapes of the operands should be compatible for operations like subtraction, multiplication, and comparison, as involved in the decomposition process.
-
-### Example Model Structure in TensorFlow (Pseudo Code):
-
+The model should have the following pattern:
 ```python
-import tensorflow as tf
-
-# Assuming custom implementation for stochastic convert operation
-class StochasticConvert(tf.Module):
-    @tf.function(input_signature=[
-        tf.TensorSpec(shape=[None], dtype=tf.float32),
-        tf.TensorSpec(shape=[None], dtype=tf.float32),
-        tf.TypeSpec(dtype=tf.int32)])
-    def convert(self, input, random):
-        # This custom operation would be mapped to a `StochasticConvert` in XLA
-        pass
-
-# Sample usage
-input_tensor = tf.constant([0.5, 1.5, 2.5], dtype=tf.float32)
-random_tensor = tf.random.uniform(shape=[3], dtype=tf.float32)  # random values
-converter = StochasticConvert()
-output_tensor = converter.convert(input_tensor, random_tensor, tf.int32)
+t1 = tf.stochastic_convert(input_tensor, random_tensor)
 ```
+Here, `input_tensor` is a tensor of floating-point numbers to be converted to integers, and `random_tensor` is a tensor of random numbers used for the stochastic rounding. The `stochastic_convert` operation converts the `input_tensor` to integers stochastically based on the `random_tensor`.
 
-In summary, the `StochasticConvertDecomposer` optimization is triggered by the presence of a `StochasticConvert` operation in the model, where the operation is configured to convert values from a floating-point type to a signed integer type using a second tensor of random values as part of the conversion criteria.
+The `stochastic_convert` operation is currently only supported for converting from floating-point numbers to signed integers. The conversion to floating-point numbers is not yet supported.

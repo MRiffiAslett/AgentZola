@@ -1,37 +1,12 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ZeroSizedHloElimination` in TensorFlow XLA.
+The model should contain HLO instructions that generate zero-sized arrays. These instructions should not have side effects, should not be constants, and their shapes should be static and array-like. 
 
-# Description
-The `ZeroSizedHloElimination` optimization in TensorFlow XLA targets TensorFlow models that contain operations producing zero-sized tensors. These are tensors with shapes where one or more dimensions have a size of zero. This optimization is specifically designed to identify and replace such operations with constants, provided they meet certain conditions. Here are the characteristics of a TensorFlow model that would trigger this optimization:
+The model should also contain computations that are safely removable or parameters that do not have control dependencies and are not dead. 
 
-1. **Presence of Zero-Sized Arrays**: The primary characteristic is the presence of operations that result in zero-sized arrays. These are tensors where the total number of elements calculated by the product of its dimensions is zero.
-
-2. **Non-Side-Effect Operations**: The operation must not have side effects that are crucial for the model's computation flow. Side effects are generally associated with stateful operations. However, an exception is made for custom calls with a specific target name indicating a shape-related operation that can be safely replaced without altering program semantics.
-
-3. **Array Type with Static Shape**: The tensor must be an array with a static shape. Operations producing non-array types or dynamic shapes are not considered for this optimization.
-
-4. **Excludable from a Layout Perspective**: If the tensor does not have a layout, a default layout is assigned to it. Operations that inherently depend on a specific layout or do not support layout assignment are not optimized.
-
-5. **Replaceability Conditions**: The operation must be safely removable from its computation without affecting other dependencies, or it should be a parameter without control dependencies and not marked as dead.
-
-Here is an example of a TensorFlow model that could trigger this optimization:
+Here is an example of such a pattern:
 
 ```python
-import tensorflow as tf
-
-# Assume the TensorFlow model is compiled with XLA.
-tf.config.optimizer.set_jit(True)
-
-# Example of a model operation that might trigger ZeroSizedHloElimination
-@tf.function
-def model(x):
-    # x is expected to sometimes be a zero-sized array
-    y = tf.reshape(x, [0, 10])  # Reshaping to a zero-sized array
-    return y
-
-# Running the model with a zero-sized input
-result = model(tf.constant([], shape=[0, 5]))
-print(result)
+# Assume `input_tensor` is a tensor with shape (0, 10, 10)
+t1 = tf.reduce_sum(input_tensor, axis=0)  # This will result in a zero-sized array
 ```
 
-In this example, the reshape operation produces a zero-sized array, which meets the criteria for the `ZeroSizedHloElimination` optimization if no side effects are associated with the reshape operation and it has a static, array-type shape.
+In this case, the `reduce_sum` operation will generate a zero-sized array because the first dimension of `input_tensor` is 0. This operation does not have side effects, is not a constant, and the shape of the output is static and array-like. Therefore, it will trigger the `ZeroSizedHloElimination` optimization pass.
