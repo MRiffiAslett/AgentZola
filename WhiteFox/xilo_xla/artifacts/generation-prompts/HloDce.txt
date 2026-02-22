@@ -1,37 +1,11 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `HloDce` in TensorFlow XLA.
+The TensorFlow model triggers the optimization pass `HloDce` in TensorFlow XLA when it contains dead code, i.e., instructions that are not contributing to the final output of the model. This includes:
 
-# Description
-The `HloDCE` (Dead Code Elimination) optimization in TensorFlow XLA targets TensorFlow models that contain specific characteristics of redundant or unused operations. The primary triggers for this optimization include:
+1. Dead roots: Instructions that are not used by any other instruction and do not contribute to the final output of the computation.
 
-1. **Unused Operations:** If an operation in the model does not contribute to the final output or its outputs are not used by any other operation, it becomes a candidate for elimination. For instance, operations that compute values but are never used in subsequent computations or the output.
+2. Dead parameters: Parameters that are not used by any instruction in the computation.
 
-2. **Dead Roots:** Operations that are roots (i.e., final operations in a computation chain) and are unused or do not have side effects can be removed.
+3. Unused outputs of multi-output fusion instructions: If a fusion instruction produces multiple outputs and some of them are not used by any other instruction, these unused outputs trigger the `HloDce` optimization.
 
-3. **Unused Parameters:** Parameters that are not utilized within their computations can also be removed, particularly in the entry computation of the model.
+4. Dangling computations: Computations that are not called by any instruction in the module.
 
-4. **Redundant Fusion Outputs:** If a fusion operation (a single operation representing a subgraph of operations that are fused together) produces outputs that are not used by any operation, these outputs can be removed.
-
-An example TensorFlow model that would trigger this optimization might look like this:
-
-```python
-import tensorflow as tf
-
-# Construct a simple model
-x = tf.constant([1.0, 2.0, 3.0])
-y = tf.constant([-1.0, -2.0, -3.0])
-z = x + y  # z is never used
-w = x - y  # w is used as the output
-
-# Function that only uses w
-@tf.function
-def model():
-    return w
-
-# Run the model
-print(model())
-```
-
-In the above example, the operation `z = x + y` is dead code because `z` is computed but never used in the computation that leads to the model's output. An optimization pass like `HloDCE` would identify `z` as removable, thus simplifying the computation and potentially improving performance.
-
-By identifying and removing such dead code and redundant operations, the TensorFlow XLA compiler can optimize the execution graph, reduce resource usage, and improve execution speed.
+The model should contain these patterns to reach the `return changed;` line in function `HloDCE::Run`, leading the function to return true. The `changed` variable is set to true when any dead code is detected and removed from the model.

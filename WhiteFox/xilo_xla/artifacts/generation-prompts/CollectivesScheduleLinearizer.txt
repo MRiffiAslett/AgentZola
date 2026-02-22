@@ -1,39 +1,14 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `CollectivesScheduleLinearizer` in TensorFlow XLA.
+The model should contain multiple collective operations (like `AllReduce`, `AllGather`, `CollectivePermute`, etc.) that are not already ordered by control dependencies. 
 
-# Description
-The TensorFlow model characteristics that would trigger the `CollectivesScheduleLinearizer` optimization pass in TensorFlow XLA and lead the function `CollectivesScheduleLinearizer::Run` to return `true` are as follows:
+The pattern describes that there are multiple collective operations in the model, and these operations are not connected by control dependencies. The `CollectivesScheduleLinearizer` optimization pass will add control dependencies between these collective operations to enforce a linear execution order. 
 
-1. **Presence of Collective Operations**: The model must contain collective operations such as `AllReduce`, `AllGather`, `CollectivePermute`, or their asynchronous variants (`AllReduceStart`, `AllGatherStart`, `CollectivePermuteStart`, etc.). These operations are typically used in distributed training scenarios where tensors need to be synchronized across multiple devices or replicas.
-
-2. **Specific Sequence and Independence of Operations**: For the optimization to be triggered, there must be at least two such collective operations in sequence where the latter is not reachable from the former through any path in the graph (i.e., they are independent). This independence means that the operations can potentially be executed in parallel, but for reasons such as ensuring a specific execution order or avoiding deadlocks, a sequential order might be necessary.
-
-3. **Non-Overlapping Execution**: The operations should ideally be structured in a way that their execution does not overlap. This non-overlapping characteristic is crucial for adding control dependencies to linearize their execution.
-
-### Illustrative Example
-
-Consider a TensorFlow model designed for distributed training with the following pattern:
+For example, if the model contains the following pattern:
 
 ```python
-import tensorflow as tf
-
-# Assume `strategy` is some distributed strategy like MirroredStrategy
-with strategy.scope():
-    input = tf.random.normal([256, 256])
-    
-    # First collective operation
-    all_reduce_1 = tf.raw_ops.AllReduce(input_tensor=input)
-    
-    # Some independent computation
-    processed = tf.matmul(input, tf.transpose(input))
-    
-    # Second collective operation, independent of the first
-    all_reduce_2 = tf.raw_ops.AllReduce(input_tensor=processed)
+t1 = tf.all_reduce(input_tensor1)
+t2 = tf.all_gather(input_tensor2)
 ```
 
-In this example:
-- `all_reduce_1` and `all_reduce_2` are collective operations.
-- There is no direct computational dependency between `all_reduce_1` and `all_reduce_2` (they are potentially independent).
-- If `processed` does not depend on the result of `all_reduce_1`, and assuming no other dependencies between them in the computational graph, these operations are candidates for linearization by `CollectivesScheduleLinearizer`. This pass may insert a control dependency from `all_reduce_1` to `all_reduce_2` to ensure a specific execution order, potentially due to reasons like resource contention or to avoid deadlocks in collective operations across devices.
+And there is no control dependency between `t1` and `t2`, the `CollectivesScheduleLinearizer` optimization pass will be triggered to add a control dependency between `t1` and `t2`. 
 
-The optimization pass would return `true` if it modifies the graph to add such control dependencies, indicating a change in the execution plan to enforce linearized scheduling of collective operations.
+Note that this optimization pass also handles the case where collective operations are asynchronous, i.e., they have separate start and done instructions. In this case, the control dependency is added between the done instruction of the previous collective operation and the start instruction of the next collective operation.

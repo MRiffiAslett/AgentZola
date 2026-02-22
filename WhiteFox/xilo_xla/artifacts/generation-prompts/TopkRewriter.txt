@@ -1,40 +1,15 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `TopkRewriter` in TensorFlow XLA.
+The model should contain the following pattern to trigger the optimization pass `TopkRewriter`:
 
-# Description
-The `TopkRewriter` optimization pass in TensorFlow XLA is triggered for TensorFlow models containing a `Sort` operation that can be specialized to a `TopK` operation. This optimization is applicable under certain conditions, primarily when the `Sort` operation is used in a manner consistent with extracting the top `k` elements along a specified dimension. The characteristics of the TensorFlow model that would trigger this optimization include:
+1. The model should have a `Sort` operation with either one or two operands. If there are two operands, the second operand should be an `Iota` operation or a `Broadcast` of an `Iota` operation.
 
-1. **Sort Operation with Specific Usage Patterns:** The optimization is triggered when a `Sort` operation is followed by a `Slice` operation that extracts the first `k` elements along the sorted dimension. This pattern typically indicates an intent to retrieve the top `k` elements.
+2. The `Sort` operation should use a comparison function that is NaN-safe. This means that the comparison function should handle NaN values correctly according to the IEEE 754 standard.
 
-2. **Dimension and Shape Constraints:**
-   - The sort must be performed along either the first or the last dimension of the tensor.
-   - The output of the sort is sliced such that only the first `k` elements of the sorted dimension are used, and the slice starts at 0 with a stride of 1.
+3. The `Sort` operation should be used in a specific way that corresponds to a Top-K operation. This means that the sorted values should be sliced to get the top K values, and the slice should start at the beginning of the sorted values and have a stride of 1. The slice should not affect any dimensions other than the sort dimension.
 
-3. **Data Types:** The data types supported for this optimization are typically floating-point types like `F32` or `BF16`. 
+4. The element type of the data to be sorted should be either `F32` or `BF16`.
 
-4. **Comparator Function:** The comparator used in the sort operation should be capable of handling NaN values correctly, ensuring that the comparison logic matches the expected behavior for floating-point numbers, including handling of negative zero and NaN.
+5. The sort dimension should be either the first or the last dimension.
 
-5. **Usage of Iota:** For sorts involving two operands, the second operand should be an `Iota` operation, which often indicates the generation of indices used in sorting operations.
+6. The transformation should be profitable according to a provided profitability check function.
 
-### Example Model Code:
-
-For a TensorFlow model to trigger this optimization, it might look something like the following hypothetical TensorFlow code:
-
-```python
-import tensorflow as tf
-
-# Input data
-data = tf.random.normal([batch_size, num_elements])
-
-# Perform a sort along the last dimension
-sorted_data = tf.sort(data, axis=-1, direction='DESCENDING')
-
-# Extract the top k elements
-top_k = sorted_data[..., :k]
-```
-
-In this example:
-- `tf.sort` is analogous to the `Sort` operation in XLA.
-- The slicing `[..., :k]` represents the `Slice` operation that extracts the top `k` elements.
-
-If the `Sort` operation in a model follows such a pattern, where it is primarily used to extract a subset of sorted elements, the `TopkRewriter` optimization can be triggered to potentially convert these operations into a more efficient `TopK` operation using a custom call in XLA.
+If all these conditions are met, the `Sort` operation is transformed into a custom call to a Top-K operation, which can be more efficient. The transformation also handles cases where the input data is reshaped or transposed before the `Sort` operation, and it reshapes or transposes the output of the Top-K operation back to the original shape if necessary.

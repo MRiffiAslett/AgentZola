@@ -42,6 +42,7 @@ def main():
         base_dir / sut_dir_name / "artifacts" / f"optimization_specification_{sut}.json"
     )
     template_path = base_dir / sut_dir_name / "artifacts" / "prompt_template.txt"
+    exemplar_desc_path = base_dir / sut_dir_name / "artifacts" / "exemplar_description.txt"
     prompts_dir = base_dir / sut_dir_name / "artifacts" / "requirement-prompts"
     gpt_output_dir = base_dir / sut_dir_name / "artifacts" / "generation-prompts"
 
@@ -50,6 +51,7 @@ def main():
         template_path=str(template_path),
         outdir=str(prompts_dir),
         use_mini=use_mini,
+        exemplar_description_path=str(exemplar_desc_path),
     )
 
     try:

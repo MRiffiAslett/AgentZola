@@ -1,38 +1,10 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `BroadcastCanonicalizer` in TensorFlow XLA.
+The model should contain a broadcast operation where the dimensions are not sorted. The pattern describes a broadcast operation that expands the shape of a tensor to a larger shape, and the dimensions of the broadcast are not in ascending order.
 
-# Description
-The TensorFlow XLA optimization pass `BroadcastCanonicalizer` is triggered when specific characteristics are met within the TensorFlow model, particularly concerning the use of broadcast operations. Here are the key characteristics that lead to the triggering of this optimization:
-
-1. **Broadcast Operations with Unsorted Dimensions**:
-   The `BroadcastCanonicalizer` pass is specifically triggered by the presence of `kBroadcast` HLO instructions where the broadcasting dimensions (`hlo->dimensions()`) are not sorted in ascending order. This scenario is common when the model explicitly requires broadcasting tensors across dimensions that are not naturally aligned with the input tensor’s dimensions.
-
-2. **Model Contains Non-Fusion Computations**:
-   The optimization pass examines non-fusion computations within the model. This means that models heavily utilizing fusion operations may see fewer opportunities for this specific optimization.
-
-### Illustrative Model Example
-
-Consider a TensorFlow model where a tensor needs to be broadcast across dimensions that are not sequentially ordered. For instance, broadcasting a tensor across higher dimensions first and then lower dimensions. Below is a simplified Python code snippet that might result in such a scenario when compiled with XLA:
+Here is an example of such a pattern in TensorFlow:
 
 ```python
-import tensorflow as tf
-
-# Assuming TensorFlow is setup to use XLA compilation
-tf.config.optimizer.set_jit(True)  # Enable XLA
-
-# Input tensor of shape [10, 1, 5]
-input_tensor = tf.random.normal([10, 1, 5])
-
-# Broadcasting operation where dimensions are not sorted
-# Broadcast to match a target shape [10, 20, 5] but specifying dimension 2 first
-broadcasted_tensor = tf.broadcast_to(input_tensor, [10, 20, 5])
-
-# Further operations could be added here
-output = tf.reduce_sum(broadcasted_tensor, axis=2)
+input_tensor = tf.constant([1, 2, 3])  # shape (3,)
+broadcast_tensor = tf.broadcast_to(input_tensor, [3, 3, 3])  # shape (3, 3, 3)
 ```
 
-### Characteristics:
-- The `tf.broadcast_to` operation may result in an `HloInstruction` of type `kBroadcast` with unsorted broadcasting dimensions if the internal handling and optimization by TensorFlow XLA determine it necessary.
-- The broadcast dimensions, in this case, might be calculated as `[0, 2]` initially (depending on internal optimizations and the exact transformations applied by TensorFlow before XLA processing). If these dimensions aren't sorted (as expected by `BroadcastCanonicalizer`), the optimization pass will attempt to canonicalize them.
-
-The `BroadcastCanonicalizer` works to rearrange these dimensions to optimize computation and potentially reduce the complexity or improve the performance of the generated operations. This rearrangement involves sorting the dimensions and potentially adding transpose operations to maintain the original data order, which can lead to more efficient memory access patterns during execution.
+In this example, the broadcast operation expands the shape of `input_tensor` from `(3,)` to `(3, 3, 3)`. The dimensions of the broadcast are `[0, 1, 2]`, which are already sorted. If the dimensions were not sorted (e.g., `[2, 0, 1]`), this would trigger the `BroadcastCanonicalizer` optimization pass.

@@ -1,38 +1,17 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ConvertMover` in TensorFlow XLA.
+The model should contain the following patterns:
 
-# Description
-The TensorFlow XLA compiler optimization pass `ConvertMover` is triggered by certain characteristics in a TensorFlow model that involve precision conversion (`kConvert` operations) and their interaction with other operations. To maximize the efficiency of these models, `ConvertMover` rearranges the `kConvert` operations under specific circumstances to optimize computational precision and performance. Below are the key characteristics that would trigger this optimization:
+1. Increase precision "down" the graph:
+   ```
+   t1 = tf.cast(input_tensor, tf.float32)
+   t2 = tf.some_op(t1)
+   ```
+   The pattern describes that there is a `cast` operator that increases the precision of a tensor `input_tensor` (e.g., from `float16` to `float32`), and then the output of the `cast` operator is used as an input to some other operator `some_op`. The operator `some_op` should be one of the following: `Concatenate`, `Pad`, `Reshape`, `Slice`, `Transpose`. Also, the `cast` operator should be the only user of `input_tensor`.
 
-1. **Presence of Convert Operations with Specific Combinational Patterns:**
-   - The model contains operations where precision increase (`kConvert`) is applied just before an operation that is compatible with commutation of conversions. Compatible operations include `kConcatenate`, `kPad`, `kReshape`, `kSlice`, and `kTranspose`. The optimization attempts to move the `kConvert` operation closer to the inputs of these operations.
+2. Decrease precision "up" the graph:
+   ```
+   t1 = tf.some_op(input_tensor)
+   t2 = tf.cast(t1, tf.float16)
+   ```
+   The pattern describes that there is a `cast` operator that decreases the precision of a tensor `t1` (e.g., from `float32` to `float16`), where `t1` is the output of some other operator `some_op`. The operator `some_op` should be one of the following: `Concatenate`, `Pad`, `Reshape`, `Slice`, `Transpose`. Also, the `cast` operator should be the only user of `t1`.
 
-2. **Single User of Convert Operation:**
-   - The operand of the `kConvert` operation typically must have only one user to be eligible for moving the `kConvert` operation. This ensures that the conversion rearrangement does not affect other parts of the computation graph.
-
-3. **Consistency in Data Types:**
-   - For moving the precision increase conversion (`kConvert`), all operands that are conversions (`kConvert`) themselves must originally have the same source data type.
-
-4. **Constant Operands and Lossless Convertibility:**
-   - If constants are involved as operands, they must be losslessly convertible to the source data type of the `kConvert` operation to ensure that no information is lost when changing precisions.
-
-5. **Non-support of Sub-Byte Types in Certain Operations:**
-   - The source data type involved in the conversion should not be a sub-byte non-predicate type, as these are typically not supported in most operations.
-
-6. **Direction of Precision Change:**
-   - The optimization checks the bit width of the source and destination types of the `kConvert` operation to determine whether precision is being increased or decreased. The direction of the conversion (up the graph for precision decrease and down the graph for precision increase) impacts how the optimization is applied.
-
-### Example Scenario:
-
-Consider a TensorFlow model where you have a high precision operation followed by a reshape, and the input to the reshape is a conversion from a lower to a higher precision:
-
-```python
-# TensorFlow equivalent pseudocode
-x = tf.convert_to_tensor(np.array([...], dtype=np.float16))
-y = tf.cast(x, tf.float32)  # Increase precision
-z = tf.reshape(y, [...])    # Reshape operation
-```
-
-In this scenario, `ConvertMover` might optimize the model by moving the cast operation (`tf.cast`) to occur after the reshape if all the conditions are met, potentially improving the performance by handling data in lower precision where possible and converting later.
-
-This optimization is particularly beneficial in scenarios involving extensive data manipulation and transformation operations, where unnecessary precision increases can be computationally expensive and memory-intensive.
+In both cases, the `cast` operator should not be converting between types with the same or greater bit width (e.g., from `float32` to `float32` or from `float16` to `float32`). Also, packed types (types with bit width less than 8) are not supported.

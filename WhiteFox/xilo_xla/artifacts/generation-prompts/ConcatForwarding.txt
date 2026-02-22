@@ -1,12 +1,6 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ConcatForwarding` in TensorFlow XLA.
-
-# Description
-The model should contain nested concatenation operations along the same dimension:
+The model should contain the following pattern:
 ```
-inner = tf.concat([a, b], axis=N)
-result = tf.concat([inner, c], axis=N)
+t1 = tf.concat([A, B], axis)
+t2 = tf.concat([t1, C], axis)
 ```
-The optimization flattens the nested `tf.concat` calls into a single concatenation
-`tf.concat([a, b, c], axis=N)`. The key requirement is that both the inner and outer
-concatenation must operate along the same axis.
+The pattern describes that there are two concatenate operators in the model. The first `concat` operator concatenates tensors `A` and `B` along a specified axis, and the second `concat` operator concatenates the result of the first `concat` operation with another tensor `C` along the same axis.

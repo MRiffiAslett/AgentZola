@@ -1,17 +1,14 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `SliceConcatForwarding` in TensorFlow XLA.
+The model should contain the following pattern:
+```
+t1 = tf.concat([input_tensor1, input_tensor2, ..., input_tensorN], axis=0)
+t2 = tf.slice(t1, [start], [size])
+```
+The pattern describes that there is a `concat` operator followed by a `slice` operator in the model. The `concat` operator concatenates a list of tensors `[input_tensor1, input_tensor2, ..., input_tensorN]` along the first dimension (axis=0). The `slice` operator then slices the concatenated tensor `t1` starting from `start` and the size of the slice is `size`.
 
-# Description
-The model should contain a pattern where a 1-D concatenation is followed by a slice
-that extracts exactly one of the original operands:
-```
-c = tf.concat([a1, a2, ..., an], axis=0)   # all operands are 1-D
-result = tf.slice(c, [start], [size])        # or c[start:start+size]
-```
-Requirements:
-- All tensors must be rank 1 (1-D).
-- The slice stride must be 1 (contiguous).
-- The slice must exactly align with the boundary of one of the concatenated operands
-  (start equals the cumulative size of all preceding operands, and size equals that
-  operand's dimension).
-The optimization forwards the matching operand directly, bypassing the concat+slice.
+The characteristics that trigger the `SliceConcatForwarding` optimization are:
+
+1. The `slice` operator must slice a tensor that is the result of a `concat` operation.
+2. The `slice` operation must be along the first dimension (axis=0).
+3. The size of the slice must be 1.
+4. The stride of the slice must be 1.
+5. The start of the slice must align with the start of one of the concatenated tensors, and the size of the slice must be equal to the size of that tensor.

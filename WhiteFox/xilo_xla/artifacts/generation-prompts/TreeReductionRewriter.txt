@@ -1,29 +1,11 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `TreeReductionRewriter` in TensorFlow XLA.
+The model should contain a `tf.reduce_*` operation (like `tf.reduce_sum`, `tf.reduce_max`, etc.) where at least one of the dimensions being reduced is larger than a certain window size. This window size is a parameter for the `TreeReductionRewriter` optimization pass.
 
-# Description
-The TensorFlow XLA optimization pass `TreeReductionRewriter` is triggered for models that use the `Reduce` operation in scenarios where at least one of the dimensions being reduced has a size greater than a predefined window size (`reduce_window_size_`). The characteristics of such a model include:
-
-1. **Use of Reduction Operations**: The model must include an operation that performs reduction, such as summing elements across specified dimensions of a tensor.
-
-2. **Large Reduction Dimensions**: The dimension(s) along which the reduction is performed must include at least one dimension whose size exceeds the `reduce_window_size_`. This is critical because if all dimensions being reduced are smaller than or equal to the window size, the optimization is skipped.
-
-3. **Array-Shaped Outputs**: The output of the reduction operation needs to be array-shaped. If the operation produces outputs that aren’t strictly arrays (e.g., tuples or variadic outputs), the optimization will not be applied.
-
-4. **Reduction Across Specific Dimensions**: The operation specifically targets reducing dimensions (not necessarily all dimensions of the tensor), and these target dimensions are explicitly checked against the window size to decide if the optimization should trigger.
-
-### Example Model
-
-Here is a simple TensorFlow model code snippet that would likely trigger this optimization, assuming the `reduce_window_size_` is set to a value like 10:
+The pattern can be illustrated as follows:
 
 ```python
-import tensorflow as tf
-
-# Assume a large 2D tensor where one dimension is significantly larger than 10
-large_tensor = tf.random.normal([5, 20])
-
-# Reduction across the second dimension, which is larger than the window size of 10
-reduced_tensor = tf.reduce_sum(large_tensor, axis=1)
+t1 = tf.reduce_sum(input_tensor, axis=some_axis)
 ```
 
-In this example, the dimension being reduced is of size 20, which is greater than a `reduce_window_size_` of 10, thus meeting the criteria for triggering the `TreeReductionRewriter` optimization.
+In this pattern, `input_tensor` is the tensor being reduced, `tf.reduce_sum` is the reduction operation, and `some_axis` is the axis along which the reduction is performed. The `TreeReductionRewriter` optimization pass is triggered when the size of `some_axis` is larger than the specified window size. 
+
+Note that the optimization pass is not applied if all dimensions being reduced are smaller than the window size. Also, the optimization pass is not applied for variadic reductions.

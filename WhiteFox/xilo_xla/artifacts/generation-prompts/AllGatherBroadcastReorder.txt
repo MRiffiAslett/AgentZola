@@ -1,36 +1,14 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllGatherBroadcastReorder` in TensorFlow XLA.
-
-# Description
-The TensorFlow XLA optimization pass `AllGatherBroadcastReorder` is designed to optimize models where an `AllGather` operation directly follows a `Broadcast` operation within a computation graph. This optimization is triggered under specific conditions related to the arrangement and properties of these operations.
-
-### Characteristics of TensorFlow Models that Trigger this Optimization:
-1. **Presence of AllGather following a Broadcast:**
-   - The model must contain an `AllGather` operation whose input is the output of a `Broadcast` operation. The `AllGather` must be directly applied on the broadcasted data.
-
-2. **Data Layout and Dimensionality:**
-   - The `AllGather` operation should not be part of a sub-graph that includes collectives with layout constraints. If layout-constrained collectives are present, the optimization will not proceed.
-   - Both `Broadcast` and `AllGather` operations need to handle array data (i.e., their shapes must be array types).
-
-3. **Dimension Considerations:**
-   - The optimization checks the dimensions involved in the `Broadcast` and `AllGather` operations. Specifically, it determines which dimensions are "uniform" (having the same data along those dimensions) and which are not. The `AllGather` dimension (the dimension along which data is gathered across devices) is inherently considered non-uniform.
-   - If there are uniform dimensions (i.e., dimensions not affected by the direct operation of `Broadcast` or `AllGather`) and the product of their sizes is greater than 1, then rearranging the operations to perform the `Broadcast` post `AllGather` is considered beneficial. This rearrangement reduces the amount of data involved in the `AllGather` operation, potentially improving efficiency.
-
-### Example Pattern:
-```python
-import tensorflow as tf
-
-# Example where the optimization might be applied
-# Assuming the dimensions and other model characteristics align with the optimizer's checks
-
-# Model setup
-x = tf.random.uniform([128, 5])  # Random data tensor
-bc = tf.broadcast_to(x, [5, 4, 8, 128])  # Broadcast operation
-ag = tf.raw_ops.AllGatherV2(input=bc, group_size=1, group_key=1, instance_key=1, Tindices=tf.int32, all_gather_dimension=3)  # AllGather operation
-
-# This setup might be optimized by AllGatherBroadcastReorder to:
-# 1. Perform AllGather on the original tensor 'x'
-# 2. Broadcast the result of AllGather to the desired shape
+The model should contain the following pattern:
 ```
+t1 = tf.broadcast_to(input_tensor, ...)
+t2 = tf.all_gather(t1, ...)
+```
+The pattern describes that there is an `all_gather` operator in the model, which takes the output of a `broadcast` operator as its operand. The `all_gather` operator should operate on an array, and the `broadcast` operator should be the first operand of the `all_gather` operator.
 
-This optimization pass rearranges the operations to minimize the amount of data being transferred in collective operations like `AllGather`, which can be a significant bottleneck in distributed TensorFlow models. Models that fit the pattern of having `Broadcast` operations feeding directly into `AllGather` operations across specific dimensions are candidates for this optimization.
+The optimization pass `AllGatherBroadcastReorder` is triggered when the model contains an `all_gather` operation that is fed by a `broadcast` operation. The optimization pass reorders these operations to perform the `all_gather` operation first and then the `broadcast` operation. This is beneficial when there are uniform dimensions in the `all_gather` result that have a size greater than 1, as the `all_gather` operation will be operating on smaller data. 
+
+The optimization pass also handles two cases: 
+1. If the `all_gather` happens along one of the non-uniform dimensions of the `broadcast`, then it issues `all_gather(x)` and then a `broadcast`.
+2. If the `all_gather` happens along one of the uniform dimensions of the `broadcast`, that dimension does not exist in `x`. In this case, it reshapes `x` to add a leading '1' dimension, performs `all_gather`, then issues a `broadcast` which matches the existing `all_gather` shape, and finally "flattens" the dimensions by issuing a final reshape. 
+
+The function will return true if any of these transformations are applied, indicating that the model has been changed.

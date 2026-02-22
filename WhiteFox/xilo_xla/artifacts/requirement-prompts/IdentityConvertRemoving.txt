@@ -31,8 +31,7 @@ t2 = tf.reshape(t1, input_tensor.shape)
 ```
 The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`.
 
-
-### Please describe the characteristics of the TensorFlow model that trigger the optimization pass `IdentityConvertRemoving` in TensorFlow XLA. The model can be used to reach out the `return true;` line in function `IdentityConverRemoving`, leading the function to return true. The description should be concise and clear. Use code to illustrate patterns or constraints as needed. Please only describe the characteristics of the model. Do not describe the function code or what happens after the optimization is triggered.
+### Please describe the characteristics of the TensorFlow model that trigger the optimization pass `IdentityConvertRemoving` in TensorFlow XLA. The model can be used to reach out the `return true;` line in function `IdentityConvertRemoving`, leading the function to return true. The description should be concise and clear. Use code to illustrate patterns or constraints as needed. Please only describe the characteristics of the model. Do not describe the function code or what happens after the optimization is triggered.
 
 # The code of the function and its helper functions:
 
@@ -52,3 +51,4 @@ StatusOr<bool> IdentityConvertRemoving(HloInstruction* convert) {
 ```
 
 # Description
+

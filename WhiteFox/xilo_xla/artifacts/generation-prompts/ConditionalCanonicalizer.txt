@@ -1,41 +1,21 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `ConditionalCanonicalizer` in TensorFlow XLA.
+The model should contain a `tf.cond` operation (which is represented as `HloOpcode::kConditional` in XLA) where the inputs and/or outputs of the conditional branches are not tuples. 
 
-# Description
-The `ConditionalCanonicalizer` optimization pass in TensorFlow XLA targets TensorFlow models containing conditional (`tf.cond`) operations that do not use tuples for input, output, or branch parameters and results. This optimization pass will be triggered under the following characteristics in a TensorFlow model involving conditionals:
+The `ConditionalCanonicalizer` optimization pass is triggered when the following conditions are met:
 
-1. **Non-Tuple Branch Parameters and Results:**
-   The TensorFlow model has conditional operations where the computations (branches) associated with the conditionals have parameters or outputs that are not tuples. If any branch computation in the conditional operation either takes a non-tuple parameter or produces a non-tuple output, the pass will modify these branches to work with tuple-shaped parameters and outputs.
+1. The model contains a `tf.cond` operation.
+2. The inputs or outputs of the conditional branches are not tuples. This includes the case where the conditional branches have multiple inputs or outputs that are not packed into a tuple, or the case where the conditional branches have a single input or output that is not a tuple.
 
-   ```python
-   # Example in Python pseudocode
-   def f1(x):
-       return x + 1
+Here is an example of a TensorFlow model that would trigger this optimization pass:
 
-   def f2(x):
-       return x * 2
+```python
+def true_fn(x):
+  return x * 2
 
-   # Conditional operation without tuple parameters or outputs
-   result = tf.cond(pred, lambda: f1(x), lambda: f2(x))
-   ```
+def false_fn(x):
+  return x + 2
 
-2. **Non-Tuple Conditional Inputs and Outputs:**
-   If the inputs (excluding the predicate) or the output of the conditional itself are not tuples, the pass will modify the conditional to ensure that both the inputs and the output are tuples.
+x = tf.constant(5)
+y = tf.cond(tf.constant(True), lambda: true_fn(x), lambda: false_fn(x))
+```
 
-   ```python
-   # Example in Python pseudocode
-   # Non-tuple input to conditional
-   result = tf.cond(pred, lambda: (x + 1,), lambda: (x * 2,))
-   ```
-
-3. **Branch Modifications for Multiple Callers:**
-   If any branch computation is used by multiple callers and at least one caller is not a conditional, the pass will clone the computation for modification to prevent side effects on other callers.
-
-   ```python
-   # Example scenario where a computation is shared
-   shared_computation = some_complex_function()
-   result1 = tf.cond(pred1, lambda: shared_computation(x), lambda: other_function(x))
-   result2 = some_other_context(shared_computation(y))
-   ```
-
-In summary, TensorFlow models with conditionals that have non-tuple parameters, non-tuple branch results, non-tuple conditional inputs, or non-tuple outputs will trigger the `ConditionalCanonicalizer` optimization. The optimization ensures that all involved shapes in conditional structures are canonicalized to tuples, which is necessary for uniformity and possibly for optimization of memory and computational efficiency in the XLA compiler backend.
+In this example, the `true_fn` and `false_fn` functions each take a single non-tuple input `x` and return a single non-tuple output. This would trigger the `ConditionalCanonicalizer` optimization pass, which would canonicalize the inputs and outputs of the conditional branches to tuples.

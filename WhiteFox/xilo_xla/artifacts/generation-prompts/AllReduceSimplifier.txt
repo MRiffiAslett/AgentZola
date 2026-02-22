@@ -1,31 +1,27 @@
-### Please generate one valid TensorFlow model that satisfies requirements below.
-You should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `AllReduceSimplifier` in TensorFlow XLA.
+The model should contain the following patterns:
 
-# Description
-The TensorFlow XLA optimization `AllReduceSimplifier` targets specific characteristics in a TensorFlow model's distributed training setup. Here are the main characteristics that trigger this optimization, causing the function to return `true`:
+1. The model contains `AllGather` or `ReduceScatter` operations where the input and output shapes are compatible. This means that the shape of the tensor before and after the operation remains the same.
 
-1. **AllGather or ReduceScatter with Compatible Shapes**: The model contains either AllGather or ReduceScatter operations where the input and output shapes are identical. This pattern suggests redundancy, as reshaping without dimension change doesn't require any actual data movement or computation.
+```python
+# Example of AllGather operation
+t1 = tf.distribute.all_gather(input_tensor, axis=0)
 
-   Example:
-   ```python
-   x = tf.random.uniform([10])
-   y = tf.raw_ops.AllGather(input=x, group_size=1)  # Output shape matches input shape.
-   ```
+# Example of ReduceScatter operation
+t2 = tf.distribute.reduce_scatter(input_tensor, reduction='sum', axis=0)
+```
 
-2. **AllReduce Operations with Simplifiable Conditions**:
-   - The AllReduce must be either a cross-replica or a cross-module operation.
-   - All replica groups participating in the AllReduce operation must have the same size. 
-   - Specific optimizations are applied based on the operation within the AllReduce:
-     - If the operation inside AllReduce is addition (`Add`), the optimization might transform it by multiplying the input by the size of the replica group (given certain conditions on element types and shapes).
-     - For operations like `Minimum`, `Maximum`, `Or`, and `And`, the input can directly replace the AllReduce operation if all inputs are already identical across replicas or if the replica group size is 1.
+2. The model contains `AllReduce` operations where the shape of the tensor is an array and the operation is either cross-replica or cross-module. Additionally, the number of participants in a replica group should be the same for all groups, and if the operation is not cross-replica, the group size should be 1 and the module should use SPMD partitioning. The operand of the `AllReduce` operation should be replicated at the root or the group size should be 1.
 
-   Example:
-   ```python
-   x = tf.random.uniform([10])
-   y = tf.raw_ops.AllReduce(input=x, reduction="Add", group_size=10)
-   # This could be optimized to multiply `x` by 10 directly if other conditions are met.
-   ```
+```python
+# Example of AllReduce operation
+t3 = tf.distribute.all_reduce(input_tensor, reduction='sum')
+```
 
-3. **Replication Analysis Compliance**: The optimization checks if the input to the AllReduce operation is replicated identically across different replicas or if the group size equals 1. This avoids unnecessary collective operations when the result is predetermined by the input distribution.
+3. The model contains `AllReduce` operations where the root instruction of the computation is either `Add`, `Minimum`, `Maximum`, `Or`, or `And`. The operation should have exactly 3 instructions and 2 parameters.
 
-The optimization can significantly simplify operations, reducing computational overhead and communication across devices in distributed setups. Models with redundant or simplifiable collective operations, especially in large-scale training scenarios, are likely to benefit from this optimization pass.
+```python
+# Example of AllReduce operation with Add as root instruction
+t4 = tf.distribute.all_reduce(input_tensor, reduction='sum')
+```
+
+In all these cases, the optimization pass `AllReduceSimplifier` is triggered and the function `AllReduceSimplifier::Run` returns true.
