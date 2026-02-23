@@ -80,6 +80,7 @@ def build_feedback_prompt(
     example_tests: List[TriggeringTest],
     feedback_instruction: str = "",
     prompt_style: str = "paper",
+    seed_qa: str = "",
 ) -> str:
     target_q = spec.requirement_text.strip()
 
@@ -93,4 +94,20 @@ def build_feedback_prompt(
             continue
 
     body = "\n\n".join(examples)
-    return f"{target_q}\n\n{body}\n\n# Model begins"
+
+    parts: List[str] = []
+
+    if prompt_style == "stacked" and seed_qa:
+        parts.append(seed_qa)
+
+    if feedback_instruction:
+        parts.append(feedback_instruction)
+
+    parts.append(target_q)
+
+    if body:
+        parts.append(body)
+
+    parts.append("# Model begins")
+
+    return "\n\n".join(parts)

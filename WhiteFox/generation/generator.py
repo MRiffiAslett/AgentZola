@@ -358,6 +358,7 @@ class StarCoderGenerator:
                     example_tests,
                     feedback_instruction,
                     self._prompt_style,
+                    seed_qa=self._seed_qa,
                 )
                 prompt_type = "feedback"
             else:
