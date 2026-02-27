@@ -363,8 +363,16 @@ class StarCoderGenerator:
                 prompt_type = "feedback"
             else:
                 example_tests = []
+                instruction_header = (
+                    self.config.prompts.instruction_header
+                    if self.config.prompts
+                    else ""
+                )
                 prompt = build_base_prompt(
-                    opt_state.spec, self._prompt_style, self._seed_qa
+                    opt_state.spec,
+                    self._prompt_style,
+                    self._seed_qa,
+                    instruction_header=instruction_header,
                 )
                 prompt_type = "base"
 

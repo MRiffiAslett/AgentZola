@@ -88,7 +88,8 @@ optimizations = [
 [prompts]
 prompt_style = "stacked"  # "paper" (single-pass, Fig 4) or "stacked" (repo-style with seed Q/A prefix)
 seed_file = "xilo_xla/artifacts/seed_qa.txt"  # path to seed Q+A file, only used when prompt_style = "stacked"
-feedback_instruction = "### Please generate one different valid TensorFlow model that satisfies requirements below.\nYou should only use public TensorFlow APIs."
+instruction_header = "### Please generate one valid TensorFlow model that satisfies requirements below.\nYou should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n# Description"
+feedback_instruction = "### Please generate one different valid TensorFlow model that satisfies requirements below.\nYou should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n# Description"
 
 [stopping]
 eof_strings = [

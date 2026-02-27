@@ -66,8 +66,13 @@ def build_base_prompt(
     spec: OptimizationSpec,
     prompt_style: str = "paper",
     seed_qa: str = "",
+    instruction_header: str = "",
 ) -> str:
     target_q = spec.requirement_text.strip()
+
+    if instruction_header:
+        header = instruction_header.format(opt_name=spec.internal_name)
+        target_q = f"{header}\n{target_q}"
 
     if prompt_style == "stacked" and seed_qa:
         return f"{seed_qa}\n\n{target_q}\n\n# Model"
@@ -83,6 +88,11 @@ def build_feedback_prompt(
     seed_qa: str = "",
 ) -> str:
     target_q = spec.requirement_text.strip()
+
+    if feedback_instruction:
+        feedback_instruction = feedback_instruction.format(
+            opt_name=spec.internal_name
+        )
 
     examples: List[str] = []
     for test in example_tests:
