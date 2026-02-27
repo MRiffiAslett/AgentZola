@@ -79,6 +79,7 @@ class PassAliasesConfig(BaseModel):
 class PromptsConfig(BaseModel):
     prompt_style: str = "paper"
     seed_file: str = ""
+    instruction_header: str = ""
     feedback_instruction: str = ""
 
 
