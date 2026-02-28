@@ -1,4 +1,6 @@
 import json
+import logging
+import math
 import re
 import threading
 from datetime import datetime
@@ -6,7 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from domain.bandit import OptimizationState, TriggeringTest
-import logging
 
 
 def extract_triggered_passes(log_text: str) -> Set[str]:
@@ -29,6 +30,7 @@ class WhiteFoxLogger:
         self.prompts_file = self.source_dir / "prompts.json"
         self.cleaned_code_file = self.source_dir / "all_cleaned_code.json"
         self.bug_reports_file = self.source_dir / "bug_reports.json"
+        self.bug_reports_filtered_file = self.source_dir / "bug_reports_filtered.json"
         self.diagnostic_file = self.source_dir / "execution_diagnostics.json"
 
         self.prompts_text_file = self.log_dir / "gen_prompts.log"
@@ -53,6 +55,7 @@ class WhiteFoxLogger:
             self.prompts_file,
             self.cleaned_code_file,
             self.bug_reports_file,
+            self.bug_reports_filtered_file,
             self.diagnostic_file,
             self.prompts_text_file,
             self.cleaned_code_text_file,
@@ -225,8 +228,88 @@ class WhiteFoxLogger:
         )
         self._write_code_readable()
 
+    @staticmethod
+    def _is_low_signal_report(entry: Dict) -> bool:
+
+        if entry.get("oracle_type") == "AllDiff_Rand":
+            return True
+
+        num_diff = (entry.get("details") or {}).get("Num Diff")
+        if not isinstance(num_diff, str):
+            return False
+
+        match = re.match(r"^Value mismatch:\s*(.+?)\s+vs\s+(.+)$", num_diff)
+        if not match:
+            return False
+
+        lhs, rhs = match.group(1), match.group(2)
+
+        def _represents_nan_or_inf(text: str) -> Optional[str]:
+
+            cleaned = text.strip()
+            cleaned = re.sub(
+                r"^(?:tensor|tf\.Tensor|Tensor|array)\s*\(\s*", "", cleaned
+            )
+            cleaned = re.sub(r"\s*(?:,\s*dtype=[^)]+)?\)\s*$", "", cleaned)
+
+            tokens_str = cleaned.replace("[", " ").replace("]", " ")
+            tokens_str = tokens_str.replace("(", " ").replace(")", " ")
+            tokens_str = tokens_str.replace(",", " ")
+            tokens = tokens_str.split()
+
+            if not tokens:
+                return None
+
+            kinds = set()
+            for tok in tokens:
+                low = tok.strip().lower()
+                if low in ("nan", "nan.", "float('nan')"):
+                    kinds.add("nan")
+                elif low in (
+                    "inf",
+                    "+inf",
+                    "-inf",
+                    "inf.",
+                    "-inf.",
+                    "float('inf')",
+                    "float('-inf')",
+                ):
+                    kinds.add("inf")
+                else:
+                    try:
+                        val = float(low)
+                        if math.isnan(val):
+                            kinds.add("nan")
+                        elif math.isinf(val):
+                            kinds.add("inf")
+                        else:
+                            return None  # Regular number
+                    except (ValueError, OverflowError):
+                        return None  # Not a recognised special value
+
+            if len(kinds) == 1:
+                return kinds.pop()
+            return None
+
+        lhs_kind = _represents_nan_or_inf(lhs)
+        rhs_kind = _represents_nan_or_inf(rhs)
+
+        if lhs_kind is not None and lhs_kind == rhs_kind:
+            return True
+
+        return False
+
     def _write_bug_reports(self) -> None:
         self._write_json(self.bug_reports_file, self.bug_reports_data)
+        self._write_bug_reports_filtered()
+
+    def _write_bug_reports_filtered(self) -> None:
+        filtered = [
+            entry
+            for entry in self.bug_reports_data
+            if not self._is_low_signal_report(entry)
+        ]
+        self._write_json(self.bug_reports_filtered_file, filtered)
 
     def _write_diagnostics(self) -> None:
         self._write_json(self.diagnostic_file, self.diagnostic_data)
@@ -355,7 +438,9 @@ class WhiteFoxLogger:
                 self._write_header(f, "WHITEFOX DETAILED RUN SUMMARY")
 
                 mode_labels = [k.replace("success_", "") for k in mode_keys]
-                header = "Optimization                             | Created | Triggered"
+                header = (
+                    "Optimization                             | Created | Triggered"
+                )
                 for label in mode_labels:
                     header += f" | {label.capitalize()}"
                 f.write(header + "\n")

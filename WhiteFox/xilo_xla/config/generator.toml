@@ -31,8 +31,8 @@ tests_per_iteration = 5
 max_iterations = 15
 examples_per_prompt = 3
 test_timeout = 30
-parallel_test_workers = 4
-parallel_optimizations = 2
+parallel_test_workers = 8
+parallel_optimizations = 3
 optimizations = [
     "AllGatherBroadcastReorder",
     "AllGatherCombiner",
