@@ -24,7 +24,7 @@ from generation.prompts import (
     build_feedback_prompt,
     load_optimization_specs,
 )
-from generation.wf_logging import WhiteFoxLogger, WhiteFoxProfiler
+from generation.wf_logging import CoverageCollector, WhiteFoxLogger, WhiteFoxProfiler
 from vllm import LLM, SamplingParams
 
 
@@ -558,9 +558,14 @@ class StarCoderGenerator:
 
                 with self._state_lock:
                     whitefox_logger.generate_run_summary(self.whitefox_state)
+                self.coverage.finalize()
 
     def generate_whitefox(self, only_optimizations: Optional[List[str]] = None) -> None:
         project_root = self.logging_dir.parent
+
+        # -- LLVM coverage: set env before any subprocess is spawned ----------
+        self.coverage = CoverageCollector(self.logging_dir)
+        os.environ.update(self.coverage.env_vars())
 
         config_dict = {
             "generation": {
@@ -644,6 +649,7 @@ class StarCoderGenerator:
                     )
                     with self._state_lock:
                         whitefox_logger.generate_run_summary(self.whitefox_state)
+                self.coverage.finalize()
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"
@@ -659,6 +665,9 @@ class StarCoderGenerator:
         whitefox_logger.flush()
 
         whitefox_logger.generate_run_summary(self.whitefox_state)
+
+        # -- LLVM coverage: merge profraw files and generate report -----------
+        self.coverage.finalize()
 
         self.profiler.generate_report()
         self.logger.info(f"Resource profile saved to {self.profiler.report_file}")
