@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -12,6 +12,7 @@ class TestExecutionTask:
     iteration: int
     sample_idx: int
     timeout: int = 7
+    extra_env: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

@@ -1,8 +1,10 @@
 """LLVM source-based coverage: collection, merging, reporting."""
 
 import logging
+import os
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import List, Optional
@@ -14,6 +16,13 @@ _PATH_EQUIV = (
     "/vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_223995/"
     "a4a32a9063034e2db7bdf417555977d5/execroot/org_tensorflow"
 )
+
+_VERIFY_SCRIPT = """\
+import os, sys
+print("LLVM_PROFILE_FILE=" + os.environ.get("LLVM_PROFILE_FILE", "<unset>"))
+import tensorflow as tf
+tf.constant(1)
+"""
 
 
 def _find_tf_so_files() -> List[str]:
@@ -39,8 +48,95 @@ class CoverageCollector:
         self.profraw_dir.mkdir(parents=True, exist_ok=True)
         self.profdata_file = self.cov_dir / "merged.profdata"
         self.report_file = logging_dir / "coverage_report.log"
+        self.diag_file = logging_dir / "coverage_diagnostics.log"
         self._so_files: Optional[List[str]] = None
         self._lock = threading.Lock()
+
+    # ---- diagnostics -------------------------------------------------------
+
+    def verify(self) -> None:
+        """Run once at startup.  Logs whether the TF wheel actually produces
+        profraw files and whether LLVM_PROFILE_FILE reaches subprocesses.
+        Results go to coverage_diagnostics.log.
+        """
+        lines: List[str] = []
+        lines.append("=" * 70)
+        lines.append("COVERAGE DIAGNOSTICS")
+        lines.append("=" * 70)
+
+        # 1. Check env var propagation + profraw output in a real subprocess
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = str(Path(tmp) / "probe_%p.profraw")
+            env = os.environ.copy()
+            env["LLVM_PROFILE_FILE"] = probe
+            r = subprocess.run(
+                [sys.executable, "-c", _VERIFY_SCRIPT],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=120,
+            )
+            lines.append("")
+            lines.append("--- subprocess stdout ---")
+            lines.append(r.stdout.strip())
+            if r.stderr:
+                lines.append("--- subprocess stderr (last 5 lines) ---")
+                for line in r.stderr.strip().splitlines()[-5:]:
+                    lines.append(line)
+            profraw_files = list(Path(tmp).glob("*.profraw"))
+            lines.append("")
+            lines.append(f"LLVM_PROFILE_FILE sent: {probe}")
+            lines.append(f"profraw files written:  {len(profraw_files)}")
+            for pf in profraw_files:
+                lines.append(f"  {pf}  ({pf.stat().st_size} bytes)")
+            if not profraw_files:
+                lines.append(
+                    "⚠  No profraw produced — the TF wheel may not be "
+                    "instrumented with -fprofile-instr-generate / "
+                    "-fcoverage-mapping."
+                )
+            else:
+                lines.append("✓  TF wheel produces profraw files.")
+
+        # 2. Check for __llvm_profile symbols in main TF .so
+        so_files = self._get_so_files()
+        lines.append("")
+        lines.append(f"TF .so files found: {len(so_files)}")
+        if so_files:
+            first_so = so_files[0]
+            nm = subprocess.run(
+                ["nm", "-D", first_so],
+                capture_output=True,
+                text=True,
+            )
+            profile_syms = [
+                sym for sym in nm.stdout.splitlines() if "__llvm_profile" in sym
+            ]
+            lines.append(
+                f"__llvm_profile symbols in {Path(first_so).name}: {len(profile_syms)}"
+            )
+            for s in profile_syms[:10]:
+                lines.append(f"  {s}")
+
+        lines.append("")
+        lines.append("=" * 70)
+
+        text = "\n".join(lines) + "\n"
+        self.diag_file.write_text(text)
+        logger.info("Coverage diagnostics written to %s", self.diag_file)
+
+        # Also log the key result to the main logger
+        if not profraw_files:
+            logger.warning(
+                "COVERAGE: probe subprocess produced 0 profraw files. "
+                "The TF wheel may not be instrumented."
+            )
+        else:
+            logger.info(
+                "COVERAGE: probe subprocess wrote %d profraw file(s) — "
+                "instrumentation confirmed.",
+                len(profraw_files),
+            )
 
     # ---- collection --------------------------------------------------------
 
