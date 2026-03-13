@@ -31,6 +31,9 @@ from vllm import LLM, SamplingParams
 def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
     try:
+        if task.extra_env:
+            os.environ.update(task.extra_env)
+
         from generation.harness import execute_test_in_subprocess
 
         result = execute_test_in_subprocess(
@@ -280,6 +283,7 @@ class StarCoderGenerator:
                 iteration=iteration,
                 sample_idx=sample_idx,
                 timeout=timeout,
+                extra_env=self.coverage.env_vars(),
             )
             tasks.append(task)
 
@@ -565,6 +569,7 @@ class StarCoderGenerator:
 
         # -- LLVM coverage: set env before any subprocess is spawned ----------
         self.coverage = CoverageCollector(self.logging_dir)
+        self.coverage.verify()
         os.environ.update(self.coverage.env_vars())
 
         config_dict = {
