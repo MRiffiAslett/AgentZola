@@ -47,6 +47,8 @@ export TOKENIZERS_PARALLELISM=false
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
 poetry --version || exit 1
+poetry lock --no-update
+poetry install --no-interaction
 
 if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
