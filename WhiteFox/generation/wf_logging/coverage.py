@@ -44,8 +44,9 @@ class CoverageCollector:
 
     def __init__(self, logging_dir: Path):
         self.cov_dir = logging_dir / "coverage"
-        self.profraw_dir = self.cov_dir / "profraw"
-        self.profraw_dir.mkdir(parents=True, exist_ok=True)
+        self.cov_dir.mkdir(parents=True, exist_ok=True)
+        # Write profraw to /tmp (local disk, fast) — not the shared filesystem.
+        self.profraw_dir = Path(tempfile.mkdtemp(prefix="wf_profraw_"))
         self.profdata_file = self.cov_dir / "merged.profdata"
         self.report_file = logging_dir / "coverage_report.log"
         self.diag_file = logging_dir / "coverage_diagnostics.log"
@@ -152,8 +153,16 @@ class CoverageCollector:
         if not profraw_files:
             logger.warning("No .profraw files found in %s", self.profraw_dir)
             return False
+
+        # If a previous merged profdata exists, include it so coverage
+        # accumulates across optimizations even after profraw cleanup.
+        inputs = []
+        if self.profdata_file.exists():
+            inputs.append(str(self.profdata_file))
+        inputs += [str(f) for f in profraw_files]
+
         cmd = ["llvm-profdata", "merge", "-sparse", "-o", str(self.profdata_file)]
-        cmd += [str(f) for f in profraw_files]
+        cmd += inputs
         logger.info(
             "Merging %d profraw files → %s", len(profraw_files), self.profdata_file
         )
@@ -161,6 +170,11 @@ class CoverageCollector:
         if r.returncode != 0:
             logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
             return False
+
+        # Delete profraw files after successful merge to free disk space.
+        for pf in profraw_files:
+            pf.unlink(missing_ok=True)
+        logger.info("Deleted %d profraw files after merge", len(profraw_files))
         return True
 
     # ---- reporting ----------------------------------------------------------
