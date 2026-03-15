@@ -562,7 +562,6 @@ class StarCoderGenerator:
 
                 with self._state_lock:
                     whitefox_logger.generate_run_summary(self.whitefox_state)
-                self.coverage.finalize()
 
     def generate_whitefox(self, only_optimizations: Optional[List[str]] = None) -> None:
         project_root = self.logging_dir.parent
@@ -654,7 +653,6 @@ class StarCoderGenerator:
                     )
                     with self._state_lock:
                         whitefox_logger.generate_run_summary(self.whitefox_state)
-                self.coverage.finalize()
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"
