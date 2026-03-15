@@ -45,8 +45,10 @@ class CoverageCollector:
     def __init__(self, logging_dir: Path):
         self.cov_dir = logging_dir / "coverage"
         self.cov_dir.mkdir(parents=True, exist_ok=True)
-        # Write profraw to /tmp (local disk, fast) — not the shared filesystem.
-        self.profraw_dir = Path(tempfile.mkdtemp(prefix="wf_profraw_"))
+        # Write profraw to local /tmp (fast) — not the shared filesystem.
+        # tempfile.mkdtemp() honours TMPDIR which on SLURM clusters often
+        # points to a shared mount, so we force /tmp explicitly.
+        self.profraw_dir = Path(tempfile.mkdtemp(prefix="wf_profraw_", dir="/tmp"))
         self.profdata_file = self.cov_dir / "merged.profdata"
         self.report_file = logging_dir / "coverage_report.log"
         self.diag_file = logging_dir / "coverage_diagnostics.log"
