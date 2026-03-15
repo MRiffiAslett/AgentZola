@@ -143,12 +143,12 @@ class CoverageCollector:
 
     def env_vars(self) -> dict:
         """Env vars that make each TF subprocess write a unique .profraw."""
-        pattern = str(self.profraw_dir / "wf_%p_%m.profraw")
+        pattern = str(self.profraw_dir / "wf_%p.profraw")
         return {"LLVM_PROFILE_FILE": pattern}
 
     # ---- merging ------------------------------------------------------------
 
-    _MERGE_BATCH = 10  # profraw files per llvm-profdata invocation
+    _MERGE_BATCH = 3  # profraw files per llvm-profdata invocation (~3GB peak)
 
     def merge(self) -> bool:
         profraw_files = sorted(self.profraw_dir.glob("*.profraw"))
@@ -165,6 +165,10 @@ class CoverageCollector:
 
         # Merge in small batches to avoid OOM.  Each batch folds new profraw
         # files into the single accumulated profdata on disk.
+        # Write to a temp file then rename to avoid truncating the input
+        # profdata that is also our output target.
+        tmp_profdata = self.profdata_file.with_suffix(".profdata.tmp")
+
         for i in range(0, len(profraw_files), self._MERGE_BATCH):
             batch = profraw_files[i : i + self._MERGE_BATCH]
             inputs = [str(f) for f in batch]
@@ -176,13 +180,16 @@ class CoverageCollector:
                 "merge",
                 "-sparse",
                 "-o",
-                str(self.profdata_file),
+                str(tmp_profdata),
             ] + inputs
 
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
                 logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
+                tmp_profdata.unlink(missing_ok=True)
                 return False
+
+            tmp_profdata.rename(self.profdata_file)
 
             # Delete this batch's profraw files immediately.
             for pf in batch:
