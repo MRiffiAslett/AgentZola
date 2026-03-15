@@ -148,33 +148,47 @@ class CoverageCollector:
 
     # ---- merging ------------------------------------------------------------
 
+    _MERGE_BATCH = 10  # profraw files per llvm-profdata invocation
+
     def merge(self) -> bool:
         profraw_files = sorted(self.profraw_dir.glob("*.profraw"))
         if not profraw_files:
             logger.warning("No .profraw files found in %s", self.profraw_dir)
             return False
 
-        # If a previous merged profdata exists, include it so coverage
-        # accumulates across optimizations even after profraw cleanup.
-        inputs = []
-        if self.profdata_file.exists():
-            inputs.append(str(self.profdata_file))
-        inputs += [str(f) for f in profraw_files]
-
-        cmd = ["llvm-profdata", "merge", "-sparse", "-o", str(self.profdata_file)]
-        cmd += inputs
         logger.info(
-            "Merging %d profraw files → %s", len(profraw_files), self.profdata_file
+            "Merging %d profraw files (batch size %d) → %s",
+            len(profraw_files),
+            self._MERGE_BATCH,
+            self.profdata_file,
         )
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
-            return False
 
-        # Delete profraw files after successful merge to free disk space.
-        for pf in profraw_files:
-            pf.unlink(missing_ok=True)
-        logger.info("Deleted %d profraw files after merge", len(profraw_files))
+        # Merge in small batches to avoid OOM.  Each batch folds new profraw
+        # files into the single accumulated profdata on disk.
+        for i in range(0, len(profraw_files), self._MERGE_BATCH):
+            batch = profraw_files[i : i + self._MERGE_BATCH]
+            inputs = [str(f) for f in batch]
+            if self.profdata_file.exists():
+                inputs.insert(0, str(self.profdata_file))
+
+            cmd = [
+                "llvm-profdata",
+                "merge",
+                "-sparse",
+                "-o",
+                str(self.profdata_file),
+            ] + inputs
+
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
+                return False
+
+            # Delete this batch's profraw files immediately.
+            for pf in batch:
+                pf.unlink(missing_ok=True)
+
+        logger.info("Merged and cleaned %d profraw files", len(profraw_files))
         return True
 
     # ---- reporting ----------------------------------------------------------
