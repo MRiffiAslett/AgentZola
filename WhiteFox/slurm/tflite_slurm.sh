@@ -46,9 +46,15 @@ mkdir -p "$PROJECT_ROOT/output"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
+TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-V2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl"
+
 poetry --version || exit 1
 poetry lock
 poetry install --no-interaction
+
+# Always force-reinstall the TensorFlow wheel to pick up any rebuilds
+echo "[$(date)] Force-reinstalling TensorFlow wheel: $TF_WHEEL"
+poetry run pip install --force-reinstall --no-deps "$TF_WHEEL"
 
 if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
