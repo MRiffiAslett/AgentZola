@@ -46,6 +46,11 @@ mkdir -p "$PROJECT_ROOT/output"
 rm -rf /tmp/wf_profraw_* /tmp/xla_dump 2>/dev/null || true
 echo "[$(date)] /tmp free: $(df -h /tmp | tail -1 | awk '{print $4}')"
 
+# Find llvm tools for coverage merge/report
+LLVM_PROFDATA=$(compgen -c llvm-profdata 2>/dev/null | head -1 || true)
+echo "[$(date)] llvm-profdata: ${LLVM_PROFDATA:-NOT FOUND}"
+echo "[$(date)] /usr/bin/llvm-*: $(ls /usr/bin/llvm-profdata* 2>/dev/null || echo 'none')"
+
 export XLA_FLAGS="--xla_dump_to=/tmp/xla_dump"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
 export TOKENIZERS_PARALLELISM=false
