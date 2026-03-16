@@ -85,7 +85,7 @@ class CoverageCollector:
         lines.append("=" * 70)
 
         # 1. Check env var propagation + profraw output in a real subprocess
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             probe = str(Path(tmp) / "probe_%p.profraw")
             env = os.environ.copy()
             env["LLVM_PROFILE_FILE"] = probe
@@ -270,7 +270,11 @@ class CoverageCollector:
         """Merge all profraw files so far and regenerate the report.
 
         Thread-safe; safe to call after every optimization.
+        Non-fatal: logs errors but never crashes the fuzzing run.
         """
-        with self._lock:
-            if self.merge():
-                self.report()
+        try:
+            with self._lock:
+                if self.merge():
+                    self.report()
+        except Exception as exc:
+            logger.error("Coverage finalize failed: %s", exc)
