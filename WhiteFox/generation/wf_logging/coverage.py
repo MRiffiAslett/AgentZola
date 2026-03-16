@@ -41,10 +41,13 @@ tf.constant(1)
 
 def _find_tf_so_files() -> List[str]:
     """Find instrumented TensorFlow .so files in the current environment."""
+    env = os.environ.copy()
+    env["LLVM_PROFILE_FILE"] = "/dev/null"  # suppress ~1GB profraw write
     r = subprocess.run(
         [sys.executable, "-c", "import tensorflow as tf; print(tf.__file__)"],
         capture_output=True,
         text=True,
+        env=env,
     )
     if r.returncode != 0:
         logger.warning("Could not locate TensorFlow: %s", r.stderr.strip())
