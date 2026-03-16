@@ -1,7 +1,9 @@
 """LLVM source-based coverage: collection, merging, reporting."""
 
+import glob
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,6 +12,18 @@ from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _find_llvm_tool(name: str) -> str:
+    """Find an LLVM tool, trying versioned names (e.g. llvm-profdata-18)."""
+    path = shutil.which(name)
+    if path:
+        return path
+    # Try versioned variants on Ubuntu/Debian
+    for candidate in sorted(glob.glob(f"/usr/bin/{name}-*"), reverse=True):
+        if shutil.which(candidate):
+            return candidate
+    return name  # fall back, let subprocess raise if missing
 
 _PATH_EQUIV = (
     "/proc/self/cwd,"
@@ -178,7 +192,7 @@ class CoverageCollector:
                 inputs.insert(0, str(self.profdata_file))
 
             cmd = [
-                "llvm-profdata",
+                _find_llvm_tool("llvm-profdata"),
                 "merge",
                 "-sparse",
                 "-o",
@@ -217,7 +231,7 @@ class CoverageCollector:
             return False
 
         cmd = [
-            "llvm-cov",
+            _find_llvm_tool("llvm-cov"),
             "report",
             so_files[0],
             f"-instr-profile={self.profdata_file}",
