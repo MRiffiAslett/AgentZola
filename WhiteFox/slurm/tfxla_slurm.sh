@@ -18,7 +18,7 @@ echo
 CONFIG_PATH="${1:-xilo_xla/config/generator.toml}"
 ONLY_OPT="${2:-}"
 
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="/vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_224429/a4a32a9063034e2db7bdf417555977d5/external/llvm_linux_x86_64/bin:$HOME/.local/bin:$PATH"
 
 if [ -f /vol/cuda/12.0.0/setup.sh ]; then
   . /vol/cuda/12.0.0/setup.sh
