@@ -671,8 +671,28 @@ class StarCoderGenerator:
 
         whitefox_logger.generate_run_summary(self.whitefox_state)
 
+        # -- Shut down vLLM engine before heavy I/O to free GPU/CPU resources --
+        self._shutdown_llm()
+
         # -- LLVM coverage: merge profraw files and generate report -----------
         self.coverage.finalize()
 
         self.profiler.generate_report()
         self.logger.info(f"Resource profile saved to {self.profiler.report_file}")
+
+    # ------------------------------------------------------------------
+
+    def _shutdown_llm(self) -> None:
+        """Tear down the vLLM engine so its non-daemon child processes exit."""
+        try:
+            if hasattr(self, "llm") and self.llm is not None:
+                self.logger.info("Shutting down vLLM engine …")
+                # vLLM ≥0.8 exposes llm_engine; try its shutdown first.
+                engine = getattr(self.llm, "llm_engine", None)
+                if engine is not None and hasattr(engine, "shutdown"):
+                    engine.shutdown()
+                del self.llm
+                self.llm = None
+                self.logger.info("vLLM engine shut down.")
+        except Exception as exc:
+            self.logger.warning("vLLM shutdown error (non-fatal): %s", exc)

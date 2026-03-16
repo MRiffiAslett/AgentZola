@@ -202,7 +202,15 @@ class CoverageCollector:
                 str(tmp_profdata),
             ] + inputs
 
-            r = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            except subprocess.TimeoutExpired:
+                logger.error("llvm-profdata merge timed out (batch %d)", i)
+                tmp_profdata.unlink(missing_ok=True)
+                return False
+            except FileNotFoundError:
+                logger.error("llvm-profdata not found on PATH")
+                return False
             if r.returncode != 0:
                 logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
                 tmp_profdata.unlink(missing_ok=True)
@@ -244,7 +252,14 @@ class CoverageCollector:
             cmd += ["-object", so]
 
         logger.info("Generating coverage report → %s", self.report_file)
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except subprocess.TimeoutExpired:
+            logger.error("llvm-cov report timed out")
+            return False
+        except FileNotFoundError:
+            logger.error("llvm-cov not found on PATH")
+            return False
 
         with open(self.report_file, "w") as f:
             f.write("=" * 80 + "\n")

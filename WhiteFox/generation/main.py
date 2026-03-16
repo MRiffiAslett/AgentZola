@@ -1,3 +1,4 @@
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -56,7 +57,12 @@ def main():
     except Exception as e:
         print(f"Error during WhiteFox fuzzing: {e}", file=sys.stderr)
         traceback.print_exc()
-        sys.exit(1)
+        os._exit(1)
+
+    # vLLM's V1 engine spawns non-daemon processes that can prevent a clean
+    # exit even after the LLM object is deleted.  Hard-exit once all files
+    # have been flushed so the SLURM job terminates promptly.
+    os._exit(0)
 
 
 if __name__ == "__main__":
