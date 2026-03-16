@@ -568,8 +568,10 @@ class StarCoderGenerator:
 
         # -- LLVM coverage: set env before any subprocess is spawned ----------
         self.coverage = CoverageCollector(self.logging_dir)
-        self.coverage.verify()
+        # Set LLVM_PROFILE_FILE *before* verify() so no subprocess writes
+        # a stray ~1GB default.profraw to NFS.
         os.environ.update(self.coverage.env_vars())
+        self.coverage.verify()
 
         config_dict = {
             "generation": {
