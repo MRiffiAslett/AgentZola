@@ -42,6 +42,10 @@ export VLLM_CACHE_DIR="$HF_CACHE_DIR"
 
 mkdir -p "$PROJECT_ROOT/output"
 
+# Clean up leftover profraw files from previous crashed runs
+rm -rf /tmp/wf_profraw_* /tmp/xla_dump 2>/dev/null || true
+echo "[$(date)] /tmp free: $(df -h /tmp | tail -1 | awk '{print $4}')"
+
 export XLA_FLAGS="--xla_dump_to=/tmp/xla_dump"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
 export TOKENIZERS_PARALLELISM=false
