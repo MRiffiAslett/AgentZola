@@ -27,12 +27,12 @@ split_size = 20
 unit_num = 2       
 optimizations_dir = "xilo_xla/artifacts/generation-prompts"
 tests_per_optimization = 10
-tests_per_iteration = 5
-max_iterations = 15
-examples_per_prompt = 3
+tests_per_iteration = 2
+max_iterations = 2
+examples_per_prompt = 1
 test_timeout = 30
-parallel_test_workers = 8
-parallel_optimizations = 3
+parallel_test_workers = 1
+parallel_optimizations = 1
 optimizations = [
     "AllGatherBroadcastReorder",
     "AllGatherCombiner",
