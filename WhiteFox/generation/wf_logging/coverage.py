@@ -14,16 +14,46 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 
-def _find_llvm_tool(name: str) -> str:
-    """Find an LLVM tool, trying versioned names (e.g. llvm-profdata-18)."""
+_TFBUILD_LLVM_GLOB = (
+    "/vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/"
+    "llvm_linux_x86_64/bin"
+)
+
+
+def _find_all_llvm_tools(name: str) -> List[str]:
+    """Return *all* candidate paths for an LLVM tool, de-duplicated."""
+    candidates: List[str] = []
+    seen: set = set()
+
+    def _add(p: str) -> None:
+        rp = os.path.realpath(p)
+        if rp not in seen:
+            seen.add(rp)
+            candidates.append(p)
+
+    # 1. Anything already on PATH
     path = shutil.which(name)
     if path:
-        return path
-    # Try versioned variants on Ubuntu/Debian
-    for candidate in sorted(glob.glob(f"/usr/bin/{name}-*"), reverse=True):
-        if shutil.which(candidate):
-            return candidate
-    return name  # fall back, let subprocess raise if missing
+        _add(path)
+
+    # 2. Versioned variants in /usr/bin  (e.g. llvm-profdata-17)
+    for c in sorted(glob.glob(f"/usr/bin/{name}-*"), reverse=True):
+        if shutil.which(c):
+            _add(c)
+
+    # 3. LLVM bundled inside the TF build tree (one per bazel root)
+    for llvm_bin in sorted(glob.glob(_TFBUILD_LLVM_GLOB)):
+        p = os.path.join(llvm_bin, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            _add(p)
+
+    return candidates
+
+
+def _find_llvm_tool(name: str) -> str:
+    """Best-effort single-tool lookup (used for quick calls like nm)."""
+    candidates = _find_all_llvm_tools(name)
+    return candidates[0] if candidates else name
 
 _PATH_EQUIV = (
     "/proc/self/cwd,"
@@ -71,6 +101,7 @@ class CoverageCollector:
         self.diag_file = logging_dir / "coverage_diagnostics.log"
         self._so_files: Optional[List[str]] = None
         self._lock = threading.Lock()
+        self._llvm_dir: Optional[str] = None  # cached compatible LLVM bin dir
 
     # ---- diagnostics -------------------------------------------------------
 
@@ -118,7 +149,23 @@ class CoverageCollector:
             else:
                 lines.append("✓  TF wheel produces profraw files.")
 
-        # 2. Check for __llvm_profile symbols in main TF .so
+            # 2. Probe llvm-profdata compatibility while profraw still exists
+            if profraw_files:
+                candidates = _find_all_llvm_tools("llvm-profdata")
+                lines.append(f"llvm-profdata candidates found: {len(candidates)}")
+                for c in candidates:
+                    lines.append(f"  {c}")
+                compat = self._select_profdata(profraw_files[0])
+                if compat:
+                    lines.append(f"✓  Compatible llvm-profdata: {compat}")
+                else:
+                    lines.append(
+                        "⚠  No compatible llvm-profdata found — coverage "
+                        "merge/report will be skipped."
+                    )
+                lines.append("")
+
+        # 3. Check for __llvm_profile symbols in main TF .so
         so_files = self._get_so_files()
         lines.append("")
         lines.append(f"TF .so files found: {len(so_files)}")
@@ -165,6 +212,60 @@ class CoverageCollector:
         pattern = str(self.profraw_dir / "wf_%p.profraw")
         return {"LLVM_PROFILE_FILE": pattern}
 
+    # ---- LLVM tool selection ------------------------------------------------
+
+    def _select_profdata(self, sample_profraw: Path) -> Optional[str]:
+        """Probe all llvm-profdata candidates against a real profraw file.
+
+        Returns the first binary that doesn't produce a version-mismatch
+        error, or *None* if every candidate fails.  Caches the result (and
+        the parent directory, so llvm-cov from the same install is used).
+        """
+        if self._llvm_dir is not None:
+            tool = os.path.join(self._llvm_dir, "llvm-profdata")
+            if os.path.isfile(tool):
+                return tool
+
+        candidates = _find_all_llvm_tools("llvm-profdata")
+        if not candidates:
+            logger.error("No llvm-profdata binary found anywhere")
+            return None
+
+        for tool in candidates:
+            try:
+                r = subprocess.run(
+                    [tool, "show", str(sample_profraw)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+            if "version mismatch" in r.stderr:
+                logger.info(
+                    "Skipping %s (profraw version mismatch)", tool
+                )
+                continue
+            # Either success or some other benign message — this tool works.
+            self._llvm_dir = os.path.dirname(os.path.realpath(tool))
+            logger.info("Selected compatible llvm-profdata: %s", tool)
+            return tool
+
+        logger.error(
+            "None of the %d llvm-profdata candidates are compatible "
+            "with the profraw version produced by this TF wheel.",
+            len(candidates),
+        )
+        return None
+
+    def _get_llvm_tool(self, name: str) -> str:
+        """Return *name* from the cached compatible LLVM directory."""
+        if self._llvm_dir:
+            p = os.path.join(self._llvm_dir, name)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return p
+        return _find_llvm_tool(name)
+
     # ---- merging ------------------------------------------------------------
 
     _MERGE_BATCH = 3  # profraw files per llvm-profdata invocation (~3GB peak)
@@ -175,6 +276,10 @@ class CoverageCollector:
             logger.warning("No .profraw files found in %s", self.profraw_dir)
             return False
 
+        profdata_tool = self._select_profdata(profraw_files[0])
+        if profdata_tool is None:
+            return False
+
         logger.info(
             "Merging %d profraw files (batch size %d) → %s",
             len(profraw_files),
@@ -182,10 +287,6 @@ class CoverageCollector:
             self.profdata_file,
         )
 
-        # Merge in small batches to avoid OOM.  Each batch folds new profraw
-        # files into the single accumulated profdata on disk.
-        # Write to a temp file then rename to avoid truncating the input
-        # profdata that is also our output target.
         tmp_profdata = self.profdata_file.with_suffix(".profdata.tmp")
 
         for i in range(0, len(profraw_files), self._MERGE_BATCH):
@@ -195,7 +296,7 @@ class CoverageCollector:
                 inputs.insert(0, str(self.profdata_file))
 
             cmd = [
-                _find_llvm_tool("llvm-profdata"),
+                profdata_tool,
                 "merge",
                 "-sparse",
                 "-o",
@@ -209,7 +310,7 @@ class CoverageCollector:
                 tmp_profdata.unlink(missing_ok=True)
                 return False
             except FileNotFoundError:
-                logger.error("llvm-profdata not found on PATH")
+                logger.error("llvm-profdata not found: %s", profdata_tool)
                 return False
             if r.returncode != 0:
                 logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
@@ -218,7 +319,6 @@ class CoverageCollector:
 
             tmp_profdata.rename(self.profdata_file)
 
-            # Delete this batch's profraw files immediately.
             for pf in batch:
                 pf.unlink(missing_ok=True)
 
@@ -242,7 +342,7 @@ class CoverageCollector:
             return False
 
         cmd = [
-            _find_llvm_tool("llvm-cov"),
+            self._get_llvm_tool("llvm-cov"),
             "report",
             so_files[0],
             f"-instr-profile={self.profdata_file}",

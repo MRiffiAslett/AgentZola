@@ -18,7 +18,13 @@ echo
 CONFIG_PATH="${1:-xilo_xla/config/generator.toml}"
 ONLY_OPT="${2:-}"
 
-export PATH="/vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_224429/a4a32a9063034e2db7bdf417555977d5/external/llvm_linux_x86_64/bin:$HOME/.local/bin:$PATH"
+# Add all LLVM bin dirs from the TF build tree to PATH so that
+# llvm-profdata / llvm-cov matching the TF wheel's profraw version
+# can be found regardless of which bazel root was used for the build.
+for _llvm_dir in /vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/llvm_linux_x86_64/bin; do
+  [ -d "$_llvm_dir" ] && export PATH="$_llvm_dir:$PATH"
+done
+export PATH="$HOME/.local/bin:$PATH"
 
 if [ -f /vol/cuda/12.0.0/setup.sh ]; then
   . /vol/cuda/12.0.0/setup.sh
