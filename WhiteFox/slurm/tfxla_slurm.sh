@@ -18,13 +18,25 @@ echo
 CONFIG_PATH="${1:-xilo_xla/config/generator.toml}"
 ONLY_OPT="${2:-}"
 
-# Add all LLVM bin dirs from the TF build tree to PATH so that
-# llvm-profdata / llvm-cov matching the TF wheel's profraw version
-# can be found regardless of which bazel root was used for the build.
+# ---- LLVM toolchain for coverage ------------------------------------------
+# The TF wheel's profiling runtime writes profraw format v8 (LLVM ≤17).
+# Use a pre-downloaded LLVM 17 if available.
+# Run  WhiteFox/slurm/fetch_llvm17.sh  once from the login node to set up.
+LLVM17_BIN="/vol/bitbucket/mtr25/tfbuild/llvm17/bin"
+
+if [ -x "$LLVM17_BIN/llvm-profdata" ]; then
+  export WHITEFOX_LLVM_DIR="$LLVM17_BIN"
+  echo "[$(date)] Using LLVM 17 from $LLVM17_BIN"
+else
+  echo "[$(date)] WARNING: LLVM 17 not found at $LLVM17_BIN"
+  echo "[$(date)]   Run  WhiteFox/slurm/fetch_llvm17.sh  from the login node"
+fi
+
+# Also add all bazel-root LLVM dirs and local bin as fallbacks
 for _llvm_dir in /vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/llvm_linux_x86_64/bin; do
   [ -d "$_llvm_dir" ] && export PATH="$_llvm_dir:$PATH"
 done
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$LLVM17_BIN:$HOME/.local/bin:$PATH"
 
 if [ -f /vol/cuda/12.0.0/setup.sh ]; then
   . /vol/cuda/12.0.0/setup.sh

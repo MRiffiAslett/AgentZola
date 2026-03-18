@@ -409,6 +409,15 @@ class StarCoderGenerator:
                 for text_output in output.outputs:
                     generated_texts.append(text_output.text)
 
+            self.logger.info(
+                "  [%s] it%d: LLM produced %d samples (prompt_type=%s, "
+                "tokens: %s)",
+                opt_name, iteration, len(generated_texts), prompt_type,
+                ", ".join(
+                    str(len(t)) for t in generated_texts
+                ),
+            )
+
             execution_results = self._execute_tests_parallel(
                 generated_texts,
                 opt_name,
@@ -429,12 +438,26 @@ class StarCoderGenerator:
 
                 try:
                     if not exec_result.success:
+                        self.logger.warning(
+                            "  [%s] it%d sample%d: worker failed — %s",
+                            opt_name, iteration, sample_idx,
+                            (exec_result.error or "unknown error")[:200],
+                        )
                         continue
 
                     result = exec_result.execution_result
 
                     pass_triggered = opt_state.spec.matches_any_pass(
                         result.triggered_passes
+                    )
+
+                    self.logger.info(
+                        "  [%s] it%d sample%d: pass_triggered=%s  "
+                        "triggered_passes=%s  expected=%s",
+                        opt_name, iteration, sample_idx,
+                        pass_triggered,
+                        sorted(result.triggered_passes) if result.triggered_passes else "{}",
+                        opt_state.spec.pass_log_names,
                     )
 
                     whitefox_logger.log_pass_detection_analysis(
@@ -498,6 +521,14 @@ class StarCoderGenerator:
                         {"sample_idx": sample_idx},
                         e,
                     )
+
+            self.logger.info(
+                "  [%s] it%d summary: %d triggered, %d not triggered, "
+                "%d new triggering tests, %d total existing",
+                opt_name, iteration,
+                num_triggered, num_not_triggered,
+                len(new_triggering_tests), len(opt_state.triggering_tests),
+            )
 
             if opt_state.triggering_tests or new_triggering_tests:
                 update_bandit_after_generation(
@@ -633,6 +664,20 @@ class StarCoderGenerator:
 
         parallel_optimizations = self.config.generation.parallel_optimizations
 
+        self.logger.info(
+            "WhiteFox run config: %d optimizations to process, "
+            "max_iterations=%d, tests_per_iteration=%d, "
+            "test_timeout=%ds, parallel_workers=%d, parallel_opts=%d",
+            len(opt_states_to_process),
+            self.config.generation.max_iterations,
+            self.config.generation.tests_per_iteration,
+            self.config.generation.test_timeout,
+            self.config.generation.parallel_test_workers,
+            parallel_optimizations,
+        )
+        if only_optimizations:
+            self.logger.info("  Filtering to: %s", only_optimizations)
+
         if parallel_optimizations <= 1:
             self.logger.info("Running optimizations sequentially")
             for opt_state in opt_states_to_process:
@@ -670,15 +715,25 @@ class StarCoderGenerator:
         whitefox_logger.flush()
 
         whitefox_logger.generate_run_summary(self.whitefox_state)
+        self.logger.info("Run summary written to %s", self.logging_dir / "run_summary_detailed.log")
 
         # -- Shut down vLLM engine before heavy I/O to free GPU/CPU resources --
         self._shutdown_llm()
 
         # -- LLVM coverage: merge profraw files and generate report -----------
+        profraw_count = len(list(self.coverage.profraw_dir.glob("*.profraw")))
+        profraw_bytes = sum(
+            f.stat().st_size for f in self.coverage.profraw_dir.glob("*.profraw")
+        )
+        self.logger.info(
+            "Coverage finalize: %d profraw files (%.1f MB) in %s",
+            profraw_count, profraw_bytes / 1024 / 1024,
+            self.coverage.profraw_dir,
+        )
         self.coverage.finalize()
 
         self.profiler.generate_report()
-        self.logger.info(f"Resource profile saved to {self.profiler.report_file}")
+        self.logger.info("Resource profile saved to %s", self.profiler.report_file)
 
     # ------------------------------------------------------------------
 

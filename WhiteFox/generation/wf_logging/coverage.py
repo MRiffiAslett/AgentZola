@@ -20,8 +20,32 @@ _TFBUILD_LLVM_GLOB = (
 )
 
 
+def _llvm_tool_version(tool_path: str) -> str:
+    """Return the version string reported by an LLVM tool, or '?' on error."""
+    try:
+        r = subprocess.run(
+            [tool_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            if "version" in line.lower():
+                return line.strip()
+    except Exception:
+        pass
+    return "?"
+
+
 def _find_all_llvm_tools(name: str) -> List[str]:
-    """Return *all* candidate paths for an LLVM tool, de-duplicated."""
+    """Return *all* candidate paths for an LLVM tool, de-duplicated.
+
+    Search order (highest priority first):
+    1. WHITEFOX_LLVM_DIR environment variable
+    2. Anything already on PATH
+    3. Versioned variants in /usr/bin
+    4. LLVM bundled inside the TF build tree
+    """
     candidates: List[str] = []
     seen: set = set()
 
@@ -30,6 +54,13 @@ def _find_all_llvm_tools(name: str) -> List[str]:
         if rp not in seen:
             seen.add(rp)
             candidates.append(p)
+
+    # 0. Explicit override via env var (highest priority)
+    llvm_dir = os.environ.get("WHITEFOX_LLVM_DIR")
+    if llvm_dir:
+        p = os.path.join(llvm_dir, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            _add(p)
 
     # 1. Anything already on PATH
     path = shutil.which(name)
@@ -83,7 +114,9 @@ def _find_tf_so_files() -> List[str]:
         logger.warning("Could not locate TensorFlow: %s", r.stderr.strip())
         return []
     tf_dir = Path(r.stdout.strip()).parent
-    return sorted(str(p) for p in tf_dir.rglob("*.so"))
+    so_files = sorted(str(p) for p in tf_dir.rglob("*.so"))
+    logger.info("Found %d TF .so files under %s", len(so_files), tf_dir)
+    return so_files
 
 
 class CoverageCollector:
@@ -102,6 +135,11 @@ class CoverageCollector:
         self._so_files: Optional[List[str]] = None
         self._lock = threading.Lock()
         self._llvm_dir: Optional[str] = None  # cached compatible LLVM bin dir
+
+        logger.info(
+            "CoverageCollector: profraw_dir=%s, profdata=%s",
+            self.profraw_dir, self.profdata_file,
+        )
 
     # ---- diagnostics -------------------------------------------------------
 
@@ -151,10 +189,15 @@ class CoverageCollector:
 
             # 2. Probe llvm-profdata compatibility while profraw still exists
             if profraw_files:
+                llvm_dir_env = os.environ.get("WHITEFOX_LLVM_DIR", "")
+                lines.append(
+                    f"WHITEFOX_LLVM_DIR: {llvm_dir_env or '<not set>'}"
+                )
                 candidates = _find_all_llvm_tools("llvm-profdata")
                 lines.append(f"llvm-profdata candidates found: {len(candidates)}")
                 for c in candidates:
-                    lines.append(f"  {c}")
+                    ver = _llvm_tool_version(c)
+                    lines.append(f"  {c}  ({ver})")
                 compat = self._select_profdata(profraw_files[0])
                 if compat:
                     lines.append(f"✓  Compatible llvm-profdata: {compat}")
@@ -162,6 +205,10 @@ class CoverageCollector:
                     lines.append(
                         "⚠  No compatible llvm-profdata found — coverage "
                         "merge/report will be skipped."
+                    )
+                    lines.append(
+                        "   Profraw v8 needs LLVM 15-17. Set WHITEFOX_LLVM_DIR "
+                        "to a directory containing a compatible llvm-profdata."
                     )
                 lines.append("")
 
@@ -288,9 +335,17 @@ class CoverageCollector:
         )
 
         tmp_profdata = self.profdata_file.with_suffix(".profdata.tmp")
+        total_batches = (len(profraw_files) + self._MERGE_BATCH - 1) // self._MERGE_BATCH
 
         for i in range(0, len(profraw_files), self._MERGE_BATCH):
             batch = profraw_files[i : i + self._MERGE_BATCH]
+            batch_num = i // self._MERGE_BATCH + 1
+            batch_sizes = [f.stat().st_size / 1024 / 1024 for f in batch]
+            logger.info(
+                "  merge batch %d/%d: %d files (%.1f MB total)",
+                batch_num, total_batches, len(batch), sum(batch_sizes),
+            )
+
             inputs = [str(f) for f in batch]
             if self.profdata_file.exists():
                 inputs.insert(0, str(self.profdata_file))
@@ -306,7 +361,7 @@ class CoverageCollector:
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             except subprocess.TimeoutExpired:
-                logger.error("llvm-profdata merge timed out (batch %d)", i)
+                logger.error("llvm-profdata merge timed out (batch %d)", batch_num)
                 tmp_profdata.unlink(missing_ok=True)
                 return False
             except FileNotFoundError:
@@ -322,7 +377,11 @@ class CoverageCollector:
             for pf in batch:
                 pf.unlink(missing_ok=True)
 
-        logger.info("Merged and cleaned %d profraw files", len(profraw_files))
+        profdata_size = self.profdata_file.stat().st_size / 1024 / 1024
+        logger.info(
+            "Merged %d profraw files → %s (%.1f MB)",
+            len(profraw_files), self.profdata_file, profdata_size,
+        )
         return True
 
     # ---- reporting ----------------------------------------------------------
@@ -377,6 +436,11 @@ class CoverageCollector:
         if r.returncode != 0:
             logger.error("llvm-cov report failed: %s", r.stderr.strip())
             return False
+
+        report_size = self.report_file.stat().st_size
+        logger.info(
+            "Coverage report written: %s (%d bytes)", self.report_file, report_size,
+        )
         return True
 
     # ---- convenience --------------------------------------------------------
@@ -387,9 +451,14 @@ class CoverageCollector:
         Thread-safe; safe to call after every optimization.
         Non-fatal: logs errors but never crashes the fuzzing run.
         """
+        logger.info("Coverage finalize starting …")
         try:
             with self._lock:
-                if self.merge():
+                merged = self.merge()
+                if merged:
                     self.report()
+                else:
+                    logger.warning("Coverage merge returned False — skipping report")
         except Exception as exc:
-            logger.error("Coverage finalize failed: %s", exc)
+            logger.error("Coverage finalize failed: %s", exc, exc_info=True)
+        logger.info("Coverage finalize done.")

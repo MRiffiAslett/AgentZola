@@ -67,6 +67,11 @@ class TestHarness(ABC):
             env = os.environ.copy()
             env.update(self.get_env_vars())
 
+            logger.debug(
+                "[%s] Running subprocess for %s (timeout=%ds)",
+                optimization_name, test_file.name, timeout,
+            )
+
             process = subprocess.run(
                 [sys.executable, "-c", wrapper_script],
                 capture_output=True,
@@ -76,6 +81,12 @@ class TestHarness(ABC):
             )
 
             output = process.stdout + process.stderr
+
+            logger.debug(
+                "[%s] Subprocess exit_code=%d, stdout=%d chars, stderr=%d chars",
+                optimization_name, process.returncode,
+                len(process.stdout), len(process.stderr),
+            )
 
             log_text_from_json = None
             if "WHITEFOX_RESULT_START" in output and "WHITEFOX_RESULT_END" in output:
@@ -100,8 +111,30 @@ class TestHarness(ABC):
                         mr.output = result_data.get(f"output_{mode}")
 
                     log_text_from_json = result_data.get("log_text", "")
+
+                    mode_summary = {
+                        m: ("OK" if result_data.get(f"runtime_success_{m}") else "FAIL")
+                        for m in modes
+                    }
+                    logger.info(
+                        "[%s] %s modes: %s",
+                        optimization_name, test_file.name, mode_summary,
+                    )
                 except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse JSON result from {test_file}")
+                    logger.warning(
+                        "[%s] Failed to parse JSON result from %s",
+                        optimization_name, test_file,
+                    )
+            else:
+                logger.warning(
+                    "[%s] No WHITEFOX_RESULT markers in output of %s "
+                    "(exit_code=%d, output_len=%d)",
+                    optimization_name, test_file.name,
+                    process.returncode, len(output),
+                )
+                if process.returncode != 0 and process.stderr:
+                    for line in process.stderr.strip().splitlines()[-3:]:
+                        logger.warning("  stderr: %s", line)
 
             if log_text_from_json is not None and log_text_from_json:
                 result.log_text = log_text_from_json
@@ -110,13 +143,26 @@ class TestHarness(ABC):
 
             result.triggered_passes = self.extract_triggered_passes(result.log_text)
 
+            if result.triggered_passes:
+                logger.info(
+                    "[%s] %s triggered passes: %s",
+                    optimization_name, test_file.name,
+                    sorted(result.triggered_passes),
+                )
+
         except subprocess.TimeoutExpired:
             for mode in modes:
                 result.get_mode(mode).runtime_error = "Execution timeout"
-            logger.warning(f"Test {test_file} timed out after {timeout} seconds")
+            logger.warning(
+                "[%s] Test %s timed out after %d seconds",
+                optimization_name, test_file, timeout,
+            )
         except Exception as e:
             for mode in modes:
                 result.get_mode(mode).compile_error = str(e)
-            logger.error(f"Error executing {test_file}: {e}")
+            logger.error(
+                "[%s] Error executing %s: %s",
+                optimization_name, test_file, e,
+            )
 
         return result
