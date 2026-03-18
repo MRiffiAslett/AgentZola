@@ -3,7 +3,9 @@
 import glob
 import logging
 import os
+import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -261,12 +263,35 @@ class CoverageCollector:
 
     # ---- LLVM tool selection ------------------------------------------------
 
-    def _select_profdata(self, sample_profraw: Path) -> Optional[str]:
-        """Probe all llvm-profdata candidates against a real profraw file.
+    @staticmethod
+    def _profraw_version(profraw_path: Path) -> Optional[int]:
+        """Read the raw profile format version from the profraw header.
 
-        Returns the first binary that doesn't produce a version-mismatch
-        error, or *None* if every candidate fails.  Caches the result (and
-        the parent directory, so llvm-cov from the same install is used).
+        The header layout (little-endian):
+          bytes  0-7 : magic
+          bytes  8-15: version (u64, low byte = format version)
+        """
+        try:
+            with open(profraw_path, "rb") as f:
+                header = f.read(16)
+            if len(header) < 16:
+                return None
+            ver_u64 = struct.unpack("<Q", header[8:16])[0]
+            return ver_u64 & 0xFF
+        except Exception as exc:
+            logger.warning("Could not read profraw header: %s", exc)
+            return None
+
+    def _select_profdata(self, sample_profraw: Path) -> Optional[str]:
+        """Find a compatible llvm-profdata for the given profraw file.
+
+        Strategy:
+        1. Read the profraw format version from the binary header.
+        2. For each candidate tool, check its LLVM major version (instant).
+           - Profraw v8 ↔ LLVM 15-17, profraw v9 ↔ LLVM 18+
+        3. Fall back to running ``llvm-profdata show`` if the heuristic
+           is inconclusive.
+        Caches the result so subsequent calls are instant.
         """
         if self._llvm_dir is not None:
             tool = os.path.join(self._llvm_dir, "llvm-profdata")
@@ -278,30 +303,74 @@ class CoverageCollector:
             logger.error("No llvm-profdata binary found anywhere")
             return None
 
+        profraw_ver = self._profraw_version(sample_profraw)
+        logger.info(
+            "Profraw format version: %s (from %s)",
+            profraw_ver, sample_profraw.name,
+        )
+
+        # Map profraw versions to compatible LLVM major-version ranges.
+        _COMPAT = {
+            8: range(15, 18),   # LLVM 15, 16, 17
+            9: range(18, 30),   # LLVM 18+
+        }
+        wanted = _COMPAT.get(profraw_ver)
+
         for tool in candidates:
+            ver_str = _llvm_tool_version(tool)
+            # Extract major version from strings like "LLVM version 17.0.6"
+            major = None
+            m = re.search(r"(\d+)\.\d+", ver_str)
+            if m:
+                major = int(m.group(1))
+
+            # Fast path: version-number heuristic
+            if wanted is not None and major is not None:
+                if major in wanted:
+                    self._llvm_dir = os.path.dirname(os.path.realpath(tool))
+                    logger.info(
+                        "Selected %s (LLVM %d matches profraw v%d)",
+                        tool, major, profraw_ver,
+                    )
+                    return tool
+                logger.info(
+                    "Skipping %s (LLVM %d incompatible with profraw v%d)",
+                    tool, major, profraw_ver,
+                )
+                continue
+
+            # Slow path: actually run the tool against the profraw.
+            logger.info(
+                "Probing %s against profraw (version heuristic unavailable)",
+                tool,
+            )
             try:
                 r = subprocess.run(
                     [tool, "show", str(sample_profraw)],
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=120,
                 )
-            except (FileNotFoundError, subprocess.TimeoutExpired):
+            except Exception as exc:
+                logger.warning("Skipping %s (probe error: %s)", tool, exc)
                 continue
             if "version mismatch" in r.stderr:
-                logger.info(
-                    "Skipping %s (profraw version mismatch)", tool
+                logger.info("Skipping %s (profraw version mismatch)", tool)
+                continue
+            if r.returncode != 0:
+                logger.warning(
+                    "Skipping %s (probe exit %d: %s)",
+                    tool, r.returncode, r.stderr.strip()[:200],
                 )
                 continue
-            # Either success or some other benign message — this tool works.
             self._llvm_dir = os.path.dirname(os.path.realpath(tool))
             logger.info("Selected compatible llvm-profdata: %s", tool)
             return tool
 
         logger.error(
             "None of the %d llvm-profdata candidates are compatible "
-            "with the profraw version produced by this TF wheel.",
-            len(candidates),
+            "with profraw v%s produced by this TF wheel.",
+            len(candidates), profraw_ver,
         )
         return None
 
