@@ -15,19 +15,16 @@ fi
 LLVM_VER="17.0.6"
 TARBALL="clang+llvm-${LLVM_VER}-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
 URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}/${TARBALL}"
+STRIP="clang+llvm-${LLVM_VER}-x86_64-linux-gnu-ubuntu-22.04"
 
-echo "Downloading LLVM ${LLVM_VER} (only extracting llvm-profdata + llvm-cov) …"
+echo "Streaming LLVM ${LLVM_VER} and extracting only llvm-profdata + llvm-cov …"
+echo "(Full tarball is ~800 MB — only the two binaries are written to disk.)"
 mkdir -p "$LLVM17_BIN"
 
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-
-curl -fSL --progress-bar "$URL" -o "$TMP/$TARBALL"
-
-STRIP="clang+llvm-${LLVM_VER}-x86_64-linux-gnu-ubuntu-22.04"
-tar -xf "$TMP/$TARBALL" -C "$LLVM17_DIR" --strip-components=1 \
-  "${STRIP}/bin/llvm-profdata" \
-  "${STRIP}/bin/llvm-cov"
+curl -fSL --progress-bar "$URL" \
+  | tar -xJf - -C "$LLVM17_DIR" --strip-components=1 \
+      "${STRIP}/bin/llvm-profdata" \
+      "${STRIP}/bin/llvm-cov"
 
 echo ""
 echo "Installed to $LLVM17_BIN:"
