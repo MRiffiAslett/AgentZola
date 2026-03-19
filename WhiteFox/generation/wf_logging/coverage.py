@@ -24,9 +24,17 @@ _TFBUILD_LLVM_GLOB = (
     "llvm_linux_x86_64/bin"
 )
 
-# XLA source paths contain this substring inside the bazel execroot.
-# Matches both old (tensorflow/compiler/xla/) and new (third_party/xla/xla/).
-_XLA_PATH_MARKERS = ("/xla/service/", "/xla/hlo/")
+# XLA source paths contain one of these substrings inside the bazel execroot.
+# Keep both slash-prefixed and non-prefixed forms because llvm-cov can emit
+# either absolute or relative filenames.
+_XLA_PATH_MARKERS = (
+    "/xla/",
+    "xla/",
+    "/tensorflow/compiler/xla/",
+    "tensorflow/compiler/xla/",
+    "/third_party/xla/",
+    "third_party/xla/",
+)
 
 
 def _llvm_tool_version(tool_path: str) -> str:
@@ -297,11 +305,51 @@ class CoverageCollector:
     # ---- merging ------------------------------------------------------------
 
     _MERGE_BATCH = 3
+    _MAX_PROFRAW_BYTES = int(os.environ.get("WHITEFOX_MAX_PROFRAW_BYTES", 256 * 1024 * 1024))
+
+    @staticmethod
+    def _is_valid_profraw_header(profraw_path: Path) -> bool:
+        """Cheap structural validation to skip obviously broken profraw files."""
+        try:
+            with open(profraw_path, "rb") as f:
+                header = f.read(16)
+            if len(header) < 16:
+                return False
+            # Reuse existing parser logic: None means invalid/unreadable.
+            ver_u64 = struct.unpack("<Q", header[8:16])[0]
+            return (ver_u64 & 0xFF) > 0
+        except Exception:
+            return False
 
     def merge(self) -> bool:
-        profraw_files = sorted(self.profraw_dir.glob("*.profraw"))
-        if not profraw_files:
+        all_profraw_files = sorted(self.profraw_dir.glob("*.profraw"))
+        if not all_profraw_files:
             logger.warning("No .profraw files found in %s", self.profraw_dir)
+            return False
+        profraw_files: List[Path] = []
+        skipped_large = 0
+        skipped_bad_header = 0
+        for pf in all_profraw_files:
+            size = pf.stat().st_size
+            if size > self._MAX_PROFRAW_BYTES:
+                skipped_large += 1
+                logger.warning(
+                    "Skipping oversized profraw %s (%d bytes > %d byte limit)",
+                    pf.name, size, self._MAX_PROFRAW_BYTES,
+                )
+                continue
+            if size == 0 or not self._is_valid_profraw_header(pf):
+                skipped_bad_header += 1
+                logger.warning("Skipping invalid/corrupt profraw %s (%d bytes)", pf.name, size)
+                continue
+            profraw_files.append(pf)
+        if skipped_large or skipped_bad_header:
+            logger.info(
+                "Filtered profraw files: %d kept, %d oversized, %d invalid",
+                len(profraw_files), skipped_large, skipped_bad_header,
+            )
+        if not profraw_files:
+            logger.warning("No usable .profraw files remain after filtering")
             return False
 
         profdata_tool = self._select_profdata(profraw_files[0])
@@ -339,6 +387,11 @@ class CoverageCollector:
             if r.returncode != 0:
                 err = (r.stderr or "").strip()
                 out = (r.stdout or "").strip()
+                if r.returncode < 0:
+                    logger.error(
+                        "llvm-profdata was terminated by signal %d (possible OOM kill) on batch %d/%d",
+                        -r.returncode, batch_num, total_batches,
+                    )
                 logger.error(
                     "llvm-profdata merge failed (rc=%d) batch %d/%d: %s",
                     r.returncode,
@@ -373,6 +426,11 @@ class CoverageCollector:
 
                     if pf_r.returncode != 0:
                         pf_err = (pf_r.stderr or "").strip() or "(no stderr)"
+                        if pf_r.returncode < 0:
+                            logger.warning(
+                                "Skipping profraw %s after signal %d during merge (likely OOM)",
+                                pf.name, -pf_r.returncode,
+                            )
                         logger.warning(
                             "Skipping incompatible profraw %s (rc=%d): %s",
                             pf.name,
