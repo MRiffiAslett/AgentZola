@@ -337,9 +337,58 @@ class CoverageCollector:
                 logger.error("llvm-profdata not found: %s", profdata_tool)
                 return False
             if r.returncode != 0:
-                logger.error("llvm-profdata merge failed: %s", r.stderr.strip())
-                tmp_profdata.unlink(missing_ok=True)
-                return False
+                err = (r.stderr or "").strip()
+                out = (r.stdout or "").strip()
+                logger.error(
+                    "llvm-profdata merge failed (rc=%d) batch %d/%d: %s",
+                    r.returncode,
+                    batch_num,
+                    total_batches,
+                    err[:500] if err else "(no stderr)",
+                )
+                logger.debug("llvm-profdata cmd: %r", cmd)
+                if out:
+                    logger.debug("llvm-profdata stdout (truncated): %s", out[:500])
+                batch_files = ", ".join(f"{f.name}({f.stat().st_size}B)" for f in batch)
+                logger.error("Failed batch files: %s", batch_files)
+
+                # Best effort: try merging each profraw in the failed batch separately.
+                # One incompatible/corrupt .profraw can cause the whole batch merge to fail.
+                for pf in batch:
+                    tmp_profdata.unlink(missing_ok=True)
+                    pf_inputs = [str(pf)]
+                    if self.profdata_file.exists():
+                        pf_inputs.insert(0, str(self.profdata_file))
+                    pf_cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + pf_inputs
+                    try:
+                        pf_r = subprocess.run(pf_cmd, capture_output=True, text=True, timeout=300)
+                    except subprocess.TimeoutExpired:
+                        logger.error(
+                            "llvm-profdata merge timed out (batch %d, profraw %s)",
+                            batch_num,
+                            pf.name,
+                        )
+                        tmp_profdata.unlink(missing_ok=True)
+                        return False
+
+                    if pf_r.returncode != 0:
+                        pf_err = (pf_r.stderr or "").strip() or "(no stderr)"
+                        logger.warning(
+                            "Skipping incompatible profraw %s (rc=%d): %s",
+                            pf.name,
+                            pf_r.returncode,
+                            pf_err[:300],
+                        )
+                        tmp_profdata.unlink(missing_ok=True)
+                        continue
+
+                    tmp_profdata.rename(self.profdata_file)
+                    pf.unlink(missing_ok=True)
+
+                # Continue with remaining batches if we managed to produce merged.profdata.
+                if not self.profdata_file.exists():
+                    return False
+                continue
 
             tmp_profdata.rename(self.profdata_file)
             for pf in batch:
@@ -492,12 +541,12 @@ class CoverageCollector:
             f.write(f"XLA lines total:  {xla_lines_total:>8,}\n")
             f.write(f"XLA coverage:     {xla_pct:>7.2f}%\n")
             f.write(f"XLA source files: {xla_files:>8,}\n")
-            f.write(f"\n")
-            f.write(f"--- for reference ---\n")
+            f.write("\n")
+            f.write("--- for reference ---\n")
             f.write(f"All TF lines hit:   {all_lines_hit:>8,}\n")
             f.write(f"All TF lines total: {all_lines_total:>8,}\n")
             f.write(f"All TF files:       {total_files:>8,}\n")
-            f.write(f"\n")
+            f.write("\n")
             f.write(f"XLA path filters: {_XLA_PATH_MARKERS}\n")
             f.write("=" * 60 + "\n")
 
