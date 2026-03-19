@@ -358,14 +358,24 @@ class CoverageCollector:
 
     @staticmethod
     def _parse_report_line(line: str) -> Optional[Tuple[str, int, int]]:
-        """Parse one llvm-cov report line → (filename, total_lines, missed_lines) or None."""
+        """Parse one llvm-cov report data line.
+
+        Format (columns separated by whitespace):
+          [0] Filename
+          [1] Regions  [2] Missed Regions  [3] Cover%
+          [4] Functions  [5] Missed Functions  [6] Executed%
+          [7] Lines  [8] Missed Lines  [9] Cover%
+          [10] Branches  [11] Missed Branches  [12] Cover%   (optional)
+
+        Returns (filename, total_lines, missed_lines) or None.
+        """
         parts = line.split()
         if len(parts) < 10:
             return None
         filename = parts[0]
         try:
-            total_lines = int(parts[-4])
-            missed_lines = int(parts[-3])
+            total_lines = int(parts[7])
+            missed_lines = int(parts[8])
             return (filename, total_lines, missed_lines)
         except (ValueError, IndexError):
             return None
@@ -407,7 +417,19 @@ class CoverageCollector:
             logger.error("llvm-cov report failed (exit %d): %s", r.returncode, r.stderr.strip()[:500])
             return None
 
-        # Parse the report: extract per-file line counts
+        report_lines = r.stdout.splitlines()
+        logger.info("llvm-cov report produced %d lines of output", len(report_lines))
+        # Log the first few data lines and the TOTAL for debugging
+        sample_logged = 0
+        for ln in report_lines:
+            stripped = ln.strip()
+            if stripped.startswith("TOTAL") or (
+                stripped and not stripped.startswith("-") and not stripped.startswith("Filename") and sample_logged < 3
+            ):
+                if not stripped.startswith("TOTAL"):
+                    sample_logged += 1
+                logger.info("  llvm-cov sample: %s", stripped[:200])
+
         xla_lines_total = 0
         xla_lines_missed = 0
         all_lines_total = 0
@@ -415,7 +437,7 @@ class CoverageCollector:
         xla_files = 0
         total_files = 0
 
-        for line in r.stdout.splitlines():
+        for line in report_lines:
             parsed = self._parse_report_line(line)
             if parsed is None:
                 continue
