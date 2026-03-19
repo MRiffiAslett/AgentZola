@@ -356,29 +356,40 @@ class CoverageCollector:
             self._so_files = _find_tf_so_files()
         return self._so_files
 
-    @staticmethod
-    def _parse_report_line(line: str) -> Optional[Tuple[str, int, int]]:
+    def _parse_report_line(self, line: str) -> Optional[Tuple[str, int, int]]:
         """Parse one llvm-cov report data line.
 
-        Format (columns separated by whitespace):
-          [0] Filename
-          [1] Regions  [2] Missed Regions  [3] Cover%
-          [4] Functions  [5] Missed Functions  [6] Executed%
-          [7] Lines  [8] Missed Lines  [9] Cover%
-          [10] Branches  [11] Missed Branches  [12] Cover%   (optional)
+        Uses the column index detected from the header (see _detect_lines_column).
+        Falls back to index 7 (standard layout without Instantiations column).
 
         Returns (filename, total_lines, missed_lines) or None.
         """
         parts = line.split()
-        if len(parts) < 10:
+        col = getattr(self, "_lines_col", 7)
+        if len(parts) < col + 3:
             return None
         filename = parts[0]
         try:
-            total_lines = int(parts[7])
-            missed_lines = int(parts[8])
+            total_lines = int(parts[col])
+            missed_lines = int(parts[col + 1])
             return (filename, total_lines, missed_lines)
         except (ValueError, IndexError):
             return None
+
+    @staticmethod
+    def _detect_lines_column(header_line: str) -> int:
+        """Find the column index of the 'Lines' field from the report header.
+
+        The header looks like:
+          Filename  Regions  Missed...  Cover  Functions  Missed...  Executed  Lines  Missed...  Cover  ...
+        We split by whitespace and find the token 'Lines'.
+        Returns the index, or 7 as default.
+        """
+        tokens = header_line.split()
+        for i, tok in enumerate(tokens):
+            if tok == "Lines":
+                return i
+        return 7
 
     def report(self) -> Optional[Dict[str, int]]:
         """Run llvm-cov report, parse output, return XLA lines hit.
@@ -419,7 +430,16 @@ class CoverageCollector:
 
         report_lines = r.stdout.splitlines()
         logger.info("llvm-cov report produced %d lines of output", len(report_lines))
-        # Log the first few data lines and the TOTAL for debugging
+
+        # Detect the "Lines" column index from the header
+        self._lines_col = 7
+        for ln in report_lines:
+            if "Filename" in ln and "Lines" in ln:
+                self._lines_col = self._detect_lines_column(ln)
+                logger.info("Detected 'Lines' column at index %d (header: %s)", self._lines_col, ln.strip()[:120])
+                break
+
+        # Log sample data lines and the TOTAL for debugging
         sample_logged = 0
         for ln in report_lines:
             stripped = ln.strip()
