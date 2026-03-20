@@ -472,16 +472,40 @@ class CoverageCollector:
         Returns (filename, total_lines, missed_lines) or None.
         """
         parts = line.split()
-        col = getattr(self, "_lines_col", 7)
-        if len(parts) < col + 3:
+        if not parts:
             return None
+
         filename = parts[0]
-        try:
-            total_lines = int(parts[col])
-            missed_lines = int(parts[col + 1])
-            return (filename, total_lines, missed_lines)
-        except (ValueError, IndexError):
+        col = getattr(self, "_lines_col", 7)
+
+        def _to_int(tok: str) -> Optional[int]:
+            # llvm-cov uses integer columns for line counts; cover% fields may be float-ish.
+            t = tok.replace(",", "").strip()
+            if t.isdigit():
+                return int(t)
             return None
+
+        # Primary: parse using detected "Lines" column.
+        try:
+            total_lines = _to_int(parts[col])
+            missed_lines = _to_int(parts[col + 1])
+            if total_lines is not None and missed_lines is not None:
+                return (filename, total_lines, missed_lines)
+        except IndexError:
+            pass
+
+        # Fallback: use the last two integer tokens on the line.
+        # This is robust against minor table layout changes and TOTAL rows with
+        # fewer columns than per-file rows.
+        int_tokens: List[int] = []
+        for tok in parts[1:]:
+            v = _to_int(tok)
+            if v is not None:
+                int_tokens.append(v)
+        if len(int_tokens) >= 2:
+            return (filename, int_tokens[-2], int_tokens[-1])
+
+        return None
 
     @staticmethod
     def _detect_lines_column(header_line: str) -> int:
@@ -494,7 +518,8 @@ class CoverageCollector:
         """
         tokens = header_line.split()
         for i, tok in enumerate(tokens):
-            if tok == "Lines":
+            t = tok.strip().lower().rstrip(":")
+            if t == "lines" or t.startswith("lines"):
                 return i
         return 7
 
@@ -563,21 +588,59 @@ class CoverageCollector:
         all_lines_missed = 0
         xla_files = 0
         total_files = 0
+        saw_total_row = False
+        xla_filename_samples: List[str] = []
+        xla_like_files = 0
+        xla_like_lines_total = 0
+        xla_like_lines_missed = 0
 
         for line in report_lines:
             parsed = self._parse_report_line(line)
             if parsed is None:
                 continue
             filename, total, missed = parsed
-            if filename == "TOTAL":
+            if filename.startswith("TOTAL"):
                 all_lines_total = total
                 all_lines_missed = missed
+                saw_total_row = True
                 continue
             total_files += 1
+            if "xla" in filename.lower() and len(xla_filename_samples) < 5:
+                xla_filename_samples.append(filename)
+            if "xla" in filename.lower():
+                xla_like_files += 1
+                xla_like_lines_total += total
+                xla_like_lines_missed += missed
             if any(marker in filename for marker in _XLA_PATH_MARKERS):
                 xla_files += 1
                 xla_lines_total += total
                 xla_lines_missed += missed
+
+        # If strict markers didn't match anything, but we saw filenames containing
+        # 'xla', use that as a fallback to avoid reporting 0/0 incorrectly.
+        if xla_files == 0 and xla_like_files > 0:
+            logger.warning(
+                "XLA path markers matched 0 files; falling back to counting any filename containing 'xla' (xla_like_files=%d)",
+                xla_like_files,
+            )
+            xla_files = xla_like_files
+            xla_lines_total = xla_like_lines_total
+            xla_lines_missed = xla_like_lines_missed
+
+        if not saw_total_row:
+            logger.warning(
+                "llvm-cov parse did not detect TOTAL row; coverage totals may be zero (lines col=%s)",
+                getattr(self, "_lines_col", 7),
+            )
+        if xla_lines_total == 0:
+            logger.warning(
+                "XLA coverage computed as 0/0. Parsed XLA-like filenames count sample=%d, xla_files=%d, all_lines_total=%d",
+                len(xla_filename_samples),
+                xla_files,
+                all_lines_total,
+            )
+            if xla_filename_samples:
+                logger.warning("Example parsed filenames containing 'xla': %r", xla_filename_samples)
 
         xla_lines_hit = xla_lines_total - xla_lines_missed
         all_lines_hit = all_lines_total - all_lines_missed
