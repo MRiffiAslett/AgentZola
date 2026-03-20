@@ -1,4 +1,12 @@
-"""LLVM source-based coverage: collect profraw, merge, report XLA lines hit."""
+"""LLVM source-based coverage: collect profraw, merge, report XLA lines hit.
+
+Environment (optional):
+  WHITEFOX_MAX_PROFRAW_BYTES — max raw profile size to merge in the primary pass
+      (default 1 GiB; TensorFlow often emits ~1 GiB per process).
+  WHITEFOX_MERGE_OVERSIZED_PROFRAW — if "1" (default), merge files above that
+      limit one-by-one in a second pass (after lowering the max).
+  WHITEFOX_LLVM_DIR — directory containing llvm-profdata / llvm-cov.
+"""
 
 import glob
 import logging
@@ -305,7 +313,17 @@ class CoverageCollector:
     # ---- merging ------------------------------------------------------------
 
     _MERGE_BATCH = 3
-    _MAX_PROFRAW_BYTES = int(os.environ.get("WHITEFOX_MAX_PROFRAW_BYTES", 256 * 1024 * 1024))
+    # TensorFlow + XLA often emit ~1 GiB raw profiles per process. The old 256 MiB
+    # default discarded almost all useful data. Override with WHITEFOX_MAX_PROFRAW_BYTES.
+    _MAX_PROFRAW_BYTES = int(os.environ.get("WHITEFOX_MAX_PROFRAW_BYTES", 1024 * 1024 * 1024))
+
+    @staticmethod
+    def _merge_timeout_seconds(total_input_bytes: int) -> int:
+        """Scale llvm-profdata merge timeout with how much raw profile we feed in."""
+        if total_input_bytes <= 0:
+            return 300
+        mb = max(1, (total_input_bytes + 1024 * 1024 - 1) // (1024 * 1024))
+        return min(7200, 300 + mb)
 
     @staticmethod
     def _is_valid_profraw_header(profraw_path: Path) -> bool:
@@ -322,138 +340,220 @@ class CoverageCollector:
             return False
 
     def merge(self) -> bool:
+        # Never reuse a previous run's merged profile if this merge fails partway.
+        self.profdata_file.unlink(missing_ok=True)
+        tmp_profdata = self.profdata_file.with_suffix(".profdata.tmp")
+        tmp_profdata.unlink(missing_ok=True)
+
         all_profraw_files = sorted(self.profraw_dir.glob("*.profraw"))
         if not all_profraw_files:
             logger.warning("No .profraw files found in %s", self.profraw_dir)
             return False
         profraw_files: List[Path] = []
-        skipped_large = 0
+        oversized: List[Path] = []
         skipped_bad_header = 0
+        merge_oversized = os.environ.get("WHITEFOX_MERGE_OVERSIZED_PROFRAW", "1").lower() not in (
+            "0",
+            "false",
+            "no",
+        )
         for pf in all_profraw_files:
             size = pf.stat().st_size
-            if size > self._MAX_PROFRAW_BYTES:
-                skipped_large += 1
-                logger.warning(
-                    "Skipping oversized profraw %s (%d bytes > %d byte limit)",
-                    pf.name, size, self._MAX_PROFRAW_BYTES,
-                )
-                continue
             if size == 0 or not self._is_valid_profraw_header(pf):
                 skipped_bad_header += 1
                 logger.warning("Skipping invalid/corrupt profraw %s (%d bytes)", pf.name, size)
                 continue
+            if size > self._MAX_PROFRAW_BYTES:
+                oversized.append(pf)
+                continue
             profraw_files.append(pf)
-        if skipped_large or skipped_bad_header:
+        if skipped_bad_header or oversized:
             logger.info(
-                "Filtered profraw files: %d kept, %d oversized, %d invalid",
-                len(profraw_files), skipped_large, skipped_bad_header,
+                "Filtered profraw files: %d under limit (≤ %d bytes), %d over limit, %d invalid",
+                len(profraw_files),
+                self._MAX_PROFRAW_BYTES,
+                len(oversized),
+                skipped_bad_header,
             )
-        if not profraw_files:
+        if oversized and not merge_oversized:
+            for pf in oversized:
+                logger.warning(
+                    "Skipping oversized profraw %s (%d bytes > %d); set WHITEFOX_MERGE_OVERSIZED_PROFRAW=1 or raise WHITEFOX_MAX_PROFRAW_BYTES",
+                    pf.name,
+                    pf.stat().st_size,
+                    self._MAX_PROFRAW_BYTES,
+                )
+        if not profraw_files and not (oversized and merge_oversized):
             logger.warning("No usable .profraw files remain after filtering")
             return False
 
-        profdata_tool = self._select_profdata(profraw_files[0])
+        sample = profraw_files[0] if profraw_files else oversized[0]
+        profdata_tool = self._select_profdata(sample)
         if profdata_tool is None:
             return False
 
-        logger.info(
-            "Merging %d profraw files (batch size %d) → %s",
-            len(profraw_files), self._MERGE_BATCH, self.profdata_file,
-        )
-
-        tmp_profdata = self.profdata_file.with_suffix(".profdata.tmp")
-        total_batches = (len(profraw_files) + self._MERGE_BATCH - 1) // self._MERGE_BATCH
-
-        for i in range(0, len(profraw_files), self._MERGE_BATCH):
-            batch = profraw_files[i : i + self._MERGE_BATCH]
-            batch_num = i // self._MERGE_BATCH + 1
-            batch_mb = sum(f.stat().st_size for f in batch) / 1024 / 1024
-            logger.info("  merge batch %d/%d: %d files (%.1f MB)", batch_num, total_batches, len(batch), batch_mb)
-
-            inputs = [str(f) for f in batch]
-            if self.profdata_file.exists():
-                inputs.insert(0, str(self.profdata_file))
-
-            cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + inputs
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            except subprocess.TimeoutExpired:
-                logger.error("llvm-profdata merge timed out (batch %d)", batch_num)
-                tmp_profdata.unlink(missing_ok=True)
-                return False
-            except FileNotFoundError:
-                logger.error("llvm-profdata not found: %s", profdata_tool)
-                return False
-            if r.returncode != 0:
-                err = (r.stderr or "").strip()
-                out = (r.stdout or "").strip()
-                if r.returncode < 0:
-                    logger.error(
-                        "llvm-profdata was terminated by signal %d (possible OOM kill) on batch %d/%d",
-                        -r.returncode, batch_num, total_batches,
-                    )
-                logger.error(
-                    "llvm-profdata merge failed (rc=%d) batch %d/%d: %s",
-                    r.returncode,
+        def _merge_batches(files: List[Path], label: str) -> bool:
+            if not files:
+                return True
+            total_batches = (len(files) + self._MERGE_BATCH - 1) // self._MERGE_BATCH
+            logger.info(
+                "%s: merging %d profraw files (batch size %d) → %s",
+                label,
+                len(files),
+                self._MERGE_BATCH,
+                self.profdata_file,
+            )
+            for i in range(0, len(files), self._MERGE_BATCH):
+                batch = files[i : i + self._MERGE_BATCH]
+                batch_num = i // self._MERGE_BATCH + 1
+                batch_mb = sum(f.stat().st_size for f in batch) / 1024 / 1024
+                logger.info(
+                    "  merge batch %d/%d: %d files (%.1f MB)",
                     batch_num,
                     total_batches,
-                    err[:500] if err else "(no stderr)",
+                    len(batch),
+                    batch_mb,
                 )
-                logger.debug("llvm-profdata cmd: %r", cmd)
-                if out:
-                    logger.debug("llvm-profdata stdout (truncated): %s", out[:500])
-                batch_files = ", ".join(f"{f.name}({f.stat().st_size}B)" for f in batch)
-                logger.error("Failed batch files: %s", batch_files)
 
-                # Best effort: try merging each profraw in the failed batch separately.
-                # One incompatible/corrupt .profraw can cause the whole batch merge to fail.
-                for pf in batch:
+                inputs = [str(f) for f in batch]
+                if self.profdata_file.exists():
+                    inputs.insert(0, str(self.profdata_file))
+                prev_sz = self.profdata_file.stat().st_size if self.profdata_file.exists() else 0
+                batch_bytes = sum(f.stat().st_size for f in batch) + prev_sz
+                timeout_sec = self._merge_timeout_seconds(batch_bytes)
+
+                cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + inputs
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
+                except subprocess.TimeoutExpired:
+                    logger.error(
+                        "llvm-profdata merge timed out (batch %d, timeout=%ds)",
+                        batch_num,
+                        timeout_sec,
+                    )
                     tmp_profdata.unlink(missing_ok=True)
-                    pf_inputs = [str(pf)]
-                    if self.profdata_file.exists():
-                        pf_inputs.insert(0, str(self.profdata_file))
-                    pf_cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + pf_inputs
-                    try:
-                        pf_r = subprocess.run(pf_cmd, capture_output=True, text=True, timeout=300)
-                    except subprocess.TimeoutExpired:
-                        logger.error(
-                            "llvm-profdata merge timed out (batch %d, profraw %s)",
-                            batch_num,
-                            pf.name,
-                        )
-                        tmp_profdata.unlink(missing_ok=True)
-                        return False
-
-                    if pf_r.returncode != 0:
-                        pf_err = (pf_r.stderr or "").strip() or "(no stderr)"
-                        if pf_r.returncode < 0:
-                            logger.warning(
-                                "Skipping profraw %s after signal %d during merge (likely OOM)",
-                                pf.name, -pf_r.returncode,
-                            )
-                        logger.warning(
-                            "Skipping incompatible profraw %s (rc=%d): %s",
-                            pf.name,
-                            pf_r.returncode,
-                            pf_err[:300],
-                        )
-                        tmp_profdata.unlink(missing_ok=True)
-                        continue
-
-                    tmp_profdata.rename(self.profdata_file)
-                    pf.unlink(missing_ok=True)
-
-                # Continue with remaining batches if we managed to produce merged.profdata.
-                if not self.profdata_file.exists():
                     return False
-                continue
+                except FileNotFoundError:
+                    logger.error("llvm-profdata not found: %s", profdata_tool)
+                    return False
+                if r.returncode != 0:
+                    err = (r.stderr or "").strip()
+                    out = (r.stdout or "").strip()
+                    if r.returncode < 0:
+                        logger.error(
+                            "llvm-profdata was terminated by signal %d (possible OOM kill) on batch %d/%d",
+                            -r.returncode, batch_num, total_batches,
+                        )
+                    logger.error(
+                        "llvm-profdata merge failed (rc=%d) batch %d/%d: %s",
+                        r.returncode,
+                        batch_num,
+                        total_batches,
+                        err[:500] if err else "(no stderr)",
+                    )
+                    logger.debug("llvm-profdata cmd: %r", cmd)
+                    if out:
+                        logger.debug("llvm-profdata stdout (truncated): %s", out[:500])
+                    batch_files = ", ".join(f"{f.name}({f.stat().st_size}B)" for f in batch)
+                    logger.error("Failed batch files: %s", batch_files)
 
-            tmp_profdata.rename(self.profdata_file)
-            for pf in batch:
+                    # Best effort: try merging each profraw in the failed batch separately.
+                    # One incompatible/corrupt .profraw can cause the whole batch merge to fail.
+                    for pf in batch:
+                        tmp_profdata.unlink(missing_ok=True)
+                        pf_inputs = [str(pf)]
+                        if self.profdata_file.exists():
+                            pf_inputs.insert(0, str(self.profdata_file))
+                        pf_cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + pf_inputs
+                        prev_sz_pf = self.profdata_file.stat().st_size if self.profdata_file.exists() else 0
+                        pf_timeout = self._merge_timeout_seconds(pf.stat().st_size + prev_sz_pf)
+                        try:
+                            pf_r = subprocess.run(pf_cmd, capture_output=True, text=True, timeout=pf_timeout)
+                        except subprocess.TimeoutExpired:
+                            logger.error(
+                                "llvm-profdata merge timed out (batch %d, profraw %s, timeout=%ds)",
+                                batch_num,
+                                pf.name,
+                                pf_timeout,
+                            )
+                            tmp_profdata.unlink(missing_ok=True)
+                            return False
+
+                        if pf_r.returncode != 0:
+                            pf_err = (pf_r.stderr or "").strip() or "(no stderr)"
+                            if pf_r.returncode < 0:
+                                logger.warning(
+                                    "Skipping profraw %s after signal %d during merge (likely OOM)",
+                                    pf.name, -pf_r.returncode,
+                                )
+                            logger.warning(
+                                "Skipping incompatible profraw %s (rc=%d): %s",
+                                pf.name,
+                                pf_r.returncode,
+                                pf_err[:300],
+                            )
+                            tmp_profdata.unlink(missing_ok=True)
+                            continue
+
+                        tmp_profdata.rename(self.profdata_file)
+                        pf.unlink(missing_ok=True)
+
+                    # Continue with remaining batches if we managed to produce merged.profdata.
+                    if not self.profdata_file.exists():
+                        return False
+                    continue
+
+                tmp_profdata.rename(self.profdata_file)
+                for pf in batch:
+                    pf.unlink(missing_ok=True)
+            return True
+
+        if not _merge_batches(profraw_files, "Primary"):
+            return False
+
+        if oversized and merge_oversized:
+            # Second pass: merge very large raw files one-by-one (user lowered WHITEFOX_MAX_PROFRAW_BYTES).
+            oversized_sorted = sorted(oversized, key=lambda p: p.stat().st_size)
+            logger.info(
+                "Merging %d oversized profraw files (>%d bytes) one at a time …",
+                len(oversized_sorted),
+                self._MAX_PROFRAW_BYTES,
+            )
+            for pf in oversized_sorted:
+                tmp_profdata.unlink(missing_ok=True)
+                pf_inputs = [str(pf)]
+                if self.profdata_file.exists():
+                    pf_inputs.insert(0, str(self.profdata_file))
+                prev_sz = self.profdata_file.stat().st_size if self.profdata_file.exists() else 0
+                ov_timeout = self._merge_timeout_seconds(pf.stat().st_size + prev_sz)
+                pf_cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + pf_inputs
+                try:
+                    ov_r = subprocess.run(pf_cmd, capture_output=True, text=True, timeout=ov_timeout)
+                except subprocess.TimeoutExpired:
+                    logger.error("llvm-profdata merge timed out (oversized %s, timeout=%ds)", pf.name, ov_timeout)
+                    tmp_profdata.unlink(missing_ok=True)
+                    return False
+                except FileNotFoundError:
+                    logger.error("llvm-profdata not found: %s", profdata_tool)
+                    return False
+                if ov_r.returncode != 0:
+                    logger.warning(
+                        "Skipping oversized/incompatible profraw %s (rc=%d): %s",
+                        pf.name,
+                        ov_r.returncode,
+                        (ov_r.stderr or "").strip()[:300],
+                    )
+                    tmp_profdata.unlink(missing_ok=True)
+                    continue
+                tmp_profdata.rename(self.profdata_file)
                 pf.unlink(missing_ok=True)
 
+        if not self.profdata_file.exists():
+            logger.warning("Merge produced no profdata (all inputs skipped or failed)")
+            return False
+
         profdata_mb = self.profdata_file.stat().st_size / 1024 / 1024
-        logger.info("Merged %d profraw files → %s (%.1f MB)", len(profraw_files), self.profdata_file, profdata_mb)
+        logger.info("Merged raw profiles → %s (%.1f MB)", self.profdata_file, profdata_mb)
         return True
 
     # ---- reporting ----------------------------------------------------------
