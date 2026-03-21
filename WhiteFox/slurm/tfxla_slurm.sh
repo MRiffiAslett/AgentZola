@@ -1,4 +1,9 @@
 #!/bin/bash
+# Optional: native Slurm container (Pyxis/Enroot on some clusters). Uncomment if supported;
+# if so, you can set WHITEFOX_USE_CONTAINER=0 and rely on this instead of Apptainer below.
+##SBATCH --container-image=docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+##SBATCH --container-mounts=/vol:/vol,/tmp:/tmp
+
 #SBATCH --job-name=whitefox_tfxla
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:1
@@ -10,6 +15,14 @@
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%j.out
 
 set -euo pipefail
+
+# Run the job inside Apptainer/Singularity (1) or on the host (0). Override: sbatch --export=ALL,WHITEFOX_USE_CONTAINER=0
+export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-1}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=container_launch.sh
+source "$SCRIPT_DIR/container_launch.sh"
+whitefox_maybe_reexec_container "${BASH_SOURCE[0]}" "$@"
 
 echo "[$(date)] Starting WhiteFox TF-XLA job on node: $(hostname)"
 echo "SLURM job ID: ${SLURM_JOB_ID:-N/A}"
@@ -38,7 +51,7 @@ for _llvm_dir in /vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/llvm_l
 done
 export PATH="$LLVM17_BIN:$HOME/.local/bin:$PATH"
 
-if [ -f /vol/cuda/12.0.0/setup.sh ]; then
+if [ -z "${WHITEFOX_IN_CONTAINER:-}" ] && [ -f /vol/cuda/12.0.0/setup.sh ]; then
   . /vol/cuda/12.0.0/setup.sh
 fi
 
