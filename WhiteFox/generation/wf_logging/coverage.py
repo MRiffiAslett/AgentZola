@@ -1,11 +1,13 @@
-"""LLVM source-based coverage: collect profraw, merge, report XLA lines hit.
+"""LLVM source-based coverage: collect .profraw, merge incrementally into .profdata, llvm-cov XLA summary.
 
-Environment (optional):
-  WHITEFOX_MAX_PROFRAW_BYTES — max raw profile size to merge in the primary pass
-      (default 1 GiB; TensorFlow often emits ~1 GiB per process).
-  WHITEFOX_MERGE_OVERSIZED_PROFRAW — if "1" (default), merge files above that
-      limit one-by-one in a second pass (after lowering the max).
-  WHITEFOX_LLVM_DIR — directory containing llvm-profdata / llvm-cov.
+Design (simple / robust):
+  - Each TF subprocess writes `wf_%p.profraw` under a temp dir (env set in generator).
+  - After each batch of tests finishes, we merge **new** raw profiles **one file at a time**
+    into `logging/coverage/merged.profdata` using `llvm-profdata merge` with
+    `-sparse`, `--failure-mode=all`, `-j 1` (low peak RAM vs auto thread count).
+  - At job end, `finalize()` merges any remaining raws and runs `llvm-cov report`.
+
+Optional: WHITEFOX_LLVM_DIR — directory containing llvm-profdata and llvm-cov.
 """
 
 import glob
@@ -23,18 +25,11 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# LLVM tool discovery
-# ---------------------------------------------------------------------------
-
 _TFBUILD_LLVM_GLOB = (
     "/vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/"
     "llvm_linux_x86_64/bin"
 )
 
-# XLA source paths contain one of these substrings inside the bazel execroot.
-# Keep both slash-prefixed and non-prefixed forms because llvm-cov can emit
-# either absolute or relative filenames.
 _XLA_PATH_MARKERS = (
     "/xla/",
     "xla/",
@@ -46,7 +41,6 @@ _XLA_PATH_MARKERS = (
 
 
 def _llvm_tool_version(tool_path: str) -> str:
-    """Return the version string reported by an LLVM tool, or '?' on error."""
     try:
         r = subprocess.run(
             [tool_path, "--version"],
@@ -61,14 +55,6 @@ def _llvm_tool_version(tool_path: str) -> str:
 
 
 def _find_all_llvm_tools(name: str) -> List[str]:
-    """Return *all* candidate paths for an LLVM tool, de-duplicated.
-
-    Search order (highest priority first):
-    1. WHITEFOX_LLVM_DIR environment variable
-    2. Anything already on PATH
-    3. Versioned variants in /usr/bin
-    4. LLVM bundled inside the TF build tree
-    """
     candidates: List[str] = []
     seen: set = set()
 
@@ -106,7 +92,6 @@ def _find_llvm_tool(name: str) -> str:
 
 
 def _find_tf_so_files() -> List[str]:
-    """Find TensorFlow .so files in the current environment."""
     env = os.environ.copy()
     env["LLVM_PROFILE_FILE"] = "/dev/null"
     r = subprocess.run(
@@ -122,24 +107,15 @@ def _find_tf_so_files() -> List[str]:
     return so_files
 
 
-# ---------------------------------------------------------------------------
-# Verify script – checks that the TF wheel produces profraw files.
-# ---------------------------------------------------------------------------
-
 _VERIFY_SCRIPT = """\
 import os, sys
-print("LLVM_PROFILE_FILE=" + os.environ.get("LLVM_PROFILE_FILE", "<unset>"))
 import tensorflow as tf
 tf.constant(1)
 """
 
 
-# ---------------------------------------------------------------------------
-# CoverageCollector
-# ---------------------------------------------------------------------------
-
 class CoverageCollector:
-    """Collect profraw files, merge them, and report XLA lines hit."""
+    """Incremental profraw → merged.profdata; final llvm-cov XLA line summary."""
 
     def __init__(self, logging_dir: Path):
         self.cov_dir = logging_dir / "coverage"
@@ -149,90 +125,47 @@ class CoverageCollector:
         self.report_file = logging_dir / "coverage_report.log"
         self.diag_file = logging_dir / "coverage_diagnostics.log"
         self._so_files: Optional[List[str]] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._llvm_dir: Optional[str] = None
+        self._profdata_tool: Optional[str] = None
+
+        # Fresh merged profile for this WhiteFox run (avoid stacking onto old runs).
+        self.profdata_file.unlink(missing_ok=True)
+        tmp = self.profdata_file.with_suffix(".profdata.tmp")
+        tmp.unlink(missing_ok=True)
 
         logger.info(
             "CoverageCollector: profraw_dir=%s, profdata=%s",
             self.profraw_dir, self.profdata_file,
         )
 
-    # ---- env ---------------------------------------------------------------
-
     def env_vars(self) -> dict:
-        """Env vars that make each TF subprocess write a unique .profraw."""
         return {"LLVM_PROFILE_FILE": str(self.profraw_dir / "wf_%p.profraw")}
 
-    # ---- diagnostics -------------------------------------------------------
-
     def verify(self) -> None:
-        """Run once at startup. Writes coverage_diagnostics.log."""
-        lines: List[str] = []
-        lines.append("=" * 70)
-        lines.append("COVERAGE DIAGNOSTICS")
-        lines.append("=" * 70)
-
+        """Quick check that TF writes profraw and llvm-profdata can read it."""
+        lines: List[str] = ["COVERAGE DIAGNOSTICS", "=" * 50]
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             probe = str(Path(tmp) / "probe_%p.profraw")
             env = os.environ.copy()
             env["LLVM_PROFILE_FILE"] = probe
-            r = subprocess.run(
+            subprocess.run(
                 [sys.executable, "-c", _VERIFY_SCRIPT],
                 capture_output=True, text=True, env=env, timeout=120,
             )
-            lines.append("")
-            lines.append("--- subprocess stdout ---")
-            lines.append(r.stdout.strip())
-            if r.stderr:
-                lines.append("--- subprocess stderr (last 3 lines) ---")
-                for line in r.stderr.strip().splitlines()[-3:]:
-                    lines.append(line)
-
             profraw_files = list(Path(tmp).glob("*.profraw"))
-            lines.append("")
-            lines.append(f"profraw files written: {len(profraw_files)}")
-            for pf in profraw_files:
-                lines.append(f"  {pf}  ({pf.stat().st_size} bytes)")
-
-            if not profraw_files:
-                lines.append("⚠  No profraw produced — TF wheel may not be instrumented.")
-            else:
-                lines.append("✓  TF wheel produces profraw files.")
-
-            # Probe llvm-profdata compatibility while profraw still exists
+            lines.append(f"profraw files from probe: {len(profraw_files)}")
             if profraw_files:
-                llvm_dir_env = os.environ.get("WHITEFOX_LLVM_DIR", "")
-                lines.append(f"WHITEFOX_LLVM_DIR: {llvm_dir_env or '<not set>'}")
-                candidates = _find_all_llvm_tools("llvm-profdata")
-                lines.append(f"llvm-profdata candidates: {len(candidates)}")
-                for c in candidates:
-                    lines.append(f"  {c}  ({_llvm_tool_version(c)})")
-                compat = self._select_profdata(profraw_files[0])
-                if compat:
-                    lines.append(f"✓  Compatible llvm-profdata: {compat}")
-                else:
-                    lines.append("⚠  No compatible llvm-profdata found.")
-                    lines.append("   Set WHITEFOX_LLVM_DIR to a directory with LLVM 15-17 tools.")
-
-        lines.append("")
-        lines.append("=" * 70)
+                t = self._select_profdata(profraw_files[0])
+                lines.append(f"llvm-profdata: {t or 'NOT FOUND'}")
+            else:
+                lines.append("TF wheel may not be instrumented (no profraw).")
 
         self.diag_file.write_text("\n".join(lines) + "\n")
         logger.info("Coverage diagnostics written to %s", self.diag_file)
 
-        if not profraw_files:
-            logger.warning("COVERAGE: probe produced 0 profraw files.")
-        else:
-            logger.info(
-                "COVERAGE: probe wrote %d profraw file(s) — instrumentation confirmed.",
-                len(profraw_files),
-            )
-
-    # ---- LLVM tool selection ------------------------------------------------
-
     @staticmethod
     def _profraw_version(profraw_path: Path) -> Optional[int]:
-        """Read the raw profile format version from the profraw binary header."""
         try:
             with open(profraw_path, "rb") as f:
                 header = f.read(16)
@@ -240,12 +173,10 @@ class CoverageCollector:
                 return None
             ver_u64 = struct.unpack("<Q", header[8:16])[0]
             return ver_u64 & 0xFF
-        except Exception as exc:
-            logger.warning("Could not read profraw header: %s", exc)
+        except Exception:
             return None
 
     def _select_profdata(self, sample_profraw: Path) -> Optional[str]:
-        """Find a compatible llvm-profdata by matching profraw version to LLVM version."""
         if self._llvm_dir is not None:
             tool = os.path.join(self._llvm_dir, "llvm-profdata")
             if os.path.isfile(tool):
@@ -253,12 +184,10 @@ class CoverageCollector:
 
         candidates = _find_all_llvm_tools("llvm-profdata")
         if not candidates:
-            logger.error("No llvm-profdata binary found anywhere")
+            logger.error("No llvm-profdata binary found")
             return None
 
         profraw_ver = self._profraw_version(sample_profraw)
-        logger.info("Profraw format version: %s (from %s)", profraw_ver, sample_profraw.name)
-
         _COMPAT = {8: range(15, 18), 9: range(18, 30)}
         wanted = _COMPAT.get(profraw_ver)
 
@@ -269,38 +198,27 @@ class CoverageCollector:
             if m:
                 major = int(m.group(1))
 
-            if wanted is not None and major is not None:
-                if major in wanted:
-                    self._llvm_dir = os.path.dirname(os.path.realpath(tool))
-                    logger.info("Selected %s (LLVM %d matches profraw v%d)", tool, major, profraw_ver)
-                    return tool
-                logger.info("Skipping %s (LLVM %d incompatible with profraw v%d)", tool, major, profraw_ver)
-                continue
+            if wanted is not None and major is not None and major in wanted:
+                self._llvm_dir = os.path.dirname(os.path.realpath(tool))
+                logger.info("Selected llvm-profdata: %s", tool)
+                return tool
 
-            # Slow fallback: probe the tool against the profraw
-            logger.info("Probing %s (version heuristic unavailable)", tool)
             try:
                 r = subprocess.run(
                     [tool, "show", str(sample_profraw)],
                     capture_output=True, text=True, timeout=120,
                 )
             except Exception as exc:
-                logger.warning("Skipping %s (probe error: %s)", tool, exc)
+                logger.warning("Probe %s: %s", tool, exc)
                 continue
             if "version mismatch" in r.stderr:
-                logger.info("Skipping %s (profraw version mismatch)", tool)
                 continue
-            if r.returncode != 0:
-                logger.warning("Skipping %s (exit %d: %s)", tool, r.returncode, r.stderr.strip()[:200])
-                continue
-            self._llvm_dir = os.path.dirname(os.path.realpath(tool))
-            logger.info("Selected compatible llvm-profdata: %s", tool)
-            return tool
+            if r.returncode == 0:
+                self._llvm_dir = os.path.dirname(os.path.realpath(tool))
+                logger.info("Selected llvm-profdata (probe): %s", tool)
+                return tool
 
-        logger.error(
-            "None of the %d llvm-profdata candidates are compatible with profraw v%s.",
-            len(candidates), profraw_ver,
-        )
+        logger.error("No compatible llvm-profdata for profraw v%s", profraw_ver)
         return None
 
     def _get_llvm_tool(self, name: str) -> str:
@@ -310,330 +228,95 @@ class CoverageCollector:
                 return p
         return _find_llvm_tool(name)
 
-    # ---- merging ------------------------------------------------------------
-
-    _MERGE_BATCH = 3
-    # TensorFlow + XLA often emit ~1 GiB raw profiles per process. The old 256 MiB
-    # default discarded almost all useful data. Override with WHITEFOX_MAX_PROFRAW_BYTES.
-    _MAX_PROFRAW_BYTES = int(os.environ.get("WHITEFOX_MAX_PROFRAW_BYTES", 1024 * 1024 * 1024))
-
-    @staticmethod
-    def _merge_timeout_seconds(total_input_bytes: int) -> int:
-        """Scale llvm-profdata merge timeout with how much raw profile we feed in."""
-        if total_input_bytes <= 0:
-            return 300
-        mb = max(1, (total_input_bytes + 1024 * 1024 - 1) // (1024 * 1024))
-        return min(7200, 300 + mb)
-
     @staticmethod
     def _is_valid_profraw_header(profraw_path: Path) -> bool:
-        """Cheap structural validation to skip obviously broken profraw files."""
         try:
             with open(profraw_path, "rb") as f:
                 header = f.read(16)
             if len(header) < 16:
                 return False
-            # Reuse existing parser logic: None means invalid/unreadable.
             ver_u64 = struct.unpack("<Q", header[8:16])[0]
             return (ver_u64 & 0xFF) > 0
         except Exception:
             return False
 
-    def merge(self) -> bool:
-        # Never reuse a previous run's merged profile if this merge fails partway.
-        self.profdata_file.unlink(missing_ok=True)
-        tmp_profdata = self.profdata_file.with_suffix(".profdata.tmp")
-        tmp_profdata.unlink(missing_ok=True)
+    def merge_pending(self) -> None:
+        """Merge each new .profraw into merged.profdata (one raw at a time), delete raw on success."""
+        with self._lock:
+            pending = sorted(self.profraw_dir.glob("*.profraw"))
+            if not pending:
+                return
 
-        all_profraw_files = sorted(self.profraw_dir.glob("*.profraw"))
-        if not all_profraw_files:
-            logger.warning("No .profraw files found in %s", self.profraw_dir)
-            return False
-        profraw_files: List[Path] = []
-        oversized: List[Path] = []
-        skipped_bad_header = 0
-        merge_oversized = os.environ.get("WHITEFOX_MERGE_OVERSIZED_PROFRAW", "1").lower() not in (
-            "0",
-            "false",
-            "no",
-        )
-        for pf in all_profraw_files:
-            size = pf.stat().st_size
-            if size == 0 or not self._is_valid_profraw_header(pf):
-                skipped_bad_header += 1
-                logger.warning("Skipping invalid/corrupt profraw %s (%d bytes)", pf.name, size)
-                continue
-            if size > self._MAX_PROFRAW_BYTES:
-                oversized.append(pf)
-                continue
-            profraw_files.append(pf)
-        if skipped_bad_header or oversized:
-            logger.info(
-                "Filtered profraw files: %d under limit (≤ %d bytes), %d over limit, %d invalid",
-                len(profraw_files),
-                self._MAX_PROFRAW_BYTES,
-                len(oversized),
-                skipped_bad_header,
-            )
-        if oversized and not merge_oversized:
-            for pf in oversized:
-                logger.warning(
-                    "Skipping oversized profraw %s (%d bytes > %d); set WHITEFOX_MERGE_OVERSIZED_PROFRAW=1 or raise WHITEFOX_MAX_PROFRAW_BYTES",
-                    pf.name,
-                    pf.stat().st_size,
-                    self._MAX_PROFRAW_BYTES,
-                )
-        if not profraw_files and not (oversized and merge_oversized):
-            logger.warning("No usable .profraw files remain after filtering")
-            return False
+            if self._profdata_tool is None:
+                self._profdata_tool = self._select_profdata(pending[0])
+            profdata_tool = self._profdata_tool
+            if not profdata_tool:
+                return
 
-        sample = profraw_files[0] if profraw_files else oversized[0]
-        profdata_tool = self._select_profdata(sample)
-        if profdata_tool is None:
-            return False
+            tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
 
-        def _merge_batches(files: List[Path], label: str) -> bool:
-            if not files:
-                return True
-            total_batches = (len(files) + self._MERGE_BATCH - 1) // self._MERGE_BATCH
-            logger.info(
-                "%s: merging %d profraw files (batch size %d) → %s",
-                label,
-                len(files),
-                self._MERGE_BATCH,
-                self.profdata_file,
-            )
-            for i in range(0, len(files), self._MERGE_BATCH):
-                batch = files[i : i + self._MERGE_BATCH]
-                batch_num = i // self._MERGE_BATCH + 1
-                batch_mb = sum(f.stat().st_size for f in batch) / 1024 / 1024
-                logger.info(
-                    "  merge batch %d/%d: %d files (%.1f MB)",
-                    batch_num,
-                    total_batches,
-                    len(batch),
-                    batch_mb,
-                )
-
-                inputs = [str(f) for f in batch]
-                if self.profdata_file.exists():
-                    inputs.insert(0, str(self.profdata_file))
-                prev_sz = self.profdata_file.stat().st_size if self.profdata_file.exists() else 0
-                batch_bytes = sum(f.stat().st_size for f in batch) + prev_sz
-                timeout_sec = self._merge_timeout_seconds(batch_bytes)
-
-                cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + inputs
-                try:
-                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
-                except subprocess.TimeoutExpired:
-                    logger.error(
-                        "llvm-profdata merge timed out (batch %d, timeout=%ds)",
-                        batch_num,
-                        timeout_sec,
-                    )
-                    tmp_profdata.unlink(missing_ok=True)
-                    return False
-                except FileNotFoundError:
-                    logger.error("llvm-profdata not found: %s", profdata_tool)
-                    return False
-                if r.returncode != 0:
-                    err = (r.stderr or "").strip()
-                    out = (r.stdout or "").strip()
-                    if r.returncode < 0:
-                        logger.error(
-                            "llvm-profdata was terminated by signal %d (possible OOM kill) on batch %d/%d",
-                            -r.returncode, batch_num, total_batches,
-                        )
-                    logger.error(
-                        "llvm-profdata merge failed (rc=%d) batch %d/%d: %s",
-                        r.returncode,
-                        batch_num,
-                        total_batches,
-                        err[:500] if err else "(no stderr)",
-                    )
-                    logger.debug("llvm-profdata cmd: %r", cmd)
-                    if out:
-                        logger.debug("llvm-profdata stdout (truncated): %s", out[:500])
-                    batch_files = ", ".join(f"{f.name}({f.stat().st_size}B)" for f in batch)
-                    logger.error("Failed batch files: %s", batch_files)
-
-                    # Best effort: try merging each profraw in the failed batch separately.
-                    # One incompatible/corrupt .profraw can cause the whole batch merge to fail.
-                    for pf in batch:
-                        tmp_profdata.unlink(missing_ok=True)
-                        pf_inputs = [str(pf)]
-                        if self.profdata_file.exists():
-                            pf_inputs.insert(0, str(self.profdata_file))
-                        pf_cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + pf_inputs
-                        prev_sz_pf = self.profdata_file.stat().st_size if self.profdata_file.exists() else 0
-                        pf_timeout = self._merge_timeout_seconds(pf.stat().st_size + prev_sz_pf)
-                        try:
-                            pf_r = subprocess.run(pf_cmd, capture_output=True, text=True, timeout=pf_timeout)
-                        except subprocess.TimeoutExpired:
-                            logger.error(
-                                "llvm-profdata merge timed out (batch %d, profraw %s, timeout=%ds)",
-                                batch_num,
-                                pf.name,
-                                pf_timeout,
-                            )
-                            tmp_profdata.unlink(missing_ok=True)
-                            return False
-
-                        if pf_r.returncode != 0:
-                            pf_err = (pf_r.stderr or "").strip() or "(no stderr)"
-                            if pf_r.returncode < 0:
-                                logger.warning(
-                                    "Skipping profraw %s after signal %d during merge (likely OOM)",
-                                    pf.name, -pf_r.returncode,
-                                )
-                            logger.warning(
-                                "Skipping incompatible profraw %s (rc=%d): %s",
-                                pf.name,
-                                pf_r.returncode,
-                                pf_err[:300],
-                            )
-                            tmp_profdata.unlink(missing_ok=True)
-                            continue
-
-                        tmp_profdata.rename(self.profdata_file)
-                        pf.unlink(missing_ok=True)
-
-                    # Continue with remaining batches if we managed to produce merged.profdata.
-                    if not self.profdata_file.exists():
-                        return False
-                    continue
-
-                tmp_profdata.rename(self.profdata_file)
-                for pf in batch:
+            for pf in pending:
+                sz = pf.stat().st_size
+                if sz == 0:
                     pf.unlink(missing_ok=True)
-            return True
+                    continue
+                if not self._is_valid_profraw_header(pf):
+                    logger.warning("Skipping unreadable profraw header: %s", pf.name)
+                    continue
 
-        if not _merge_batches(profraw_files, "Primary"):
-            return False
-
-        if oversized and merge_oversized:
-            # Second pass: merge very large raw files one-by-one (user lowered WHITEFOX_MAX_PROFRAW_BYTES).
-            oversized_sorted = sorted(oversized, key=lambda p: p.stat().st_size)
-            logger.info(
-                "Merging %d oversized profraw files (>%d bytes) one at a time …",
-                len(oversized_sorted),
-                self._MAX_PROFRAW_BYTES,
-            )
-            for pf in oversized_sorted:
-                tmp_profdata.unlink(missing_ok=True)
-                pf_inputs = [str(pf)]
+                tmp_out.unlink(missing_ok=True)
+                cmd: List[str] = [
+                    profdata_tool,
+                    "merge",
+                    "-sparse",
+                    "--failure-mode=all",
+                    "-j",
+                    "1",
+                    "-o",
+                    str(tmp_out),
+                ]
                 if self.profdata_file.exists():
-                    pf_inputs.insert(0, str(self.profdata_file))
-                prev_sz = self.profdata_file.stat().st_size if self.profdata_file.exists() else 0
-                ov_timeout = self._merge_timeout_seconds(pf.stat().st_size + prev_sz)
-                pf_cmd = [profdata_tool, "merge", "-sparse", "-o", str(tmp_profdata)] + pf_inputs
+                    cmd.append(str(self.profdata_file))
+                cmd.append(str(pf))
+
                 try:
-                    ov_r = subprocess.run(pf_cmd, capture_output=True, text=True, timeout=ov_timeout)
-                except subprocess.TimeoutExpired:
-                    logger.error("llvm-profdata merge timed out (oversized %s, timeout=%ds)", pf.name, ov_timeout)
-                    tmp_profdata.unlink(missing_ok=True)
-                    return False
+                    r = subprocess.run(
+                        cmd, capture_output=True, text=True, timeout=None,
+                    )
                 except FileNotFoundError:
                     logger.error("llvm-profdata not found: %s", profdata_tool)
-                    return False
-                if ov_r.returncode != 0:
-                    logger.warning(
-                        "Skipping oversized/incompatible profraw %s (rc=%d): %s",
-                        pf.name,
-                        ov_r.returncode,
-                        (ov_r.stderr or "").strip()[:300],
-                    )
-                    tmp_profdata.unlink(missing_ok=True)
+                    return
+                except Exception as exc:
+                    logger.error("llvm-profdata merge error on %s: %s", pf.name, exc)
+                    tmp_out.unlink(missing_ok=True)
                     continue
-                tmp_profdata.rename(self.profdata_file)
+
+                if r.returncode != 0:
+                    err = (r.stderr or "").strip()[:400]
+                    logger.warning(
+                        "merge failed for %s (rc=%d): %s",
+                        pf.name, r.returncode, err or "(no stderr)",
+                    )
+                    tmp_out.unlink(missing_ok=True)
+                    continue
+
+                if not tmp_out.exists() or tmp_out.stat().st_size == 0:
+                    logger.warning("merge produced no output for %s", pf.name)
+                    tmp_out.unlink(missing_ok=True)
+                    continue
+
+                tmp_out.replace(self.profdata_file)
                 pf.unlink(missing_ok=True)
-
-        if not self.profdata_file.exists():
-            logger.warning("Merge produced no profdata (all inputs skipped or failed)")
-            return False
-
-        profdata_mb = self.profdata_file.stat().st_size / 1024 / 1024
-        logger.info("Merged raw profiles → %s (%.1f MB)", self.profdata_file, profdata_mb)
-        return True
-
-    # ---- reporting ----------------------------------------------------------
-
-    def _get_so_files(self) -> List[str]:
-        if self._so_files is None:
-            self._so_files = _find_tf_so_files()
-        return self._so_files
-
-    def _parse_report_line(self, line: str) -> Optional[Tuple[str, int, int]]:
-        """Parse one llvm-cov report data line.
-
-        Uses the column index detected from the header (see _detect_lines_column).
-        Falls back to index 7 (standard layout without Instantiations column).
-
-        Returns (filename, total_lines, missed_lines) or None.
-        """
-        parts = line.split()
-        if not parts:
-            return None
-
-        filename = parts[0]
-        col = getattr(self, "_lines_col", 7)
-
-        def _to_int(tok: str) -> Optional[int]:
-            # llvm-cov uses integer columns for line counts; cover% fields may be float-ish.
-            t = tok.replace(",", "").strip()
-            if t.isdigit():
-                return int(t)
-            return None
-
-        # Primary: parse using detected "Lines" column.
-        try:
-            total_lines = _to_int(parts[col])
-            missed_lines = _to_int(parts[col + 1])
-            if total_lines is not None and missed_lines is not None:
-                return (filename, total_lines, missed_lines)
-        except IndexError:
-            pass
-
-        # Fallback: use the last two integer tokens on the line.
-        # This is robust against minor table layout changes and TOTAL rows with
-        # fewer columns than per-file rows.
-        int_tokens: List[int] = []
-        for tok in parts[1:]:
-            v = _to_int(tok)
-            if v is not None:
-                int_tokens.append(v)
-        if len(int_tokens) >= 2:
-            return (filename, int_tokens[-2], int_tokens[-1])
-
-        return None
-
-    @staticmethod
-    def _detect_lines_column(header_line: str) -> int:
-        """Find the column index of the 'Lines' field from the report header.
-
-        The header looks like:
-          Filename  Regions  Missed...  Cover  Functions  Missed...  Executed  Lines  Missed...  Cover  ...
-        We split by whitespace and find the token 'Lines'.
-        Returns the index, or 7 as default.
-        """
-        tokens = header_line.split()
-        for i, tok in enumerate(tokens):
-            t = tok.strip().lower().rstrip(":")
-            if t == "lines" or t.startswith("lines"):
-                return i
-        return 7
+                logger.debug("Merged and removed %s", pf.name)
 
     def report(self) -> Optional[Dict[str, int]]:
-        """Run llvm-cov report, parse output, return XLA lines hit.
-
-        Writes a concise coverage_report.log with the XLA line count.
-        Returns dict with keys: xla_lines_hit, xla_lines_total, all_lines_hit, all_lines_total
-        or None on failure.
-        """
         if not self.profdata_file.exists():
             logger.warning("No merged profdata; skipping report")
             return None
-        so_files = self._get_so_files()
+        so_files = self._so_files
+        if so_files is None:
+            so_files = _find_tf_so_files()
+            self._so_files = so_files
         if not so_files:
             logger.warning("No TensorFlow .so files found; skipping report")
             return None
@@ -648,10 +331,7 @@ class CoverageCollector:
 
         logger.info("Running llvm-cov report …")
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        except subprocess.TimeoutExpired:
-            logger.error("llvm-cov report timed out")
-            return None
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
         except FileNotFoundError:
             logger.error("llvm-cov not found")
             return None
@@ -661,26 +341,40 @@ class CoverageCollector:
             return None
 
         report_lines = r.stdout.splitlines()
-        logger.info("llvm-cov report produced %d lines of output", len(report_lines))
-
-        # Detect the "Lines" column index from the header
-        self._lines_col = 7
+        lines_col = 7
         for ln in report_lines:
             if "Filename" in ln and "Lines" in ln:
-                self._lines_col = self._detect_lines_column(ln)
-                logger.info("Detected 'Lines' column at index %d (header: %s)", self._lines_col, ln.strip()[:120])
+                tokens = ln.split()
+                for i, tok in enumerate(tokens):
+                    if tok.strip().lower().rstrip(":").startswith("lines"):
+                        lines_col = i
+                        break
                 break
 
-        # Log sample data lines and the TOTAL for debugging
-        sample_logged = 0
-        for ln in report_lines:
-            stripped = ln.strip()
-            if stripped.startswith("TOTAL") or (
-                stripped and not stripped.startswith("-") and not stripped.startswith("Filename") and sample_logged < 3
-            ):
-                if not stripped.startswith("TOTAL"):
-                    sample_logged += 1
-                logger.info("  llvm-cov sample: %s", stripped[:200])
+        def parse_line(line: str) -> Optional[Tuple[str, int, int]]:
+            parts = line.split()
+            if not parts:
+                return None
+            fn = parts[0]
+
+            def _to_int(tok: str) -> Optional[int]:
+                t = tok.replace(",", "").strip()
+                return int(t) if t.isdigit() else None
+
+            try:
+                t, m = _to_int(parts[lines_col]), _to_int(parts[lines_col + 1])
+                if t is not None and m is not None:
+                    return (fn, t, m)
+            except IndexError:
+                pass
+            ints: List[int] = []
+            for tok in parts[1:]:
+                v = _to_int(tok)
+                if v is not None:
+                    ints.append(v)
+            if len(ints) >= 2:
+                return (fn, ints[-2], ints[-1])
+            return None
 
         xla_lines_total = 0
         xla_lines_missed = 0
@@ -688,62 +382,25 @@ class CoverageCollector:
         all_lines_missed = 0
         xla_files = 0
         total_files = 0
-        saw_total_row = False
-        xla_filename_samples: List[str] = []
-        xla_like_files = 0
-        xla_like_lines_total = 0
-        xla_like_lines_missed = 0
 
         for line in report_lines:
-            parsed = self._parse_report_line(line)
+            parsed = parse_line(line)
             if parsed is None:
                 continue
             filename, total, missed = parsed
             if filename.startswith("TOTAL"):
                 all_lines_total = total
                 all_lines_missed = missed
-                saw_total_row = True
                 continue
             total_files += 1
-            if "xla" in filename.lower() and len(xla_filename_samples) < 5:
-                xla_filename_samples.append(filename)
-            if "xla" in filename.lower():
-                xla_like_files += 1
-                xla_like_lines_total += total
-                xla_like_lines_missed += missed
             if any(marker in filename for marker in _XLA_PATH_MARKERS):
                 xla_files += 1
                 xla_lines_total += total
                 xla_lines_missed += missed
 
-        # If strict markers didn't match anything, but we saw filenames containing
-        # 'xla', use that as a fallback to avoid reporting 0/0 incorrectly.
-        if xla_files == 0 and xla_like_files > 0:
-            logger.warning(
-                "XLA path markers matched 0 files; falling back to counting any filename containing 'xla' (xla_like_files=%d)",
-                xla_like_files,
-            )
-            xla_files = xla_like_files
-            xla_lines_total = xla_like_lines_total
-            xla_lines_missed = xla_like_lines_missed
-
-        if not saw_total_row:
-            logger.warning(
-                "llvm-cov parse did not detect TOTAL row; coverage totals may be zero (lines col=%s)",
-                getattr(self, "_lines_col", 7),
-            )
-        if xla_lines_total == 0:
-            logger.warning(
-                "XLA coverage computed as 0/0. Parsed XLA-like filenames count sample=%d, xla_files=%d, all_lines_total=%d",
-                len(xla_filename_samples),
-                xla_files,
-                all_lines_total,
-            )
-            if xla_filename_samples:
-                logger.warning("Example parsed filenames containing 'xla': %r", xla_filename_samples)
-
         xla_lines_hit = xla_lines_total - xla_lines_missed
         all_lines_hit = all_lines_total - all_lines_missed
+        xla_pct = (xla_lines_hit / xla_lines_total * 100) if xla_lines_total else 0
 
         result = {
             "xla_lines_hit": xla_lines_hit,
@@ -751,8 +408,6 @@ class CoverageCollector:
             "all_lines_hit": all_lines_hit,
             "all_lines_total": all_lines_total,
         }
-
-        xla_pct = (xla_lines_hit / xla_lines_total * 100) if xla_lines_total else 0
 
         with open(self.report_file, "w") as f:
             f.write("=" * 60 + "\n")
@@ -762,13 +417,11 @@ class CoverageCollector:
             f.write(f"XLA lines total:  {xla_lines_total:>8,}\n")
             f.write(f"XLA coverage:     {xla_pct:>7.2f}%\n")
             f.write(f"XLA source files: {xla_files:>8,}\n")
-            f.write("\n")
-            f.write("--- for reference ---\n")
+            f.write("\n--- for reference ---\n")
             f.write(f"All TF lines hit:   {all_lines_hit:>8,}\n")
             f.write(f"All TF lines total: {all_lines_total:>8,}\n")
             f.write(f"All TF files:       {total_files:>8,}\n")
-            f.write("\n")
-            f.write(f"XLA path filters: {_XLA_PATH_MARKERS}\n")
+            f.write(f"\nXLA path filters: {_XLA_PATH_MARKERS}\n")
             f.write("=" * 60 + "\n")
 
         logger.info(
@@ -777,22 +430,31 @@ class CoverageCollector:
         )
         return result
 
-    # ---- convenience --------------------------------------------------------
+    def _write_coverage_unavailable(self, detail: str) -> None:
+        try:
+            self.report_file.write_text(
+                "=" * 60 + "\n"
+                "COVERAGE UNAVAILABLE\n"
+                "=" * 60 + "\n\n"
+                f"{detail}\n"
+            )
+        except OSError as exc:
+            logger.warning("Could not write coverage stub: %s", exc)
 
     def finalize(self) -> Optional[Dict[str, int]]:
-        """Merge profraw files and generate the XLA coverage report.
-
-        Returns the coverage dict or None on failure.
-        """
         logger.info("Coverage finalize starting …")
         result = None
         try:
-            with self._lock:
-                if self.merge():
-                    result = self.report()
-                else:
-                    logger.warning("Coverage merge returned False — skipping report")
+            self.merge_pending()
+            if self.profdata_file.exists():
+                result = self.report()
+                if result is None:
+                    self._write_coverage_unavailable("llvm-cov report failed. See logs.")
+            else:
+                logger.warning("No merged.profdata after final merge_pending — skipping report")
+                self._write_coverage_unavailable("No merged profile (merge failed or no valid profraw).")
         except Exception as exc:
             logger.error("Coverage finalize failed: %s", exc, exc_info=True)
+            self._write_coverage_unavailable(f"Coverage finalize error: {exc!r}")
         logger.info("Coverage finalize done.")
         return result
