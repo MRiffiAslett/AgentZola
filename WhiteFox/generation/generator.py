@@ -427,6 +427,9 @@ class StarCoderGenerator:
                 timeout=None,
             )
 
+            # LLVM coverage: merge new .profraw into merged.profdata after each TF batch.
+            self.coverage.merge_pending()
+
             new_triggering_tests = []
             num_triggered = 0
             num_not_triggered = 0
