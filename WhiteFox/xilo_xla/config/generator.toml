@@ -26,10 +26,11 @@ top_p = 1.0
 split_size = 20      
 unit_num = 2       
 optimizations_dir = "xilo_xla/artifacts/generation-prompts"
-tests_per_optimization = 10
-tests_per_iteration = 2
-max_iterations = 2
-examples_per_prompt = 1
+# Paper (OOPSLA'24 §5.2): 1000 tests per optimization = 100 iterations × 10 tests/iteration; 3-shot feedback.
+tests_per_optimization = 1000
+tests_per_iteration = 10
+max_iterations = 100
+examples_per_prompt = 3
 test_timeout = 30
 parallel_test_workers = 1
 parallel_optimizations = 1
@@ -86,10 +87,10 @@ optimizations = [
 ]
 
 [prompts]
-prompt_style = "stacked"  # "paper" (single-pass, Fig 4) or "stacked" (repo-style with seed Q/A prefix)
+prompt_style = "stacked"  # "paper" (Fig. 4) or "stacked" (seed Q/A prefix). Budget matches paper §5.2 regardless.
 seed_file = "xilo_xla/artifacts/seed_qa.txt"  # path to seed Q+A file, only used when prompt_style = "stacked"
-instruction_header = "### Please generate one valid TensorFlow model that satisfies requirements below.\nYou should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n# Description"
-feedback_instruction = "### Please generate one different valid TensorFlow model that satisfies requirements below.\nYou should only use public TensorFlow APIs. The model can be used as the input to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n# Description"
+instruction_header = "### Please generate valid TensorFlow model examples that satisfy the requirements below.\nYou should only use public TensorFlow APIs. Each model can be used as input to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n# Description"
+feedback_instruction = "### Please generate different valid TensorFlow model examples that satisfy the requirements below.\nYou should only use public TensorFlow APIs. Each model can be used as input to trigger the optimization pass `{opt_name}` in TensorFlow XLA.\n\n# Description"
 
 [stopping]
 eof_strings = [
