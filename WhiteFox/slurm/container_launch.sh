@@ -1,5 +1,9 @@
 # Source this from WhiteFox Slurm job scripts after set -euo pipefail.
 #
+# Slurm copies the batch script to /var/spool/slurm/.../slurm_script — do not locate
+# this file via dirname(BASH_SOURCE) of the job script. Job scripts must set
+# WHITEFOX_SLURM_ROOT and source "${WHITEFOX_SLURM_ROOT}/container_launch.sh".
+#
 # Enable container execution (default on):
 #   WHITEFOX_USE_CONTAINER=1
 #   WHITEFOX_APPTAINER_IMAGE=docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
@@ -15,9 +19,16 @@
 # Some sites use Slurm's native container support instead (Pyxis/Enroot); see comments
 # in the job scripts for #SBATCH --container-image examples.
 
+# Args: path Slurm uses for the running script (often spool copy), real basename (e.g. tfxla_slurm.sh), then job args.
 whitefox_maybe_reexec_container() {
-  local script_path="$1"
-  shift
+  local spool_script="$1"
+  local known_basename="$2"
+  shift 2
+
+  local script_path="$spool_script"
+  if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "$SLURM_SUBMIT_DIR/$known_basename" ]; then
+    script_path="$SLURM_SUBMIT_DIR/$known_basename"
+  fi
 
   if [ "${WHITEFOX_USE_CONTAINER:-0}" != "1" ]; then
     return 0
