@@ -4,7 +4,7 @@
 # this file via dirname(BASH_SOURCE) of the job script. Job scripts must set
 # WHITEFOX_SLURM_ROOT and source "${WHITEFOX_SLURM_ROOT}/container_launch.sh".
 #
-# Enable container execution (default on):
+# Enable container execution (job scripts default WHITEFOX_USE_CONTAINER=0; set 1 to opt in):
 #   WHITEFOX_USE_CONTAINER=1
 #   WHITEFOX_APPTAINER_IMAGE=docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 # Or point to a local image built on the login node, e.g.:

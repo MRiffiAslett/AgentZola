@@ -1,6 +1,6 @@
 #!/bin/bash
 # Optional: native Slurm container (Pyxis/Enroot on some clusters). Uncomment if supported;
-# if so, you can set WHITEFOX_USE_CONTAINER=0 and rely on this instead of Apptainer below.
+# leave WHITEFOX_USE_CONTAINER=0 (default) and rely on this instead of Apptainer below.
 ##SBATCH --container-image=docker://pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 ##SBATCH --container-mounts=/vol:/vol,/tmp:/tmp
 
@@ -16,8 +16,8 @@
 
 set -euo pipefail
 
-# Run the job inside Apptainer/Singularity (1) or on the host (0). Override: sbatch --export=ALL,WHITEFOX_USE_CONTAINER=0
-export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-1}"
+# Apptainer/Singularity: set to 1 if your cluster has it on compute nodes (often not installed). Default: host.
+export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm}"
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
