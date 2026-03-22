@@ -19,10 +19,13 @@ set -euo pipefail
 # Run the job inside Apptainer/Singularity (1) or on the host (0). Override: sbatch --export=ALL,WHITEFOX_USE_CONTAINER=0
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-1}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm}"
+if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
+  WHITEFOX_SLURM_ROOT="$SLURM_SUBMIT_DIR"
+fi
 # shellcheck source=container_launch.sh
-source "$SCRIPT_DIR/container_launch.sh"
-whitefox_maybe_reexec_container "${BASH_SOURCE[0]}" "$@"
+source "${WHITEFOX_SLURM_ROOT}/container_launch.sh"
+whitefox_maybe_reexec_container "${BASH_SOURCE[0]}" "pytorchinductor_slurm.sh" "$@"
 
 echo "[$(date)] Starting WhiteFox PyTorch-Inductor job on node: $(hostname)"
 echo "SLURM job ID: ${SLURM_JOB_ID:-N/A}"
