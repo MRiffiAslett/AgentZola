@@ -589,10 +589,17 @@ class StarCoderGenerator:
             }
 
             for future in as_completed(future_to_opt):
+                opt_name = ""
                 try:
-                    future.result()
+                    opt_name, _exc = future.result()
                 except Exception as e:
                     self.logger.error(f"Exception in optimization: {e}", exc_info=True)
+                    opt_state = future_to_opt.get(future)
+                    if opt_state is not None:
+                        opt_name = opt_state.spec.internal_name
+
+                if opt_name:
+                    self.profiler.append_optimization_segment(opt_name)
 
                 with self._state_lock:
                     whitefox_logger.generate_run_summary(self.whitefox_state)
@@ -614,6 +621,7 @@ class StarCoderGenerator:
             }
         }
         self.profiler = WhiteFoxProfiler(self.logging_dir, config=config_dict)
+        self.profiler.begin_run()
         self.profiler.start_monitoring(interval=5.0)
 
         state_file = self._get_state_file_path()
@@ -703,6 +711,10 @@ class StarCoderGenerator:
                     )
                     with self._state_lock:
                         whitefox_logger.generate_run_summary(self.whitefox_state)
+                finally:
+                    self.profiler.append_optimization_segment(
+                        opt_state.spec.internal_name
+                    )
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"

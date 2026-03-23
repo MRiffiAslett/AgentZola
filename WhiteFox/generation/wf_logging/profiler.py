@@ -2,7 +2,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, TextIO
 
 import psutil
 
@@ -20,11 +20,13 @@ class WhiteFoxProfiler:
 
         self.peak_memory_mb = 0.0
         self.peak_child_count = 0
-        self.samples = []
+        self.samples: List[dict] = []
+        self.segment_samples: List[dict] = []
 
         self._monitoring = False
         self._monitor_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._segment_lock = threading.Lock()
 
     def _calculate_estimates(self):
         gen_config = self.config.get("generation", {})
@@ -43,6 +45,18 @@ class WhiteFoxProfiler:
         peak_buffer = 4.0 * 1024
 
         self.estimated_peak_mb = base_memory + process_memory + peak_buffer
+
+    def begin_run(self) -> None:
+        """Truncate the report file and write the run header. Call before start_monitoring()."""
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.report_file, "w", encoding="utf-8") as f:
+            f.write("=" * 70 + "\n")
+            f.write("WHITEFOX RESOURCE PROFILE\n")
+            f.write(
+                "Per-optimization segments are appended as each optimization completes.\n"
+            )
+            f.write("A final run summary is appended at job end.\n")
+            f.write("=" * 70 + "\n\n")
 
     def start_monitoring(self, interval: float = 5.0):
         self._monitoring = True
@@ -73,13 +87,13 @@ class WhiteFoxProfiler:
                 if child_count > self.peak_child_count:
                     self.peak_child_count = child_count
 
-                self.samples.append(
-                    {
-                        "time": time.time() - self.start_time,
-                        "memory_mb": mem_mb,
-                        "child_count": child_count,
-                    }
-                )
+                sample = {
+                    "time": time.time() - self.start_time,
+                    "memory_mb": mem_mb,
+                    "child_count": child_count,
+                }
+                self.samples.append(sample)
+                self.segment_samples.append(dict(sample))
             except Exception:
                 pass
 
@@ -89,7 +103,49 @@ class WhiteFoxProfiler:
             self._monitor_thread.join(timeout=1.0)
         self._capture_snapshot()
 
+    def append_optimization_segment(self, optimization_name: str) -> None:
+        """Append a snapshot for one optimization, then resume monitoring."""
+        with self._segment_lock:
+            self.stop_monitoring()
+            try:
+                self._write_optimization_segment(optimization_name)
+            finally:
+                self.segment_samples.clear()
+                self.start_monitoring(5.0)
+
+    def _write_optimization_segment(self, optimization_name: str) -> None:
+        with open(self.report_file, "a", encoding="utf-8") as f:
+            f.write("-" * 70 + "\n")
+            f.write(f"  OPTIMIZATION: {optimization_name}\n")
+            f.write("-" * 70 + "\n")
+
+            if not self.segment_samples:
+                f.write("  (no samples in this segment)\n\n")
+                return
+
+            peak_mem = max(s["memory_mb"] for s in self.segment_samples)
+            peak_child = max(s["child_count"] for s in self.segment_samples)
+            avg_mem = sum(s["memory_mb"] for s in self.segment_samples) / len(
+                self.segment_samples
+            )
+            avg_child = sum(s["child_count"] for s in self.segment_samples) / len(
+                self.segment_samples
+            )
+            t0 = self.segment_samples[0]["time"]
+            t1 = self.segment_samples[-1]["time"]
+            duration = max(0.0, t1 - t0)
+
+            f.write(f"  Segment wall time (sample span): {duration:.1f} s\n")
+            f.write("  Memory (this segment):\n")
+            f.write(f"    Peak RSS:     {peak_mem:8.1f} MB ({peak_mem / 1024:5.1f} GB)\n")
+            f.write(f"    Average RSS:  {avg_mem:8.1f} MB ({avg_mem / 1024:5.1f} GB)\n")
+            f.write("  Child processes (this segment):\n")
+            f.write(f"    Peak:         {peak_child:3d}\n")
+            f.write(f"    Average:      {avg_child:5.1f}\n")
+            f.write(f"  Samples:       {len(self.segment_samples):4d}\n\n")
+
     def generate_report(self):
+        """Append the full-run summary (after all optimizations)."""
         self.stop_monitoring()
 
         elapsed = time.time() - self.start_time
@@ -103,9 +159,9 @@ class WhiteFoxProfiler:
             avg_memory = 0
             avg_children = 0
 
-        with open(self.report_file, "w") as f:
+        with open(self.report_file, "a", encoding="utf-8") as f:
             f.write("=" * 70 + "\n")
-            f.write("WHITEFOX RESOURCE PROFILE\n")
+            f.write("WHITEFOX RESOURCE PROFILE — FULL RUN TOTAL\n")
             f.write("=" * 70 + "\n\n")
 
             f.write(f"Run completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
