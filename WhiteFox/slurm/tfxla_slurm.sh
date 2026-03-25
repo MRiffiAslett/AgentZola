@@ -7,7 +7,7 @@
 #SBATCH --job-name=whitefox_tfxla
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
@@ -15,6 +15,11 @@
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%j.out
 
 set -euo pipefail
+
+# Speed knob: merge LLVM profraw less frequently to reduce coverage I/O overhead.
+# Override with e.g.:
+#   sbatch --export=ALL,WHITEFOX_COVERAGE_MERGE_EVERY_ITERS=1 tfxla_slurm.sh
+export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-5}"
 
 # Apptainer/Singularity: set to 1 if your cluster has it on compute nodes (often not installed). Default: host.
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"

@@ -1,14 +1,4 @@
-"""LLVM source-based coverage: collect .profraw, merge incrementally into .profdata, llvm-cov XLA summary.
 
-Design (simple / robust):
-  - Each TF subprocess writes `wf_%p.profraw` under a temp dir (env set in generator).
-  - After each batch of tests finishes, we merge **new** raw profiles **one file at a time**
-    into `logging/coverage/merged.profdata` using `llvm-profdata merge` with
-    `-sparse`, `--failure-mode=all`, `-j 1` (low peak RAM vs auto thread count).
-  - At job end, `finalize()` merges any remaining raws and runs `llvm-cov report`.
-
-Optional: WHITEFOX_LLVM_DIR — directory containing llvm-profdata and llvm-cov.
-"""
 
 import glob
 import logging
@@ -240,21 +230,26 @@ class CoverageCollector:
         except Exception:
             return False
 
-    def merge_pending(self) -> None:
-        """Merge each new .profraw into merged.profdata (one raw at a time), delete raw on success."""
+    def merge_pending(self) -> int:
+        """Merge each new .profraw into merged.profdata (one raw at a time), delete raw on success.
+
+        Returns:
+            Number of profraw files successfully merged.
+        """
         with self._lock:
             pending = sorted(self.profraw_dir.glob("*.profraw"))
             if not pending:
-                return
+                return 0
 
             if self._profdata_tool is None:
                 self._profdata_tool = self._select_profdata(pending[0])
             profdata_tool = self._profdata_tool
             if not profdata_tool:
-                return
+                return 0
 
             tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
 
+            merged_count = 0
             for pf in pending:
                 sz = pf.stat().st_size
                 if sz == 0:
@@ -308,6 +303,9 @@ class CoverageCollector:
                 tmp_out.replace(self.profdata_file)
                 pf.unlink(missing_ok=True)
                 logger.debug("Merged and removed %s", pf.name)
+                merged_count += 1
+
+            return merged_count
 
     def report(self) -> Optional[Dict[str, int]]:
         if not self.profdata_file.exists():
