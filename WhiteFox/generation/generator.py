@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import random
 import threading
+import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -336,10 +337,23 @@ class StarCoderGenerator:
         tests_per_iteration = self.config.generation.tests_per_iteration
         examples_per_prompt = self.config.generation.examples_per_prompt
 
+        # Wall-clock timing breakdown to help diagnose slow fuzzing loops.
+        opt_llm_time_s = 0.0
+        opt_exec_time_s = 0.0
+        opt_coverage_merge_time_s = 0.0
+        opt_coverage_merged_profraw = 0
+        opt_total_samples_executed = 0
+        opt_iterations_done = 0
+        coverage_merge_every_iters = int(
+            os.environ.get("WHITEFOX_COVERAGE_MERGE_EVERY_ITERS", "1")
+        )
+        coverage_merge_every_iters = max(1, coverage_merge_every_iters)
+
         for iteration in range(max_iterations):
             self.logger.info(
                 f"  Iteration {iteration + 1}/{max_iterations} for {opt_name}"
             )
+            opt_iterations_done += 1
 
             import copy
 
@@ -386,9 +400,11 @@ class StarCoderGenerator:
 
             try:
                 sampling_params = self._create_sampling_params(tests_per_iteration)
-
+                t_llm0 = time.monotonic()
                 with self._llm_lock:
                     outputs = self.llm.generate([prompt], sampling_params)
+                t_llm1 = time.monotonic()
+                opt_llm_time_s += t_llm1 - t_llm0
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_name,
@@ -418,6 +434,7 @@ class StarCoderGenerator:
                 ),
             )
 
+            t_exec0 = time.monotonic()
             execution_results = self._execute_tests_parallel(
                 generated_texts,
                 opt_name,
@@ -426,9 +443,24 @@ class StarCoderGenerator:
                 whitefox_logger,
                 timeout=None,
             )
+            t_exec1 = time.monotonic()
+            opt_exec_time_s += t_exec1 - t_exec0
+            opt_total_samples_executed += len(generated_texts)
 
-            # LLVM coverage: merge new .profraw into merged.profdata after each TF batch.
-            self.coverage.merge_pending()
+            # LLVM coverage: merging pending profraw can be expensive.
+            # Default (env var unset) preserves old behaviour (merge every iteration).
+            should_merge = (
+                coverage_merge_every_iters <= 1
+                or ((iteration + 1) % coverage_merge_every_iters == 0)
+                or (iteration + 1 == max_iterations)
+            )
+            merged_count = 0
+            if should_merge:
+                t_merge0 = time.monotonic()
+                merged_count = self.coverage.merge_pending()
+                t_merge1 = time.monotonic()
+                opt_coverage_merge_time_s += t_merge1 - t_merge0
+                opt_coverage_merged_profraw += int(merged_count or 0)
 
             new_triggering_tests = []
             num_triggered = 0
@@ -555,6 +587,20 @@ class StarCoderGenerator:
 
             with self._state_lock:
                 self.whitefox_state.save(self._get_state_file_path())
+
+        # Attach extra timing data to the profiler segment for this optimization.
+        if hasattr(self, "profiler") and self.profiler is not None:
+            self.profiler.set_optimization_metadata(
+                opt_name,
+                {
+                    "llm_time_s": opt_llm_time_s,
+                    "exec_time_s": opt_exec_time_s,
+                    "coverage_merge_time_s": opt_coverage_merge_time_s,
+                    "coverage_merged_profraw": opt_coverage_merged_profraw,
+                    "iterations": opt_iterations_done,
+                    "samples_executed": opt_total_samples_executed,
+                },
+            )
 
         with self._state_lock:
             whitefox_logger.generate_run_summary(self.whitefox_state)

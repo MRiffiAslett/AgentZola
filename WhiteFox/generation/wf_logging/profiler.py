@@ -2,7 +2,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, TextIO
+from typing import Any, Dict, List, Optional, TextIO
 
 import psutil
 
@@ -27,6 +27,14 @@ class WhiteFoxProfiler:
         self._monitor_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self._segment_lock = threading.Lock()
+        self._optimization_metadata: Dict[str, Dict[str, Any]] = {}
+
+    def set_optimization_metadata(
+        self, optimization_name: str, metadata: Dict[str, Any]
+    ) -> None:
+        """Attach extra metrics to be printed for the given optimization segment."""
+        with self._segment_lock:
+            self._optimization_metadata[optimization_name] = metadata
 
     def _calculate_estimates(self):
         gen_config = self.config.get("generation", {})
@@ -143,6 +151,26 @@ class WhiteFoxProfiler:
             f.write(f"    Peak:         {peak_child:3d}\n")
             f.write(f"    Average:      {avg_child:5.1f}\n")
             f.write(f"  Samples:       {len(self.segment_samples):4d}\n\n")
+
+            meta = self._optimization_metadata.get(optimization_name)
+            if meta:
+                f.write("  Timing breakdown (wall-clock, summed across iterations):\n")
+                f.write(
+                    f"    LLM generation:   {meta.get('llm_time_s', 0.0):8.1f} s\n"
+                )
+                f.write(
+                    f"    Test execution:   {meta.get('exec_time_s', 0.0):8.1f} s\n"
+                )
+                f.write(
+                    f"    Coverage merge:   {meta.get('coverage_merge_time_s', 0.0):8.1f} s\n"
+                )
+                f.write(
+                    f"    Coverage merged:  {meta.get('coverage_merged_profraw', 0):8d} profraw\n"
+                )
+                f.write(f"    Iterations:       {meta.get('iterations', 0):8d}\n")
+                f.write(
+                    f"    Samples executed: {meta.get('samples_executed', 0):8d}\n\n"
+                )
 
     def generate_report(self):
         """Append the full-run summary (after all optimizations)."""
