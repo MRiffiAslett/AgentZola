@@ -7,7 +7,7 @@
 #SBATCH --job-name=whitefox_tfxla
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=48G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
