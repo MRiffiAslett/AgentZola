@@ -34,7 +34,7 @@ examples_per_prompt = 3
 test_timeout = 30
 # ProcessPool max_workers for TF/XLA tests.
 # Keep this in sync with --cpus-per-task in slurm/tfxla_slurm.sh to avoid oversubscription.
-parallel_test_workers = 8
+parallel_test_workers = 6
 # Keep 1 on a single GPU: vLLM is shared under a lock; higher values mostly add contention without throughput wins.
 parallel_optimizations = 1
 optimizations = [
