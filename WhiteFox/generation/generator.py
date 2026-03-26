@@ -261,8 +261,15 @@ class StarCoderGenerator:
     ) -> List[TestExecutionResult]:
 
         max_workers = self.config.generation.parallel_test_workers
+        env_workers = os.environ.get("WHITEFOX_PARALLEL_TEST_WORKERS")
+        if env_workers:
+            try:
+                max_workers = int(env_workers)
+            except ValueError:
+                pass
         if max_workers is None:
             max_workers = multiprocessing.cpu_count()
+        max_workers = max(1, int(max_workers))
 
         if timeout is None:
             timeout = self.config.generation.test_timeout
