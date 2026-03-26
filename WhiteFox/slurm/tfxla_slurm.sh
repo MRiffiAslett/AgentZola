@@ -19,7 +19,17 @@ set -euo pipefail
 # Speed knob: merge LLVM profraw less frequently to reduce coverage I/O overhead.
 # Override with e.g.:
 #   sbatch --export=ALL,WHITEFOX_COVERAGE_MERGE_EVERY_ITERS=1 tfxla_slurm.sh
-export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-5}"
+export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-25}"
+
+# Let llvm-profdata parallelize merges (coverage was the dominant runtime in profiling).
+# Override if needed (e.g. 1 for debugging).
+export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-6}"
+
+# Match test worker pool to allocated CPUs (override per-job if desired).
+# Examples:
+#   sbatch --cpus-per-task=12 --export=ALL,WHITEFOX_PARALLEL_TEST_WORKERS=12 tfxla_slurm.sh
+#   sbatch --export=ALL,WHITEFOX_PARALLEL_TEST_WORKERS=4 tfxla_slurm.sh
+export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-${SLURM_CPUS_PER_TASK:-6}}"
 
 # Apptainer/Singularity: set to 1 if your cluster has it on compute nodes (often not installed). Default: host.
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
@@ -99,6 +109,7 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-V2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl"
 
 poetry --version || exit 1
+
 poetry lock
 poetry install --no-interaction
 

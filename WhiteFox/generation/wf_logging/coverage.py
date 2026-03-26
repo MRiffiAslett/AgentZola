@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import multiprocessing
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -231,7 +232,7 @@ class CoverageCollector:
             return False
 
     def merge_pending(self) -> int:
-        """Merge each new .profraw into merged.profdata (one raw at a time), delete raw on success.
+        """Merge pending .profraw into merged.profdata, delete raw on success.
 
         Returns:
             Number of profraw files successfully merged.
@@ -249,63 +250,79 @@ class CoverageCollector:
 
             tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
 
-            merged_count = 0
+            valid: List[Path] = []
             for pf in pending:
-                sz = pf.stat().st_size
-                if sz == 0:
-                    pf.unlink(missing_ok=True)
+                try:
+                    if pf.stat().st_size == 0:
+                        pf.unlink(missing_ok=True)
+                        continue
+                except OSError:
                     continue
                 if not self._is_valid_profraw_header(pf):
                     logger.warning("Skipping unreadable profraw header: %s", pf.name)
                     continue
+                valid.append(pf)
 
-                tmp_out.unlink(missing_ok=True)
-                cmd: List[str] = [
-                    profdata_tool,
-                    "merge",
-                    "-sparse",
-                    "--failure-mode=all",
-                    "-j",
-                    "1",
-                    "-o",
-                    str(tmp_out),
-                ]
-                if self.profdata_file.exists():
-                    cmd.append(str(self.profdata_file))
-                cmd.append(str(pf))
+            if not valid:
+                return 0
 
+            tmp_out.unlink(missing_ok=True)
+
+            # llvm-profdata merge can parallelize work internally; let it use CPUs.
+            # Default: min(8, cpu_count). Override via WHITEFOX_LLVM_PROFDATA_JOBS.
+            jobs_env = os.environ.get("WHITEFOX_LLVM_PROFDATA_JOBS")
+            if jobs_env:
                 try:
-                    r = subprocess.run(
-                        cmd, capture_output=True, text=True, timeout=None,
-                    )
-                except FileNotFoundError:
-                    logger.error("llvm-profdata not found: %s", profdata_tool)
-                    return
-                except Exception as exc:
-                    logger.error("llvm-profdata merge error on %s: %s", pf.name, exc)
-                    tmp_out.unlink(missing_ok=True)
-                    continue
+                    jobs = int(jobs_env)
+                except ValueError:
+                    jobs = 1
+            else:
+                jobs = min(8, multiprocessing.cpu_count() or 1)
+            jobs = max(1, jobs)
 
-                if r.returncode != 0:
-                    err = (r.stderr or "").strip()[:400]
-                    logger.warning(
-                        "merge failed for %s (rc=%d): %s",
-                        pf.name, r.returncode, err or "(no stderr)",
-                    )
-                    tmp_out.unlink(missing_ok=True)
-                    continue
+            cmd: List[str] = [
+                profdata_tool,
+                "merge",
+                "-sparse",
+                "--failure-mode=all",
+                "-j",
+                str(jobs),
+                "-o",
+                str(tmp_out),
+            ]
+            if self.profdata_file.exists():
+                cmd.append(str(self.profdata_file))
+            cmd += [str(p) for p in valid]
 
-                if not tmp_out.exists() or tmp_out.stat().st_size == 0:
-                    logger.warning("merge produced no output for %s", pf.name)
-                    tmp_out.unlink(missing_ok=True)
-                    continue
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
+            except FileNotFoundError:
+                logger.error("llvm-profdata not found: %s", profdata_tool)
+                return 0
+            except Exception as exc:
+                logger.error("llvm-profdata merge error: %s", exc)
+                tmp_out.unlink(missing_ok=True)
+                return 0
 
-                tmp_out.replace(self.profdata_file)
+            if r.returncode != 0:
+                err = (r.stderr or "").strip()[:400]
+                logger.warning(
+                    "merge failed (rc=%d): %s",
+                    r.returncode, err or "(no stderr)",
+                )
+                tmp_out.unlink(missing_ok=True)
+                return 0
+
+            if not tmp_out.exists() or tmp_out.stat().st_size == 0:
+                logger.warning("merge produced no output")
+                tmp_out.unlink(missing_ok=True)
+                return 0
+
+            tmp_out.replace(self.profdata_file)
+            for pf in valid:
                 pf.unlink(missing_ok=True)
-                logger.debug("Merged and removed %s", pf.name)
-                merged_count += 1
 
-            return merged_count
+            return len(valid)
 
     def report(self) -> Optional[Dict[str, int]]:
         if not self.profdata_file.exists():
