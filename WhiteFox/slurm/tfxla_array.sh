@@ -9,13 +9,12 @@
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%A_%a.out
 
-# ---- Array configuration ---------------------------------------------------
-# 49 optimizations (indices 0-48), at most 2 running concurrently.
-#SBATCH --array=0-48%2
+# ---- Array: 2 tasks, each handles half the optimizations sequentially ------
+#SBATCH --array=0-1
 
 set -euo pipefail
 
-OPTIMIZATIONS=(
+BATCH_0=(
     "AllGatherBroadcastReorder"
     "AllGatherCombiner"
     "AllGatherDecomposer"
@@ -41,6 +40,9 @@ OPTIMIZATIONS=(
     "HloCse"
     "HloDce"
     "HloElementTypeConverter"
+)
+
+BATCH_1=(
     "IdentityConvertRemoving"
     "IdentityReshapeRemoving"
     "LoopScheduleLinearizer"
@@ -67,7 +69,10 @@ OPTIMIZATIONS=(
     "ZeroSizedHloElimination"
 )
 
-OPT_NAME="${OPTIMIZATIONS[$SLURM_ARRAY_TASK_ID]}"
+# Select batch based on array task ID
+declare -n MY_BATCH="BATCH_${SLURM_ARRAY_TASK_ID}"
+OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
+BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
 export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-25}"
 export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-6}"
@@ -75,7 +80,7 @@ export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
-export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/per_opt/$OPT_NAME"
+export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
 mkdir -p "$WHITEFOX_LOGGING_DIR"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-$PROJECT_ROOT/slurm}"
@@ -85,7 +90,8 @@ fi
 source "${WHITEFOX_SLURM_ROOT}/container_launch.sh"
 whitefox_maybe_reexec_container "${BASH_SOURCE[0]}" "tfxla_array.sh" "$@"
 
-echo "[$(date)] Array task $SLURM_ARRAY_TASK_ID: optimization=$OPT_NAME"
+echo "[$(date)] Array task $SLURM_ARRAY_TASK_ID ($BATCH_LABEL)"
+echo "[$(date)] Optimizations (${#MY_BATCH[@]}): $OPT_CSV"
 echo "[$(date)] Logging to: $WHITEFOX_LOGGING_DIR"
 echo "[$(date)] Node: $(hostname), Job: ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo
@@ -120,7 +126,7 @@ export HF_HOME="$HF_CACHE_DIR"
 export HUGGINGFACE_HUB_CACHE="$HF_CACHE_DIR"
 export VLLM_CACHE_DIR="$HF_CACHE_DIR"
 
-rm -rf "/tmp/wf_profraw_${OPT_NAME}_*" /tmp/xla_dump 2>/dev/null || true
+rm -rf /tmp/wf_profraw_* /tmp/xla_dump 2>/dev/null || true
 
 export XLA_FLAGS="--xla_dump_to=/tmp/xla_dump"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
@@ -141,6 +147,6 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
-echo "[$(date)] Starting: --only-opt $OPT_NAME"
-poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_NAME"
-echo "[$(date)] Finished: $OPT_NAME (exit $?)"
+echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
+poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV"
+echo "[$(date)] Finished $BATCH_LABEL (exit $?)"
