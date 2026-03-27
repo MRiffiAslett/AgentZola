@@ -8,7 +8,8 @@
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=6
-#SBATCH --mem=48G
+# OOM: raise if needed (WhileLoopInvariantCodeMotion segment peaked ~7.6GB RSS + vLLM + workers).
+#SBATCH --mem=64G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -25,11 +26,10 @@ export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITER
 # Override if needed (e.g. 1 for debugging).
 export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-6}"
 
-# Match test worker pool to allocated CPUs (override per-job if desired).
-# Examples:
-#   sbatch --cpus-per-task=12 --export=ALL,WHITEFOX_PARALLEL_TEST_WORKERS=12 tfxla_slurm.sh
-#   sbatch --export=ALL,WHITEFOX_PARALLEL_TEST_WORKERS=4 tfxla_slurm.sh
-export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-${SLURM_CPUS_PER_TASK:-6}}"
+# Default 4 workers: tying workers to SLURM_CPUS_PER_TASK often OOMs (TF/XLA multiplies
+# processes per worker). Override for large-memory nodes, e.g.:
+#   sbatch --export=ALL,WHITEFOX_PARALLEL_TEST_WORKERS=6 tfxla_slurm.sh
+export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 
 # Apptainer/Singularity: set to 1 if your cluster has it on compute nodes (often not installed). Default: host.
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
