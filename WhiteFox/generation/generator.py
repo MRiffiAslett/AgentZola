@@ -495,7 +495,7 @@ class StarCoderGenerator:
 
                     self.logger.info(
                         "  [%s] it%d sample%d: pass_triggered=%s  "
-                        "triggered_passes=%s  expected=%s",
+                        "triggered_passes=%s  pass_name_aliases=%s",
                         opt_name, iteration, sample_idx,
                         pass_triggered,
                         sorted(result.triggered_passes) if result.triggered_passes else "{}",
