@@ -124,6 +124,11 @@ class StarCoderGenerator:
             os.environ["HF_CACHE"] = self.config.paths.hf_cache
 
     def _get_logging_dir(self) -> Path:
+        override = os.environ.get("WHITEFOX_LOGGING_DIR")
+        if override:
+            p = Path(override)
+            p.mkdir(parents=True, exist_ok=True)
+            return p
         generation_dir = Path(__file__).parent
         whitefox_dir = generation_dir.parent
         return whitefox_dir / "logging"
@@ -185,12 +190,15 @@ class StarCoderGenerator:
             seed=random.randint(0, 10000),
         )
 
+    @staticmethod
+    def _project_root() -> Path:
+        return Path(__file__).resolve().parent.parent
+
     def _resolve_path(self, path: Path) -> Path:
         if path.is_absolute():
             return path
 
-        whitefox_dir = self._get_logging_dir().parent
-        return (whitefox_dir / path).resolve()
+        return (self._project_root() / path).resolve()
 
     def _load_or_init_whitefox_state(self) -> WhiteFoxState:
         optimizations_dir = self._resolve_path(
@@ -658,7 +666,7 @@ class StarCoderGenerator:
                     whitefox_logger.generate_run_summary(self.whitefox_state)
 
     def generate_whitefox(self, only_optimizations: Optional[List[str]] = None) -> None:
-        project_root = self.logging_dir.parent
+        project_root = self._project_root()
 
         # -- LLVM coverage: set env before any subprocess is spawned ----------
         self.coverage = CoverageCollector(self.logging_dir)
