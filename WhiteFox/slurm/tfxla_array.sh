@@ -3,7 +3,7 @@
 #SBATCH --partition=a40
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=6
-#SBATCH --mem=64G
+#SBATCH --mem=28G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
