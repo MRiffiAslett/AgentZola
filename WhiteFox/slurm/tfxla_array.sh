@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=wf_tfxla
 #SBATCH --partition=a40
+#SBATCH --exclude=hopper
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=6
 #SBATCH --mem=28G
