@@ -138,10 +138,17 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-V2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl"
 
 poetry --version || exit 1
-poetry lock
-poetry install --no-interaction
-echo "[$(date)] Force-reinstalling TensorFlow wheel"
-poetry run pip install --force-reinstall --no-deps "$TF_WHEEL"
+
+LOCKFILE="$PROJECT_ROOT/.install.lock"
+(
+  flock -x 200
+  echo "[$(date)] [$BATCH_LABEL] Acquired install lock"
+  poetry lock
+  poetry install --no-interaction
+  echo "[$(date)] Force-reinstalling TensorFlow wheel"
+  poetry run pip install --force-reinstall --no-deps "$TF_WHEEL"
+  echo "[$(date)] [$BATCH_LABEL] Install done, releasing lock"
+) 200>"$LOCKFILE"
 
 if [ ! -f "$CONFIG_PATH" ]; then
   echo "Config not found: $CONFIG_PATH" >&2
