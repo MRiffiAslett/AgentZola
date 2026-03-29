@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=wf_tfxla
 #SBATCH --partition=a40
-#SBATCH --exclude=hopper
+#SBATCH --nodelist=gpuvm33
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=6
-#SBATCH --mem=28G
+#SBATCH --mem=48G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
