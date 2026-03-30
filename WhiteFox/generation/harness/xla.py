@@ -21,7 +21,18 @@ import sys
 import json
 import traceback
 import io
+import os
+import resource
 from pathlib import Path
+
+# Cap virtual memory per test subprocess to avoid OOM-killing the SLURM job.
+# Default 8 GB; override with WHITEFOX_TEST_MEM_LIMIT_GB.
+_mem_limit_gb = int(os.environ.get('WHITEFOX_TEST_MEM_LIMIT_GB', '8'))
+_mem_limit_bytes = _mem_limit_gb * 1024 ** 3
+try:
+    resource.setrlimit(resource.RLIMIT_AS, (_mem_limit_bytes, _mem_limit_bytes))
+except (ValueError, resource.error):
+    pass
 
 stdout_capture = io.StringIO()
 stderr_capture = io.StringIO()

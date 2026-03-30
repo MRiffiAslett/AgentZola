@@ -34,6 +34,10 @@ export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 # Apptainer/Singularity: set to 1 if your cluster has it on compute nodes (often not installed). Default: host.
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 
+# Per-subprocess virtual memory cap (GB). Prevents a single pathological test
+# from OOM-killing the entire SLURM job. 8 GB × 4 workers = 32 GB headroom.
+export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-8}"
+
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm}"
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
   WHITEFOX_SLURM_ROOT="$SLURM_SUBMIT_DIR"
