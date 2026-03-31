@@ -25,14 +25,35 @@ import os
 import resource
 from pathlib import Path
 
-# Cap virtual memory per test subprocess to avoid OOM-killing the SLURM job.
-# Default 8 GB; override with WHITEFOX_TEST_MEM_LIMIT_GB.
 _mem_limit_gb = int(os.environ.get('WHITEFOX_TEST_MEM_LIMIT_GB', '8'))
 _mem_limit_bytes = _mem_limit_gb * 1024 ** 3
+
+# 1. RLIMIT_AS: caps virtual address space.  TF/XLA pre-reserves large
+#    virtual ranges via mmap so this alone isn't reliable, but it's free.
 try:
     resource.setrlimit(resource.RLIMIT_AS, (_mem_limit_bytes, _mem_limit_bytes))
-except (ValueError, resource.error):
+except (ValueError, resource.error) as _e:
+    print(f"WHITEFOX_WARN: RLIMIT_AS failed: {{_e}}", file=sys.stderr)
+
+# 2. oom_score_adj: make the OOM killer target this subprocess first,
+#    protecting the parent generator (vLLM + state).
+try:
+    with open('/proc/self/oom_score_adj', 'w') as _f:
+        _f.write('1000')
+except Exception:
     pass
+
+def _rss_mb():
+    try:
+        with open('/proc/self/status') as _f:
+            for _line in _f:
+                if _line.startswith('VmRSS:'):
+                    return int(_line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return 0.0
+
+_RSS_LIMIT_MB = _mem_limit_gb * 1024
 
 stdout_capture = io.StringIO()
 stderr_capture = io.StringIO()
@@ -150,6 +171,13 @@ try:
         else:
             result["runtime_error_naive"] = error_msg
     
+    _rss_after_naive = _rss_mb()
+    if _rss_after_naive > _RSS_LIMIT_MB:
+        _skip = f"RSS {{_rss_after_naive:.0f}} MB > {{_RSS_LIMIT_MB}} MB after naive; skipping xla+autocluster"
+        result["compile_error_xla"] = _skip
+        result["compile_error_autocluster"] = _skip
+        raise MemoryError(_skip)
+
     try:
         test_code_xla = add_decorator_inline(test_code, "@tf.function(jit_compile=True)")
         test_globals_xla = {{
@@ -177,6 +205,12 @@ try:
         else:
             result["runtime_error_xla"] = error_msg
     
+    _rss_after_xla = _rss_mb()
+    if _rss_after_xla > _RSS_LIMIT_MB:
+        _skip = f"RSS {{_rss_after_xla:.0f}} MB > {{_RSS_LIMIT_MB}} MB after xla; skipping autocluster"
+        result["compile_error_autocluster"] = _skip
+        raise MemoryError(_skip)
+
     try:
         os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
         

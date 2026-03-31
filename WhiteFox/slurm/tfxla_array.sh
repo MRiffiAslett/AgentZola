@@ -10,12 +10,15 @@
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%A_%a.out
 
-# ---- Array: 2 tasks, each handles half the optimizations sequentially ------
-#SBATCH --array=0-1
+# ---- Array: 6 tasks, optimizations distributed dynamically -----------------
+# To change the split, just update the --array range below (and keep N_TASKS
+# in sync).  E.g. --array=0-7 + N_TASKS=8 gives 6 opts/task for 48 total.
+#SBATCH --array=0-5
+N_TASKS=6
 
 set -euo pipefail
 
-BATCH_0=(
+ALL_OPTS=(
     "AllGatherBroadcastReorder"
     "AllGatherCombiner"
     "AllGatherDecomposer"
@@ -41,9 +44,6 @@ BATCH_0=(
     "HloCse"
     "HloDce"
     "HloElementTypeConverter"
-)
-
-BATCH_1=(
     "IdentityConvertRemoving"
     "IdentityReshapeRemoving"
     "LoopScheduleLinearizer"
@@ -70,8 +70,18 @@ BATCH_1=(
     "ZeroSizedHloElimination"
 )
 
-# Select batch based on array task ID
-declare -n MY_BATCH="BATCH_${SLURM_ARRAY_TASK_ID}"
+TOTAL=${#ALL_OPTS[@]}
+PER_TASK=$(( (TOTAL + N_TASKS - 1) / N_TASKS ))
+START=$(( SLURM_ARRAY_TASK_ID * PER_TASK ))
+COUNT=$PER_TASK
+if (( START + COUNT > TOTAL )); then
+    COUNT=$(( TOTAL - START ))
+fi
+if (( COUNT <= 0 )); then
+    echo "[$(date)] Array task $SLURM_ARRAY_TASK_ID: nothing to do (START=$START >= TOTAL=$TOTAL)"
+    exit 0
+fi
+MY_BATCH=("${ALL_OPTS[@]:$START:$COUNT}")
 OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
 BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
