@@ -22,7 +22,10 @@ import json
 import traceback
 import io
 import os
+import re
 import resource
+import threading
+import time
 from pathlib import Path
 
 _mem_limit_gb = int(os.environ.get('WHITEFOX_TEST_MEM_LIMIT_GB', '8'))
@@ -54,6 +57,73 @@ def _rss_mb():
     return 0.0
 
 _RSS_LIMIT_MB = _mem_limit_gb * 1024
+
+# 3. RSS watchdog: polls RSS every 0.5s and hard-kills if over limit.
+#    RLIMIT_AS is unreliable for mmap-backed TF/XLA allocations and the
+#    checkpoint-only RSS checks run too late to prevent the OOM killer
+#    from cascading into the parent (vLLM + generator state).
+_watchdog_stop = threading.Event()
+
+def _rss_watchdog():
+    while not _watchdog_stop.is_set():
+        rss = _rss_mb()
+        if rss > _RSS_LIMIT_MB:
+            print(
+                f"WHITEFOX_OOM_WATCHDOG: RSS {{rss:.0f}} MB > {{_RSS_LIMIT_MB}} MB — killing subprocess",
+                file=sys.stderr, flush=True,
+            )
+            os._exit(137)
+        _watchdog_stop.wait(0.5)
+
+_watchdog_thread = threading.Thread(target=_rss_watchdog, daemon=True)
+_watchdog_thread.start()
+
+# 4. Static tensor-size pre-check: estimate total bytes from array/tensor
+#    creation calls in the generated code and reject before exec().
+_DTYPE_BYTES = {{
+    'float64': 8, 'float32': 4, 'float16': 2, 'bfloat16': 2,
+    'int64': 8, 'int32': 4, 'int16': 2, 'int8': 1, 'uint8': 1,
+    'bool': 1, 'complex64': 8, 'complex128': 16,
+    'tf.float64': 8, 'tf.float32': 4, 'tf.float16': 2, 'tf.bfloat16': 2,
+    'tf.int64': 8, 'tf.int32': 4, 'tf.int16': 2, 'tf.int8': 1, 'tf.uint8': 1,
+    'tf.bool': 1, 'tf.complex64': 8, 'tf.complex128': 16,
+    'np.float64': 8, 'np.float32': 4, 'np.float16': 2,
+    'np.int64': 8, 'np.int32': 4, 'np.int16': 2, 'np.int8': 1, 'np.uint8': 1,
+}}
+# Pattern A: shape in brackets/parens — tf.zeros([d,d]) / np.ones((d,d))
+_TENSOR_SHAPE_RE = re.compile(
+    r'(?:tf\\.(?:zeros|ones|random\\.(?:normal|uniform|truncated_normal)|fill|constant)'
+    r'|np\\.(?:zeros|ones|random\\.(?:randn?|uniform|normal)|full|empty))'
+    r'\\s*\\('
+    r'[^)]*?'
+    r'(?:shape\\s*=\\s*|size\\s*=\\s*)?'
+    r'(?:\\[|\\()'
+    r'([\\d,\\s]+)'
+    r'(?:\\]|\\))',
+)
+# Pattern B: bare positional args — np.random.randn(d, d)
+_TENSOR_BARE_RE = re.compile(
+    r'np\\.random\\.(?:randn?|uniform|normal|standard_normal)'
+    r'\\s*\\(\\s*'
+    r'([\\d,\\s]+)'
+    r'\\s*\\)',
+)
+
+def _estimate_tensor_bytes(code_str):
+    total = 0
+    for pat in (_TENSOR_SHAPE_RE, _TENSOR_BARE_RE):
+        for m in pat.finditer(code_str):
+            try:
+                dims = [int(d.strip()) for d in m.group(1).split(',') if d.strip()]
+                numel = 1
+                for d in dims:
+                    numel *= d
+                total += numel * 4
+            except (ValueError, OverflowError):
+                total += _mem_limit_bytes
+    return total
+
+_MAX_STATIC_BYTES = _mem_limit_bytes // 2
 
 stdout_capture = io.StringIO()
 stderr_capture = io.StringIO()
@@ -144,6 +214,17 @@ try:
     test_code = {test_code_repr}
     model_key = 'm'
     input_data_key = 'input_data'
+
+    _est_bytes = _estimate_tensor_bytes(test_code)
+    if _est_bytes > _MAX_STATIC_BYTES:
+        _msg = (
+            f"Static pre-check: estimated {{_est_bytes / 1e9:.1f}} GB tensor allocations "
+            f"exceeds {{_MAX_STATIC_BYTES / 1e9:.1f}} GB limit — skipping test"
+        )
+        result["compile_error_naive"] = _msg
+        result["compile_error_xla"] = _msg
+        result["compile_error_autocluster"] = _msg
+        raise MemoryError(_msg)
     
     try:
         test_globals_naive = {{
@@ -259,6 +340,7 @@ except Exception as e:
         result["compile_error_autocluster"] = error_msg
 
 finally:
+    _watchdog_stop.set()
     sys.stdout.flush()
     sys.stderr.flush()
     result["log_text"] = stdout_capture.getvalue() + stderr_capture.getvalue()
