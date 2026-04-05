@@ -29,14 +29,16 @@ export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-6}"
 # Default 4 workers: tying workers to SLURM_CPUS_PER_TASK often OOMs (TF/XLA multiplies
 # processes per worker). Override for large-memory nodes, e.g.:
 #   sbatch --export=ALL,WHITEFOX_PARALLEL_TEST_WORKERS=6 tfxla_slurm.sh
-export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
+export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-3}"
 
 # Apptainer/Singularity: set to 1 if your cluster has it on compute nodes (often not installed). Default: host.
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 
-# Per-subprocess virtual memory cap (GB). Prevents a single pathological test
-# from OOM-killing the entire SLURM job. 8 GB × 4 workers = 32 GB headroom.
-export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-8}"
+# Per-subprocess memory cap (GB). RLIMIT_AS = limit+4 GB per subprocess
+# (TF mmap overhead).  Budget: 3 workers × ~10 GB virtual = 30 GB.
+export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
+export WHITEFOX_MERGE_MEM_LIMIT_GB="${WHITEFOX_MERGE_MEM_LIMIT_GB:-8}"
+export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-3}"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm}"
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
@@ -95,7 +97,8 @@ export VLLM_CACHE_DIR="$HF_CACHE_DIR"
 
 mkdir -p "$PROJECT_ROOT/output"
 
-# Clean up leftover profraw files from previous crashed runs
+# Profraw now lives under WHITEFOX_LOGGING_DIR (disk-backed), not /tmp.
+# Clean any leftover tmpfs profraw from older runs.
 rm -rf /tmp/wf_profraw_* /tmp/xla_dump 2>/dev/null || true
 echo "[$(date)] /tmp free: $(df -h /tmp | tail -1 | awk '{print $4}')"
 

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import resource
 import subprocess
 import sys
 from abc import ABC, abstractmethod
@@ -10,6 +11,30 @@ from typing import Dict, List, Optional
 from domain.harness import ExecutionResult
 
 logger = logging.getLogger(__name__)
+
+
+def _child_preexec() -> None:
+    """preexec_fn for test subprocesses: set oom_score_adj and RLIMIT_AS.
+
+    Runs after fork() but before exec(), so settings apply to the new
+    Python interpreter reliably (unlike doing it inside the wrapper script
+    which runs *after* the interpreter has already loaded libc/libpython).
+    """
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write("1000")
+    except Exception:
+        pass
+    mem_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8"))
+    # Allow 3x virtual headroom: TF's shared libraries mmap ~4-6 GB of
+    # virtual address space on load; RLIMIT_AS must be large enough for
+    # that + the actual tensor allocations, but small enough to block a
+    # 40 GB malloc before the OOM killer fires.
+    rlimit_bytes = mem_gb * 3 * (1024 ** 3)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
+    except Exception:
+        pass
 
 RANDOM_SEED = 42
 
@@ -78,6 +103,7 @@ class TestHarness(ABC):
                 text=True,
                 timeout=timeout,
                 env=env,
+                preexec_fn=_child_preexec,
             )
 
             output = process.stdout + process.stderr
