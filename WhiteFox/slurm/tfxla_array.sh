@@ -85,13 +85,20 @@ MY_BATCH=("${ALL_OPTS[@]:$START:$COUNT}")
 OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
 BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
-export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-25}"
-export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-6}"
-export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
+# Merge profraw every N iterations. Each test writes ~950 MB profraw; with
+# 10 tests/iter × 5 iters = 50 files (47 GB) between merges.  After each
+# successful merge the raw files are deleted, preventing unbounded growth.
+export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-5}"
+export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-2}"
+export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-3}"
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
-# Per-subprocess virtual memory cap (GB). Prevents a single pathological test
-# from OOM-killing the entire SLURM job. 8 GB × 4 workers = 32 GB headroom.
-export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-8}"
+# Per-subprocess memory cap (GB). RLIMIT_AS = limit+4 GB per subprocess
+# (TF mmap overhead).  Budget: 3 workers × ~10 GB virtual = 30 GB for
+# tests, ~6 GB vLLM CPU, ~8 GB for coverage merge.  Total ≈ 44 GB / 48 GB.
+export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
+export WHITEFOX_MERGE_MEM_LIMIT_GB="${WHITEFOX_MERGE_MEM_LIMIT_GB:-8}"
+# Each profraw is ~950 MB; 3 × 950 MB input ≈ 2.8 GB, well within 8 GB limit.
+export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-3}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
@@ -140,9 +147,14 @@ export HF_HOME="$HF_CACHE_DIR"
 export HUGGINGFACE_HUB_CACHE="$HF_CACHE_DIR"
 export VLLM_CACHE_DIR="$HF_CACHE_DIR"
 
-rm -rf /tmp/wf_profraw_* /tmp/xla_dump 2>/dev/null || true
+# Per-task XLA dump dir (avoid cross-task deletion in array jobs).
+XLA_DUMP_DIR="/tmp/xla_dump_${SLURM_ARRAY_JOB_ID:-$$}_${SLURM_ARRAY_TASK_ID:-0}"
+rm -rf "$XLA_DUMP_DIR" 2>/dev/null || true
+# Profraw now lives under WHITEFOX_LOGGING_DIR (disk-backed), not /tmp.
+# Clean any leftover tmpfs profraw from older runs.
+rm -rf /tmp/wf_profraw_* 2>/dev/null || true
 
-export XLA_FLAGS="--xla_dump_to=/tmp/xla_dump"
+export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -170,4 +182,89 @@ fi
 
 echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
 poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV"
-echo "[$(date)] Finished $BATCH_LABEL (exit $?)"
+GEN_EXIT=$?
+echo "[$(date)] Finished $BATCH_LABEL (exit $GEN_EXIT)"
+
+# ---- Aggregate batch summaries into a single combined report ---------------
+echo "[$(date)] Aggregating batch summaries …"
+poetry run python -c "
+import re, sys
+from pathlib import Path
+from collections import defaultdict
+
+logging_root = Path('$PROJECT_ROOT') / 'logging'
+combined_summary = logging_root / 'run_summary_combined.log'
+combined_coverage = logging_root / 'coverage_combined.log'
+
+# --- Aggregate run summaries ---
+totals = defaultdict(lambda: defaultdict(int))
+header_line = ''
+
+for summary in sorted(logging_root.glob('batch*/run_summary_detailed.log')):
+    for line in summary.read_text().splitlines():
+        if line.startswith(('=', '-', 'Optimization', 'WHITEFOX', '')):
+            if line.startswith('Optimization'):
+                header_line = line
+            continue
+        parts = [p.strip() for p in line.split('|')]
+        if len(parts) < 3:
+            continue
+        opt_name = parts[0]
+        if opt_name == 'TOTAL':
+            continue
+        try:
+            values = [int(v) for v in parts[1:]]
+        except ValueError:
+            continue
+        for i, v in enumerate(values):
+            totals[opt_name][i] += v
+
+if totals:
+    col_names = header_line.split('|')[1:] if header_line else ['Created', 'Triggered']
+    with open(combined_summary, 'w') as f:
+        sep = '=' * 95
+        dash = '-' * 95
+        f.write(f'{sep}\nWHITEFOX COMBINED RUN SUMMARY (all batches)\n{sep}\n\n')
+        f.write(header_line + '\n' if header_line else '')
+        f.write(dash + '\n\n')
+        grand = defaultdict(int)
+        for opt_name in sorted(totals):
+            vals = totals[opt_name]
+            f.write(f'{opt_name:40s}')
+            for i in range(max(len(v) for v in totals.values())):
+                v = vals.get(i, 0)
+                grand[i] += v
+                f.write(f' | {v:7d}')
+            f.write('\n')
+        f.write(dash + '\n')
+        f.write(f'{\"TOTAL\":40s}')
+        for i in range(len(grand)):
+            f.write(f' | {grand[i]:7d}')
+        f.write('\n' + sep + '\n')
+    print(f'Combined run summary: {combined_summary}')
+else:
+    print('No batch summaries found to aggregate.')
+
+# --- Aggregate coverage reports ---
+cov_lines = []
+for batch_dir in sorted(logging_root.glob('batch*')):
+    cov_file = batch_dir / 'coverage_report.log'
+    if not cov_file.exists():
+        continue
+    text = cov_file.read_text().strip()
+    if 'UNAVAILABLE' in text and len(text) < 200:
+        cov_lines.append(f'--- {batch_dir.name}: coverage unavailable ---')
+    else:
+        cov_lines.append(f'--- {batch_dir.name} ---')
+        cov_lines.append(text)
+    cov_lines.append('')
+
+if cov_lines:
+    sep = '=' * 60
+    with open(combined_coverage, 'w') as f:
+        f.write(f'{sep}\nCOMBINED COVERAGE REPORT (all batches)\n{sep}\n\n')
+        f.write('\n'.join(cov_lines) + '\n')
+    print(f'Combined coverage: {combined_coverage}')
+" 2>&1 || echo "[$(date)] Aggregation failed (non-fatal)"
+
+exit $GEN_EXIT

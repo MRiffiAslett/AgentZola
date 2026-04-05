@@ -111,7 +111,20 @@ class CoverageCollector:
     def __init__(self, logging_dir: Path):
         self.cov_dir = logging_dir / "coverage"
         self.cov_dir.mkdir(parents=True, exist_ok=True)
-        self.profraw_dir = Path(tempfile.mkdtemp(prefix="wf_profraw_", dir="/tmp"))
+
+        # Profraw storage: default to a subdir of logging_dir (disk-backed).
+        # Using /tmp is dangerous on SLURM clusters where /tmp is often tmpfs —
+        # each ~950 MB profraw file eats cgroup RAM, causing OOM.
+        # Override with WHITEFOX_PROFRAW_DIR if you know /tmp is disk-backed.
+        profraw_base = os.environ.get("WHITEFOX_PROFRAW_DIR")
+        if profraw_base:
+            self.profraw_dir = Path(
+                tempfile.mkdtemp(prefix="wf_profraw_", dir=profraw_base)
+            )
+        else:
+            self.profraw_dir = logging_dir / "profraw"
+            self.profraw_dir.mkdir(parents=True, exist_ok=True)
+
         self.profdata_file = self.cov_dir / "merged.profdata"
         self.report_file = logging_dir / "coverage_report.log"
         self.diag_file = logging_dir / "coverage_diagnostics.log"
@@ -131,26 +144,45 @@ class CoverageCollector:
         )
 
     def env_vars(self) -> dict:
+        if getattr(self, "_disabled", False):
+            return {"LLVM_PROFILE_FILE": "/dev/null"}
         return {"LLVM_PROFILE_FILE": str(self.profraw_dir / "wf_%p.profraw")}
 
     def verify(self) -> None:
-        """Quick check that TF writes profraw and llvm-profdata can read it."""
+        """Quick check that TF writes profraw and llvm-profdata can read it.
+
+        Tests profraw on the actual profraw_dir (which may be NFS-backed).
+        If profraw cannot be written there, falls back to /dev/null and
+        disables coverage to avoid silent data loss.
+        """
         lines: List[str] = ["COVERAGE DIAGNOSTICS", "=" * 50]
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
-            probe = str(Path(tmp) / "probe_%p.profraw")
-            env = os.environ.copy()
-            env["LLVM_PROFILE_FILE"] = probe
-            subprocess.run(
-                [sys.executable, "-c", _VERIFY_SCRIPT],
-                capture_output=True, text=True, env=env, timeout=120,
+        lines.append(f"profraw_dir: {self.profraw_dir}")
+
+        probe = str(self.profraw_dir / "probe_%p.profraw")
+        env = os.environ.copy()
+        env["LLVM_PROFILE_FILE"] = probe
+        subprocess.run(
+            [sys.executable, "-c", _VERIFY_SCRIPT],
+            capture_output=True, text=True, env=env, timeout=120,
+        )
+        profraw_files = list(self.profraw_dir.glob("probe_*.profraw"))
+        lines.append(f"profraw files from probe: {len(profraw_files)}")
+        if profraw_files:
+            t = self._select_profdata(profraw_files[0])
+            lines.append(f"llvm-profdata: {t or 'NOT FOUND'}")
+            for pf in profraw_files:
+                pf.unlink(missing_ok=True)
+        else:
+            lines.append(
+                "WARNING: No profraw written to profraw_dir. "
+                "Coverage disabled (LLVM_PROFILE_FILE=/dev/null)."
             )
-            profraw_files = list(Path(tmp).glob("*.profraw"))
-            lines.append(f"profraw files from probe: {len(profraw_files)}")
-            if profraw_files:
-                t = self._select_profdata(profraw_files[0])
-                lines.append(f"llvm-profdata: {t or 'NOT FOUND'}")
-            else:
-                lines.append("TF wheel may not be instrumented (no profraw).")
+            logger.warning(
+                "Profraw probe failed on %s — disabling coverage. "
+                "Set WHITEFOX_PROFRAW_DIR to a writable local dir if needed.",
+                self.profraw_dir,
+            )
+            self._disabled = True
 
         self.diag_file.write_text("\n".join(lines) + "\n")
         logger.info("Coverage diagnostics written to %s", self.diag_file)
@@ -231,8 +263,93 @@ class CoverageCollector:
         except Exception:
             return False
 
+    @staticmethod
+    def _merge_mem_limit_bytes() -> int:
+        """Memory limit for each llvm-profdata merge subprocess (bytes).
+
+        Defaults to 8 GB.  Override with WHITEFOX_MERGE_MEM_LIMIT_GB.
+        """
+        try:
+            gb = int(os.environ.get("WHITEFOX_MERGE_MEM_LIMIT_GB", "8"))
+        except ValueError:
+            gb = 8
+        return max(1, gb) * 1024 ** 3
+
+    @staticmethod
+    def _merge_batch_size() -> int:
+        """Max profraw files per merge invocation.
+
+        Each profraw can be ~1 GB; merging too many at once OOM-kills
+        the llvm-profdata process.  Default 6, override with
+        WHITEFOX_MERGE_BATCH_SIZE.
+        """
+        try:
+            return max(1, int(os.environ.get("WHITEFOX_MERGE_BATCH_SIZE", "6")))
+        except ValueError:
+            return 6
+
+    def _run_merge_cmd(
+        self, cmd: List[str], tmp_out: Path, *, timeout: int = 600,
+    ) -> bool:
+        """Run a single llvm-profdata merge with RLIMIT_AS protection."""
+        import resource as _resource
+
+        mem_limit = self._merge_mem_limit_bytes()
+
+        def _preexec() -> None:
+            try:
+                _resource.setrlimit(
+                    _resource.RLIMIT_AS, (mem_limit, mem_limit)
+                )
+            except Exception:
+                pass
+            try:
+                with open("/proc/self/oom_score_adj", "w") as f:
+                    f.write("1000")
+            except Exception:
+                pass
+
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                preexec_fn=_preexec,
+            )
+        except FileNotFoundError:
+            logger.error("llvm-profdata not found: %s", cmd[0])
+            return False
+        except subprocess.TimeoutExpired:
+            logger.warning("merge timed out after %ds", timeout)
+            tmp_out.unlink(missing_ok=True)
+            return False
+        except Exception as exc:
+            logger.error("llvm-profdata merge error: %s", exc)
+            tmp_out.unlink(missing_ok=True)
+            return False
+
+        if r.returncode != 0:
+            err = (r.stderr or "").strip()[:400]
+            logger.warning(
+                "merge failed (rc=%d): %s",
+                r.returncode, err or "(no stderr)",
+            )
+            tmp_out.unlink(missing_ok=True)
+            return False
+
+        if not tmp_out.exists() or tmp_out.stat().st_size == 0:
+            logger.warning("merge produced no output")
+            tmp_out.unlink(missing_ok=True)
+            return False
+
+        return True
+
     def merge_pending(self) -> int:
         """Merge pending .profraw into merged.profdata, delete raw on success.
+
+        Processes profraw files in batches to avoid OOM-killing the merge
+        process (each profraw can be ~1 GB; merging 30+ at once is fatal).
 
         Returns:
             Number of profraw files successfully merged.
@@ -247,8 +364,6 @@ class CoverageCollector:
             profdata_tool = self._profdata_tool
             if not profdata_tool:
                 return 0
-
-            tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
 
             valid: List[Path] = []
             for pf in pending:
@@ -266,10 +381,6 @@ class CoverageCollector:
             if not valid:
                 return 0
 
-            tmp_out.unlink(missing_ok=True)
-
-            # llvm-profdata merge can parallelize work internally; let it use CPUs.
-            # Default: min(8, cpu_count). Override via WHITEFOX_LLVM_PROFDATA_JOBS.
             jobs_env = os.environ.get("WHITEFOX_LLVM_PROFDATA_JOBS")
             if jobs_env:
                 try:
@@ -277,52 +388,49 @@ class CoverageCollector:
                 except ValueError:
                     jobs = 1
             else:
-                jobs = min(8, multiprocessing.cpu_count() or 1)
+                jobs = min(4, multiprocessing.cpu_count() or 1)
             jobs = max(1, jobs)
 
-            cmd: List[str] = [
-                profdata_tool,
-                "merge",
-                "-sparse",
-                "--failure-mode=all",
-                "-j",
-                str(jobs),
-                "-o",
-                str(tmp_out),
-            ]
-            if self.profdata_file.exists():
-                cmd.append(str(self.profdata_file))
-            cmd += [str(p) for p in valid]
+            batch_size = self._merge_batch_size()
+            total_merged = 0
+            tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
 
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=None)
-            except FileNotFoundError:
-                logger.error("llvm-profdata not found: %s", profdata_tool)
-                return 0
-            except Exception as exc:
-                logger.error("llvm-profdata merge error: %s", exc)
+            for batch_start in range(0, len(valid), batch_size):
+                batch = valid[batch_start : batch_start + batch_size]
                 tmp_out.unlink(missing_ok=True)
-                return 0
 
-            if r.returncode != 0:
-                err = (r.stderr or "").strip()[:400]
-                logger.warning(
-                    "merge failed (rc=%d): %s",
-                    r.returncode, err or "(no stderr)",
+                cmd: List[str] = [
+                    profdata_tool,
+                    "merge",
+                    "-sparse",
+                    "--failure-mode=all",
+                    "-j",
+                    str(jobs),
+                    "-o",
+                    str(tmp_out),
+                ]
+                if self.profdata_file.exists():
+                    cmd.append(str(self.profdata_file))
+                cmd += [str(p) for p in batch]
+
+                if not self._run_merge_cmd(cmd, tmp_out):
+                    logger.warning(
+                        "Batch merge failed (%d files at offset %d); "
+                        "stopping merge early (%d of %d merged so far)",
+                        len(batch), batch_start, total_merged, len(valid),
+                    )
+                    break
+
+                tmp_out.replace(self.profdata_file)
+                for pf in batch:
+                    pf.unlink(missing_ok=True)
+                total_merged += len(batch)
+                logger.info(
+                    "Merged batch of %d profraw files (%d/%d done)",
+                    len(batch), total_merged, len(valid),
                 )
-                tmp_out.unlink(missing_ok=True)
-                return 0
 
-            if not tmp_out.exists() or tmp_out.stat().st_size == 0:
-                logger.warning("merge produced no output")
-                tmp_out.unlink(missing_ok=True)
-                return 0
-
-            tmp_out.replace(self.profdata_file)
-            for pf in valid:
-                pf.unlink(missing_ok=True)
-
-            return len(valid)
+            return total_merged
 
     def report(self) -> Optional[Dict[str, int]]:
         if not self.profdata_file.exists():
@@ -446,12 +554,10 @@ class CoverageCollector:
         return result
 
     def _write_coverage_unavailable(self, detail: str) -> None:
+        sep = "=" * 60
         try:
             self.report_file.write_text(
-                "=" * 60 + "\n"
-                "COVERAGE UNAVAILABLE\n"
-                "=" * 60 + "\n\n"
-                f"{detail}\n"
+                f"{sep}\nCOVERAGE UNAVAILABLE\n{sep}\n\n{detail}\n"
             )
         except OSError as exc:
             logger.warning("Could not write coverage stub: %s", exc)

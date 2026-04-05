@@ -31,51 +31,74 @@ from pathlib import Path
 _mem_limit_gb = int(os.environ.get('WHITEFOX_TEST_MEM_LIMIT_GB', '8'))
 _mem_limit_bytes = _mem_limit_gb * 1024 ** 3
 
-# 1. RLIMIT_AS: caps virtual address space.  TF/XLA pre-reserves large
-#    virtual ranges via mmap so this alone isn't reliable, but it's free.
+# 1. RLIMIT_AS: cap virtual address space.  Add 4 GB headroom for TF/XLA
+#    shared libraries (~5-6 GB of mmap'd .so files) so TF can load while
+#    still blocking pathological allocations (e.g. 40 GB tensor).
+#    preexec_fn sets a coarser outer limit; this tightens it after exec.
+_rlimit_as_bytes = (_mem_limit_gb + 4) * 1024 ** 3
 try:
-    resource.setrlimit(resource.RLIMIT_AS, (_mem_limit_bytes, _mem_limit_bytes))
-except (ValueError, resource.error) as _e:
-    print(f"WHITEFOX_WARN: RLIMIT_AS failed: {{_e}}", file=sys.stderr)
+    resource.setrlimit(resource.RLIMIT_AS, (_rlimit_as_bytes, _rlimit_as_bytes))
+except (ValueError, resource.error):
+    pass
+try:
+    resource.setrlimit(resource.RLIMIT_DATA, (_mem_limit_bytes, _mem_limit_bytes))
+except (ValueError, resource.error):
+    pass
 
 # 2. oom_score_adj: make the OOM killer target this subprocess first,
-#    protecting the parent generator (vLLM + state).
+#    protecting the parent generator (vLLM + state).  Also set in
+#    preexec_fn, but repeat here in case the wrapper was launched
+#    without preexec_fn.
 try:
     with open('/proc/self/oom_score_adj', 'w') as _f:
         _f.write('1000')
 except Exception:
     pass
 
-def _rss_mb():
+def _mem_mb():
+    rss = 0.0
+    vsz = 0.0
     try:
         with open('/proc/self/status') as _f:
             for _line in _f:
                 if _line.startswith('VmRSS:'):
-                    return int(_line.split()[1]) / 1024.0
+                    rss = int(_line.split()[1]) / 1024.0
+                elif _line.startswith('VmSize:'):
+                    vsz = int(_line.split()[1]) / 1024.0
     except Exception:
         pass
-    return 0.0
+    return rss, vsz
+
+def _rss_mb():
+    return _mem_mb()[0]
 
 _RSS_LIMIT_MB = _mem_limit_gb * 1024
+_VSZ_LIMIT_MB = _mem_limit_gb * 3 * 1024
 
-# 3. RSS watchdog: polls RSS every 0.5s and hard-kills if over limit.
-#    RLIMIT_AS is unreliable for mmap-backed TF/XLA allocations and the
-#    checkpoint-only RSS checks run too late to prevent the OOM killer
-#    from cascading into the parent (vLLM + generator state).
+# 3. Memory watchdog: polls RSS/VmSize every 0.1s and hard-kills if over limit.
+#    RLIMIT_AS blocks new virtual mappings but existing ones (TF runtime
+#    buffers, XLA temp arenas) can still dirty pages and grow RSS.  The
+#    watchdog catches RSS growth that RLIMIT_AS cannot prevent.
 _watchdog_stop = threading.Event()
 
-def _rss_watchdog():
+def _mem_watchdog():
     while not _watchdog_stop.is_set():
-        rss = _rss_mb()
+        rss, vsz = _mem_mb()
         if rss > _RSS_LIMIT_MB:
             print(
                 f"WHITEFOX_OOM_WATCHDOG: RSS {{rss:.0f}} MB > {{_RSS_LIMIT_MB}} MB — killing subprocess",
                 file=sys.stderr, flush=True,
             )
             os._exit(137)
-        _watchdog_stop.wait(0.5)
+        if vsz > _VSZ_LIMIT_MB:
+            print(
+                f"WHITEFOX_OOM_WATCHDOG: VmSize {{vsz:.0f}} MB > {{_VSZ_LIMIT_MB}} MB — killing subprocess",
+                file=sys.stderr, flush=True,
+            )
+            os._exit(137)
+        _watchdog_stop.wait(0.1)
 
-_watchdog_thread = threading.Thread(target=_rss_watchdog, daemon=True)
+_watchdog_thread = threading.Thread(target=_mem_watchdog, daemon=True)
 _watchdog_thread.start()
 
 # 4. Static tensor-size pre-check: estimate total bytes from array/tensor
