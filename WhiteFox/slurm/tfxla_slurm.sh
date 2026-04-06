@@ -37,7 +37,6 @@ export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 # Per-subprocess memory cap (GB). RLIMIT_AS = limit+4 GB per subprocess
 # (TF mmap overhead).  Budget: 3 workers × ~10 GB virtual = 30 GB.
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
-export WHITEFOX_MERGE_MEM_LIMIT_GB="${WHITEFOX_MERGE_MEM_LIMIT_GB:-8}"
 export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-3}"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm}"

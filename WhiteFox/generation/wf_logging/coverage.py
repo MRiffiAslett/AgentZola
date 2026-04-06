@@ -264,18 +264,6 @@ class CoverageCollector:
             return False
 
     @staticmethod
-    def _merge_mem_limit_bytes() -> int:
-        """Memory limit for each llvm-profdata merge subprocess (bytes).
-
-        Defaults to 8 GB.  Override with WHITEFOX_MERGE_MEM_LIMIT_GB.
-        """
-        try:
-            gb = int(os.environ.get("WHITEFOX_MERGE_MEM_LIMIT_GB", "8"))
-        except ValueError:
-            gb = 8
-        return max(1, gb) * 1024 ** 3
-
-    @staticmethod
     def _merge_batch_size() -> int:
         """Max profraw files per merge invocation.
 
@@ -291,18 +279,14 @@ class CoverageCollector:
     def _run_merge_cmd(
         self, cmd: List[str], tmp_out: Path, *, timeout: int = 600,
     ) -> bool:
-        """Run a single llvm-profdata merge with RLIMIT_AS protection."""
-        import resource as _resource
+        """Run a single llvm-profdata merge with oom_score_adj protection.
 
-        mem_limit = self._merge_mem_limit_bytes()
-
+        No RLIMIT_AS: llvm-profdata's internal data structures for large
+        instrumented binaries (like TF ~950 MB profraw) need far more
+        virtual memory than the raw file size.  oom_score_adj=1000 is
+        sufficient to protect the parent from an OOM cascade.
+        """
         def _preexec() -> None:
-            try:
-                _resource.setrlimit(
-                    _resource.RLIMIT_AS, (mem_limit, mem_limit)
-                )
-            except Exception:
-                pass
             try:
                 with open("/proc/self/oom_score_adj", "w") as f:
                     f.write("1000")
