@@ -96,8 +96,7 @@ export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 # (TF mmap overhead).  Budget: 3 workers × ~10 GB virtual = 30 GB for
 # tests, ~6 GB vLLM CPU, ~8 GB for coverage merge.  Total ≈ 44 GB / 48 GB.
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
-export WHITEFOX_MERGE_MEM_LIMIT_GB="${WHITEFOX_MERGE_MEM_LIMIT_GB:-8}"
-# Each profraw is ~950 MB; 3 × 950 MB input ≈ 2.8 GB, well within 8 GB limit.
+# Each profraw is ~950 MB; keep batches small so llvm-profdata doesn't OOM.
 export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-3}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
