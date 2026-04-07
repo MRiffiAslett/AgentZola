@@ -209,7 +209,9 @@ header_line = ''
 
 for summary in sorted(logging_root.glob('batch*/run_summary_detailed.log')):
     for line in summary.read_text().splitlines():
-        if line.startswith(('=', '-', 'Optimization', 'WHITEFOX', '')):
+        if not line.strip():
+            continue
+        if line.startswith(('=', '-', 'Optimization', 'WHITEFOX')):
             if line.startswith('Optimization'):
                 header_line = line
             continue
