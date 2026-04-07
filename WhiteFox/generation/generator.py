@@ -364,6 +364,10 @@ class StarCoderGenerator:
         )
         coverage_merge_every_iters = max(1, coverage_merge_every_iters)
 
+        early_stop_iters = int(
+            os.environ.get("WHITEFOX_EARLY_STOP_ITERS", "20")
+        )
+
         for iteration in range(max_iterations):
             self.logger.info(
                 f"  Iteration {iteration + 1}/{max_iterations} for {opt_name}"
@@ -603,6 +607,25 @@ class StarCoderGenerator:
             with self._state_lock:
                 self.whitefox_state.save(self._get_state_file_path())
 
+            if (
+                early_stop_iters > 0
+                and iteration + 1 >= early_stop_iters
+                and not opt_state.triggering_tests
+            ):
+                self.logger.info(
+                    "  [%s] Early stopping: 0 triggering tests after %d "
+                    "iterations (threshold=%d). Skipping remaining %d "
+                    "iterations.",
+                    opt_name, iteration + 1, early_stop_iters,
+                    max_iterations - iteration - 1,
+                )
+                t_merge0 = time.monotonic()
+                n = self.coverage.merge_pending()
+                t_merge1 = time.monotonic()
+                opt_coverage_merge_time_s += t_merge1 - t_merge0
+                opt_coverage_merged_profraw += int(n or 0)
+                break
+
         # Attach extra timing data to the profiler segment for this optimization.
         if hasattr(self, "profiler") and self.profiler is not None:
             self.profiler.set_optimization_metadata(
@@ -729,7 +752,7 @@ class StarCoderGenerator:
 
         opt_states_to_process = [
             opt_state
-            for opt_state in reversed(list(self.whitefox_state.optimizations.values()))
+            for opt_state in self.whitefox_state.optimizations.values()
             if not only_optimizations
             or opt_state.spec.internal_name in only_optimizations
         ]

@@ -86,9 +86,10 @@ OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
 BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
 # Merge profraw every N iterations. Each test writes ~950 MB profraw; with
-# 10 tests/iter × 5 iters = 50 files (47 GB) between merges.  After each
+# 10 tests/iter × 25 iters ≈ 250 files between merges.  After each
 # successful merge the raw files are deleted, preventing unbounded growth.
-export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-5}"
+# Profraw lives on NFS (disk-backed), so accumulation is safe up to ~230 GB.
+export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-25}"
 export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-2}"
 export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-3}"
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
@@ -96,8 +97,15 @@ export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 # (TF mmap overhead).  Budget: 3 workers × ~10 GB virtual = 30 GB for
 # tests, ~6 GB vLLM CPU, ~8 GB for coverage merge.  Total ≈ 44 GB / 48 GB.
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
-# Each profraw is ~950 MB; keep batches small so llvm-profdata doesn't OOM.
-export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-3}"
+# Each profraw is ~950 MB.  During merge, no test workers are running, so
+# ~40 GB of RAM is available.  Batch of 12 × 950 MB ≈ 11 GB — well within
+# headroom.  Larger batches mean fewer llvm-profdata invocations and less
+# merge overhead (previously ~50% of wall time at batch_size=3).
+export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-12}"
+# Early-stop optimizations that produce 0 triggering tests after this many
+# iterations.  Collective ops (AllGather*, AllReduce*, AsyncCollective*, etc.)
+# require multi-GPU and will never trigger on a single-GPU node.
+export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
