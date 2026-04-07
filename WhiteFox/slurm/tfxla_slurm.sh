@@ -37,7 +37,11 @@ export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 # Per-subprocess memory cap (GB). RLIMIT_AS = limit+4 GB per subprocess
 # (TF mmap overhead).  Budget: 3 workers × ~10 GB virtual = 30 GB.
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
-export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-3}"
+export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-12}"
+# Early-stop optimizations that produce 0 triggering tests after this many
+# iterations.  Collective ops need multi-GPU and will never trigger on
+# a single-GPU node.
+export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm}"
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
