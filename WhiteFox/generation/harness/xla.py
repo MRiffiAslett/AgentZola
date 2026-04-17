@@ -38,8 +38,15 @@ _mem_limit_bytes = _mem_limit_gb * 1024 ** 3
 _rlimit_as_bytes = (_mem_limit_gb + 4) * 1024 ** 3
 try:
     resource.setrlimit(resource.RLIMIT_AS, (_rlimit_as_bytes, _rlimit_as_bytes))
-except (ValueError, resource.error):
-    pass
+except (ValueError, resource.error) as _e:
+    print(f"WHITEFOX_WRAPPER: RLIMIT_AS={{_rlimit_as_bytes}} FAILED: {{_e}}", file=sys.stderr, flush=True)
+_actual_soft, _actual_hard = resource.getrlimit(resource.RLIMIT_AS)
+if _actual_soft != _rlimit_as_bytes:
+    print(
+        f"WHITEFOX_WRAPPER: RLIMIT_AS mismatch: wanted={{_rlimit_as_bytes}}, "
+        f"got soft={{_actual_soft}} hard={{_actual_hard}}",
+        file=sys.stderr, flush=True,
+    )
 try:
     resource.setrlimit(resource.RLIMIT_DATA, (_mem_limit_bytes, _mem_limit_bytes))
 except (ValueError, resource.error):
