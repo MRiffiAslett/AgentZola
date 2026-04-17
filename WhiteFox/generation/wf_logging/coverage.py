@@ -106,16 +106,32 @@ tf.constant(1)
 
 
 class CoverageCollector:
-    """Incremental profraw → merged.profdata; final llvm-cov XLA line summary."""
+    """Incremental profraw → merged.profdata; final llvm-cov XLA line summary.
+
+    Supports two profraw collection modes:
+
+    1. Per-process (default): each subprocess writes its own ~950 MB profraw
+       file via ``wf_%p.profraw``.  Works everywhere but generates enormous
+       I/O when tests number in the thousands.
+
+    2. Merge-pool (``WHITEFOX_PROFRAW_POOL_SIZE=N``): uses LLVM's ``%Nm``
+       online-merge pattern.  The runtime maintains N shared pool files;
+       each subprocess locks one, merges its counters in-place, and unlocks.
+       After all tests finish, only N files (~950 MB each) need merging
+       instead of thousands.  Requires a POSIX filesystem with reliable
+       ``fcntl`` locking — use node-local storage (e.g. ``/data``), NOT NFS.
+    """
 
     def __init__(self, logging_dir: Path):
         self.cov_dir = logging_dir / "coverage"
         self.cov_dir.mkdir(parents=True, exist_ok=True)
 
-        # Profraw storage: default to a subdir of logging_dir (disk-backed).
-        # Using /tmp is dangerous on SLURM clusters where /tmp is often tmpfs —
-        # each ~950 MB profraw file eats cgroup RAM, causing OOM.
-        # Override with WHITEFOX_PROFRAW_DIR if you know /tmp is disk-backed.
+        # Pool mode: LLVM %Nm online merge.  0 = disabled (per-process mode).
+        self._pool_size = int(os.environ.get("WHITEFOX_PROFRAW_POOL_SIZE", "0"))
+
+        # Profraw storage: default to a subdir of logging_dir (NFS-backed).
+        # For pool mode, WHITEFOX_PROFRAW_DIR should point to node-local
+        # storage (e.g. /data) — NFS + fcntl locking is unreliable.
         profraw_base = os.environ.get("WHITEFOX_PROFRAW_DIR")
         if profraw_base:
             self.profraw_dir = Path(
@@ -138,14 +154,21 @@ class CoverageCollector:
         tmp = self.profdata_file.with_suffix(".profdata.tmp")
         tmp.unlink(missing_ok=True)
 
+        mode_str = (
+            f"pool (N={self._pool_size})" if self._pool_size > 0
+            else "per-process (%p)"
+        )
         logger.info(
-            "CoverageCollector: profraw_dir=%s, profdata=%s",
-            self.profraw_dir, self.profdata_file,
+            "CoverageCollector: mode=%s, profraw_dir=%s, profdata=%s",
+            mode_str, self.profraw_dir, self.profdata_file,
         )
 
     def env_vars(self) -> dict:
         if getattr(self, "_disabled", False):
             return {"LLVM_PROFILE_FILE": "/dev/null"}
+        if self._pool_size > 0:
+            pattern = str(self.profraw_dir / f"pool_%{self._pool_size}m.profraw")
+            return {"LLVM_PROFILE_FILE": pattern}
         return {"LLVM_PROFILE_FILE": str(self.profraw_dir / "wf_%p.profraw")}
 
     def verify(self) -> None:
@@ -329,92 +352,137 @@ class CoverageCollector:
 
         return True
 
+    def _get_merge_jobs(self) -> int:
+        jobs_env = os.environ.get("WHITEFOX_LLVM_PROFDATA_JOBS")
+        if jobs_env:
+            try:
+                return max(1, int(jobs_env))
+            except ValueError:
+                return 1
+        return max(1, min(4, multiprocessing.cpu_count() or 1))
+
     def merge_pending(self) -> int:
         """Merge pending .profraw into merged.profdata, delete raw on success.
 
-        Processes profraw files in batches to avoid OOM-killing the merge
-        process (each profraw can be ~1 GB; merging 30+ at once is fatal).
+        In pool mode (``%Nm``), merges the N pool files in a single
+        invocation — extremely fast on local storage.  In per-process
+        mode, processes files in batches.
 
         Returns:
             Number of profraw files successfully merged.
         """
         with self._lock:
-            pending = sorted(self.profraw_dir.glob("*.profraw"))
-            if not pending:
-                return 0
+            if self._pool_size > 0:
+                return self._merge_pool_files()
+            return self._merge_per_process_files()
 
-            if self._profdata_tool is None:
-                self._profdata_tool = self._select_profdata(pending[0])
-            profdata_tool = self._profdata_tool
-            if not profdata_tool:
-                return 0
+    def _merge_pool_files(self) -> int:
+        """Merge %Nm pool files.  Typically only 8-16 files, all local."""
+        pool_files = sorted(self.profraw_dir.glob("pool_*.profraw"))
+        valid = [pf for pf in pool_files if self._validate_profraw(pf)]
+        if not valid:
+            return 0
 
-            valid: List[Path] = []
-            for pf in pending:
-                try:
-                    if pf.stat().st_size == 0:
-                        pf.unlink(missing_ok=True)
-                        continue
-                except OSError:
-                    continue
-                if not self._is_valid_profraw_header(pf):
-                    logger.warning("Skipping unreadable profraw header: %s", pf.name)
-                    continue
-                valid.append(pf)
+        if self._profdata_tool is None:
+            self._profdata_tool = self._select_profdata(valid[0])
+        if not self._profdata_tool:
+            return 0
 
-            if not valid:
-                return 0
+        tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
+        tmp_out.unlink(missing_ok=True)
 
-            jobs_env = os.environ.get("WHITEFOX_LLVM_PROFDATA_JOBS")
-            if jobs_env:
-                try:
-                    jobs = int(jobs_env)
-                except ValueError:
-                    jobs = 1
-            else:
-                jobs = min(4, multiprocessing.cpu_count() or 1)
-            jobs = max(1, jobs)
+        cmd: List[str] = [
+            self._profdata_tool, "merge", "-sparse",
+            "--failure-mode=all",
+            "-j", str(self._get_merge_jobs()),
+            "-o", str(tmp_out),
+        ]
+        if self.profdata_file.exists():
+            cmd.append(str(self.profdata_file))
+        cmd += [str(p) for p in valid]
 
-            batch_size = self._merge_batch_size()
-            total_merged = 0
-            tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
+        if not self._run_merge_cmd(cmd, tmp_out):
+            logger.warning(
+                "Pool merge failed (%d files); will retry on next call",
+                len(valid),
+            )
+            return 0
 
-            for batch_start in range(0, len(valid), batch_size):
-                batch = valid[batch_start : batch_start + batch_size]
-                tmp_out.unlink(missing_ok=True)
+        tmp_out.replace(self.profdata_file)
+        for pf in valid:
+            pf.unlink(missing_ok=True)
+        logger.info(
+            "Merged %d pool files into %s (%.1f MB)",
+            len(valid), self.profdata_file,
+            self.profdata_file.stat().st_size / (1024 * 1024),
+        )
+        return len(valid)
 
-                cmd: List[str] = [
-                    profdata_tool,
-                    "merge",
-                    "-sparse",
-                    "--failure-mode=all",
-                    "-j",
-                    str(jobs),
-                    "-o",
-                    str(tmp_out),
-                ]
-                if self.profdata_file.exists():
-                    cmd.append(str(self.profdata_file))
-                cmd += [str(p) for p in batch]
+    def _validate_profraw(self, pf: Path) -> bool:
+        try:
+            if pf.stat().st_size == 0:
+                pf.unlink(missing_ok=True)
+                return False
+        except OSError:
+            return False
+        if not self._is_valid_profraw_header(pf):
+            logger.warning("Skipping unreadable profraw header: %s", pf.name)
+            return False
+        return True
 
-                if not self._run_merge_cmd(cmd, tmp_out):
-                    logger.warning(
-                        "Batch merge failed (%d files at offset %d); "
-                        "stopping merge early (%d of %d merged so far)",
-                        len(batch), batch_start, total_merged, len(valid),
-                    )
-                    break
+    def _merge_per_process_files(self) -> int:
+        """Original per-process merge with batching and retry."""
+        pending = sorted(self.profraw_dir.glob("*.profraw"))
+        if not pending:
+            return 0
 
-                tmp_out.replace(self.profdata_file)
-                for pf in batch:
-                    pf.unlink(missing_ok=True)
-                total_merged += len(batch)
-                logger.info(
-                    "Merged batch of %d profraw files (%d/%d done)",
-                    len(batch), total_merged, len(valid),
+        if self._profdata_tool is None:
+            self._profdata_tool = self._select_profdata(pending[0])
+        if not self._profdata_tool:
+            return 0
+
+        valid = [pf for pf in pending if self._validate_profraw(pf)]
+        if not valid:
+            return 0
+
+        jobs = self._get_merge_jobs()
+        batch_size = self._merge_batch_size()
+        total_merged = 0
+        tmp_out = self.profdata_file.with_suffix(".profdata.tmp")
+
+        for batch_start in range(0, len(valid), batch_size):
+            batch = valid[batch_start : batch_start + batch_size]
+            tmp_out.unlink(missing_ok=True)
+
+            cmd: List[str] = [
+                self._profdata_tool, "merge", "-sparse",
+                "--failure-mode=all",
+                "-j", str(jobs),
+                "-o", str(tmp_out),
+            ]
+            if self.profdata_file.exists():
+                cmd.append(str(self.profdata_file))
+            cmd += [str(p) for p in batch]
+
+            if not self._run_merge_cmd(cmd, tmp_out):
+                logger.warning(
+                    "Batch merge failed (%d files at offset %d); "
+                    "skipping batch, continuing with remaining "
+                    "(%d of %d merged so far)",
+                    len(batch), batch_start, total_merged, len(valid),
                 )
+                continue
 
-            return total_merged
+            tmp_out.replace(self.profdata_file)
+            for pf in batch:
+                pf.unlink(missing_ok=True)
+            total_merged += len(batch)
+            logger.info(
+                "Merged batch of %d profraw files (%d/%d done)",
+                len(batch), total_merged, len(valid),
+            )
+
+        return total_merged
 
     def report(self) -> Optional[Dict[str, int]]:
         if not self.profdata_file.exists():

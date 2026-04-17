@@ -51,10 +51,15 @@ whitefox_maybe_reexec_container() {
 
   echo "[$(date)] Re-executing inside container via ${runner}: ${img}"
   # shellcheck disable=SC2086
+  local data_bind=""
+  if [ -d "/data" ]; then
+    data_bind="-B /data:/data"
+  fi
   exec "$runner" exec --nv \
     -B /vol:/vol \
     -B "${HOME}:${HOME}" \
     -B /tmp:/tmp \
+    ${data_bind} \
     ${WHITEFOX_APPTAINER_EXTRA_BINDS:-} \
     "$img" \
     env WHITEFOX_IN_CONTAINER=1 bash "$script_path" "$@"

@@ -26,13 +26,25 @@ def _child_preexec() -> None:
     except Exception:
         pass
     mem_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8"))
-    # Allow 3x virtual headroom: TF's shared libraries mmap ~4-6 GB of
-    # virtual address space on load; RLIMIT_AS must be large enough for
-    # that + the actual tensor allocations, but small enough to block a
-    # 40 GB malloc before the OOM killer fires.
     rlimit_bytes = mem_gb * 3 * (1024 ** 3)
     try:
         resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
+    except Exception as exc:
+        import sys
+        print(
+            f"WHITEFOX_PREEXEC: RLIMIT_AS={rlimit_bytes} FAILED: {exc}",
+            file=sys.stderr, flush=True,
+        )
+    # Verify the limit was actually applied.
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if soft != rlimit_bytes:
+            import sys
+            print(
+                f"WHITEFOX_PREEXEC: RLIMIT_AS mismatch: "
+                f"wanted={rlimit_bytes}, got soft={soft} hard={hard}",
+                file=sys.stderr, flush=True,
+            )
     except Exception:
         pass
 
