@@ -10,11 +10,11 @@
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%A_%a.out
 
-# ---- Array: 8 tasks, ~6-7 opts each.  With early-stop disabled every opt
-# runs the full 100 iterations (1000 tests).  Fewer opts per task avoids
-# wall-time timeouts on the slower a40 partition.
-#SBATCH --array=0-7
-N_TASKS=8
+# ---- Array: 6 tasks, ~8-9 opts each.  With early-stop disabled every opt
+# runs the full 100 iterations (1000 tests); 8 opts × ~90 min ≈ 12 h per
+# task, well within the 72 h wall-time limit.
+#SBATCH --array=0-5
+N_TASKS=6
 
 set -euo pipefail
 
