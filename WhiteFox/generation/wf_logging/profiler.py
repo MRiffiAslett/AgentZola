@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from datetime import datetime
@@ -240,16 +241,20 @@ class WhiteFoxProfiler:
             f.write(f"  Peak observed:        {self.peak_child_count:3d}\n")
             f.write(f"  Average observed:     {avg_children:5.1f}\n\n")
 
-            f.write("-" * 70 + "\n")
-            f.write("ANALYSIS FOR 32GB ALLOCATION\n")
-            f.write("-" * 70 + "\n")
+            slurm_mem_env = os.environ.get("SLURM_MEM_PER_NODE", "")
+            if slurm_mem_env.isdigit() and int(slurm_mem_env) > 0:
+                slurm_mb = int(slurm_mem_env)
+            else:
+                slurm_mb = int(psutil.virtual_memory().total / 1024 / 1024)
+            slurm_gb = slurm_mb / 1024
 
-            slurm_gb = 32
-            slurm_mb = slurm_gb * 1024
+            f.write("-" * 70 + "\n")
+            f.write(f"ANALYSIS FOR {slurm_gb:.0f}GB ALLOCATION\n")
+            f.write("-" * 70 + "\n")
             free_mb = slurm_mb - self.peak_memory_mb
             margin_pct = (free_mb / slurm_mb) * 100
 
-            f.write(f"  SLURM allocation:  {slurm_gb:5d} GB ({slurm_mb:8.0f} MB)\n")
+            f.write(f"  SLURM allocation:  {slurm_gb:5.0f} GB ({slurm_mb:8.0f} MB)\n")
             f.write(
                 f"  Peak usage:        {self.peak_memory_mb / 1024:5.1f} GB ({self.peak_memory_mb:8.0f} MB)\n"
             )
@@ -278,7 +283,7 @@ class WhiteFoxProfiler:
 
             if margin_pct < 40:
                 f.write("-" * 70 + "\n")
-                f.write("SUGGESTED CONFIGURATIONS (32GB)\n")
+                f.write(f"SUGGESTED CONFIGURATIONS ({slurm_gb:.0f}GB)\n")
                 f.write("-" * 70 + "\n")
 
                 configs = [

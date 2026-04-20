@@ -9,9 +9,11 @@
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%A_%a.out
 
-# ---- Array: 3 tasks (more resources per task = fewer tasks needed) ----------
-#SBATCH --array=0-2
-N_TASKS=3
+# ---- Array: 7 tasks, ~7 opts each.  With early-stop disabled every opt runs
+# the full 100 iterations (1000 tests); 7 opts × ~90 min ≈ 10.5 h per task,
+# well within the 72 h wall-time limit.
+#SBATCH --array=0-6
+N_TASKS=7
 
 set -euo pipefail
 
@@ -106,11 +108,12 @@ export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-8}"
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 # Per-subprocess memory cap.  With 190G RAM we can be more generous.
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-12}"
-export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
+export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
 mkdir -p "$WHITEFOX_LOGGING_DIR"
+echo "${SLURM_ARRAY_JOB_ID}" > "$WHITEFOX_LOGGING_DIR/.job_id"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-$PROJECT_ROOT/slurm}"
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
@@ -212,11 +215,26 @@ from collections import defaultdict
 logging_root = Path('$PROJECT_ROOT') / 'logging'
 combined_summary = logging_root / 'run_summary_combined.log'
 combined_coverage = logging_root / 'coverage_combined.log'
+my_job_id = '$SLURM_ARRAY_JOB_ID'
+
+def batch_belongs_to_current_run(batch_dir):
+    jf = batch_dir / '.job_id'
+    if not jf.exists():
+        return False
+    return jf.read_text().strip() == my_job_id
+
+batch_dirs = [d for d in sorted(logging_root.glob('batch*')) if d.is_dir() and batch_belongs_to_current_run(d)]
+skipped = [d.name for d in sorted(logging_root.glob('batch*')) if d.is_dir() and not batch_belongs_to_current_run(d)]
+if skipped:
+    print(f'Skipping stale batches (wrong job_id): {skipped}')
 
 totals = defaultdict(lambda: defaultdict(int))
 header_line = ''
 
-for summary in sorted(logging_root.glob('batch*/run_summary_detailed.log')):
+for batch_dir in batch_dirs:
+    summary = batch_dir / 'run_summary_detailed.log'
+    if not summary.exists():
+        continue
     for line in summary.read_text().splitlines():
         if not line.strip():
             continue
@@ -264,7 +282,7 @@ else:
     print('No batch summaries found to aggregate.')
 
 cov_lines = []
-for batch_dir in sorted(logging_root.glob('batch*')):
+for batch_dir in batch_dirs:
     cov_file = batch_dir / 'coverage_report.log'
     if not cov_file.exists():
         continue

@@ -10,11 +10,11 @@
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%A_%a.out
 
-# ---- Array: 6 tasks, optimizations distributed dynamically -----------------
-# To change the split, just update the --array range below (and keep N_TASKS
-# in sync).  E.g. --array=0-7 + N_TASKS=8 gives 6 opts/task for 48 total.
-#SBATCH --array=0-5
-N_TASKS=6
+# ---- Array: 8 tasks, ~6-7 opts each.  With early-stop disabled every opt
+# runs the full 100 iterations (1000 tests).  Fewer opts per task avoids
+# wall-time timeouts on the slower a40 partition.
+#SBATCH --array=0-7
+N_TASKS=8
 
 set -euo pipefail
 
@@ -102,14 +102,14 @@ export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 # headroom.  Larger batches mean fewer llvm-profdata invocations and less
 # merge overhead (previously ~50% of wall time at batch_size=3).
 export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-12}"
-# Early-stop optimizations that produce 0 triggering tests after this many
-# iterations.  Collective ops (AllGather*, AllReduce*, AsyncCollective*, etc.)
-# require multi-GPU and will never trigger on a single-GPU node.
-export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
+# Disabled: every optimization must run the full 1000 tests (100 iterations)
+# regardless of whether it triggers, to ensure uniform coverage.
+export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
 mkdir -p "$WHITEFOX_LOGGING_DIR"
+echo "${SLURM_ARRAY_JOB_ID}" > "$WHITEFOX_LOGGING_DIR/.job_id"
 
 WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-$PROJECT_ROOT/slurm}"
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
@@ -195,19 +195,32 @@ echo "[$(date)] Finished $BATCH_LABEL (exit $GEN_EXIT)"
 # ---- Aggregate batch summaries into a single combined report ---------------
 echo "[$(date)] Aggregating batch summaries …"
 poetry run python -c "
-import re, sys
 from pathlib import Path
 from collections import defaultdict
 
 logging_root = Path('$PROJECT_ROOT') / 'logging'
 combined_summary = logging_root / 'run_summary_combined.log'
 combined_coverage = logging_root / 'coverage_combined.log'
+my_job_id = '$SLURM_ARRAY_JOB_ID'
 
-# --- Aggregate run summaries ---
+def batch_belongs_to_current_run(batch_dir):
+    jf = batch_dir / '.job_id'
+    if not jf.exists():
+        return False
+    return jf.read_text().strip() == my_job_id
+
+batch_dirs = [d for d in sorted(logging_root.glob('batch*')) if d.is_dir() and batch_belongs_to_current_run(d)]
+skipped = [d.name for d in sorted(logging_root.glob('batch*')) if d.is_dir() and not batch_belongs_to_current_run(d)]
+if skipped:
+    print(f'Skipping stale batches (wrong job_id): {skipped}')
+
 totals = defaultdict(lambda: defaultdict(int))
 header_line = ''
 
-for summary in sorted(logging_root.glob('batch*/run_summary_detailed.log')):
+for batch_dir in batch_dirs:
+    summary = batch_dir / 'run_summary_detailed.log'
+    if not summary.exists():
+        continue
     for line in summary.read_text().splitlines():
         if not line.strip():
             continue
@@ -218,29 +231,29 @@ for summary in sorted(logging_root.glob('batch*/run_summary_detailed.log')):
         parts = [p.strip() for p in line.split('|')]
         if len(parts) < 3:
             continue
-        opt_name = parts[0]
-        if opt_name == 'TOTAL':
+        if parts[0] == 'TOTAL':
             continue
         try:
             values = [int(v) for v in parts[1:]]
         except ValueError:
             continue
         for i, v in enumerate(values):
-            totals[opt_name][i] += v
+            totals[parts[0]][i] += v
 
 if totals:
-    col_names = header_line.split('|')[1:] if header_line else ['Created', 'Triggered']
     with open(combined_summary, 'w') as f:
         sep = '=' * 95
         dash = '-' * 95
         f.write(f'{sep}\nWHITEFOX COMBINED RUN SUMMARY (all batches)\n{sep}\n\n')
-        f.write(header_line + '\n' if header_line else '')
+        if header_line:
+            f.write(header_line + '\n')
         f.write(dash + '\n\n')
         grand = defaultdict(int)
+        ncols = max(len(v) for v in totals.values())
         for opt_name in sorted(totals):
             vals = totals[opt_name]
             f.write(f'{opt_name:40s}')
-            for i in range(max(len(v) for v in totals.values())):
+            for i in range(ncols):
                 v = vals.get(i, 0)
                 grand[i] += v
                 f.write(f' | {v:7d}')
@@ -254,9 +267,8 @@ if totals:
 else:
     print('No batch summaries found to aggregate.')
 
-# --- Aggregate coverage reports ---
 cov_lines = []
-for batch_dir in sorted(logging_root.glob('batch*')):
+for batch_dir in batch_dirs:
     cov_file = batch_dir / 'coverage_report.log'
     if not cov_file.exists():
         continue
