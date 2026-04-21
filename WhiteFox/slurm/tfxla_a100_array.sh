@@ -102,12 +102,13 @@ export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-8}"
 
 # ---- Test execution --------------------------------------------------------
 # 18 CPUs available.  vLLM uses ~2-3 CPU threads; leave the rest for workers.
-# 8 workers × (mem_limit+4) GB RLIMIT_AS = 8 × 16 GB = 128 GB virtual.
-# RSS is much lower (~2-3 GB per subprocess).  190 GB cgroup has plenty.
-export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-8}"
+# With early-stop disabled every opt runs 1000 tests; longer runs accumulate
+# more memory (TF/XLA subprocesses, profraw, caches).  8 workers caused OOM
+# at ~iteration 59 under 190 GB.  4 workers × 10 GB RLIMIT_AS = 40 GB virtual,
+# leaving ample headroom for vLLM + coverage merge.
+export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
-# Per-subprocess memory cap.  With 190G RAM we can be more generous.
-export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-12}"
+export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
