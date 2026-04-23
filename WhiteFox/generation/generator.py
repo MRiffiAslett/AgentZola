@@ -684,6 +684,7 @@ class StarCoderGenerator:
 
                 if opt_name:
                     self.profiler.append_optimization_segment(opt_name)
+                    whitefox_logger.flush_and_clear()
 
                 with self._state_lock:
                     whitefox_logger.generate_run_summary(self.whitefox_state)
@@ -799,6 +800,9 @@ class StarCoderGenerator:
                     self.profiler.append_optimization_segment(
                         opt_state.spec.internal_name
                     )
+                    whitefox_logger.flush_and_clear()
+                    import gc
+                    gc.collect()
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"

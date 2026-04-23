@@ -120,7 +120,6 @@ class WhiteFoxLogger:
                     log_entry["examples"].append(example_info)
 
             self.prompts_data[optimization_name].append(log_entry)
-            self._write_prompts()
 
     def log_generated_code(
         self,
@@ -146,8 +145,6 @@ class WhiteFoxLogger:
 
             self._ensure_stats_initialized(optimization_name)
             self.opt_stats[optimization_name]["generated"] += 1
-
-            self._write_cleaned_code()
 
     def log_execution_result(
         self,
@@ -214,16 +211,33 @@ class WhiteFoxLogger:
             )
             self._write_bug_reports()
 
-    def _write_json(self, file_path: Path, data: Any, **kwargs) -> None:
-        with open(file_path, "w") as f:
-            json.dump(data, f, indent=2, **kwargs)
+    @staticmethod
+    def _append_jsonl(file_path: Path, data: Any, **kwargs) -> None:
+        """Append each top-level entry as a single JSON line."""
+        with open(file_path, "a") as f:
+            if isinstance(data, dict):
+                for key, entries in data.items():
+                    if isinstance(entries, list):
+                        for entry in entries:
+                            json.dump(entry, f, **kwargs)
+                            f.write("\n")
+                    else:
+                        json.dump({key: entries}, f, **kwargs)
+                        f.write("\n")
+            elif isinstance(data, list):
+                for entry in data:
+                    json.dump(entry, f, **kwargs)
+                    f.write("\n")
+            else:
+                json.dump(data, f, **kwargs)
+                f.write("\n")
 
     def _write_prompts(self) -> None:
-        self._write_json(self.prompts_file, self.prompts_data)
+        self._append_jsonl(self.prompts_file, self.prompts_data)
         self._write_prompts_readable()
 
     def _write_cleaned_code(self) -> None:
-        self._write_json(
+        self._append_jsonl(
             self.cleaned_code_file, self.cleaned_code_data, ensure_ascii=False
         )
         self._write_code_readable()
@@ -300,7 +314,7 @@ class WhiteFoxLogger:
         return False
 
     def _write_bug_reports(self) -> None:
-        self._write_json(self.bug_reports_file, self.bug_reports_data)
+        self._append_jsonl(self.bug_reports_file, self.bug_reports_data)
         self._write_bug_reports_filtered()
 
     def _write_bug_reports_filtered(self) -> None:
@@ -309,10 +323,10 @@ class WhiteFoxLogger:
             for entry in self.bug_reports_data
             if not self._is_low_signal_report(entry)
         ]
-        self._write_json(self.bug_reports_filtered_file, filtered)
+        self._append_jsonl(self.bug_reports_filtered_file, filtered)
 
     def _write_diagnostics(self) -> None:
-        self._write_json(self.diagnostic_file, self.diagnostic_data)
+        self._append_jsonl(self.diagnostic_file, self.diagnostic_data)
 
     def log_diagnostic(
         self,
@@ -357,9 +371,7 @@ class WhiteFoxLogger:
         f.write(f"{'=' * 80}\n\n")
 
     def _write_prompts_readable(self) -> None:
-        with open(self.prompts_text_file, "w") as f:
-            self._write_header(f, "WHITEFOX PROMPTS - READABLE FORMAT")
-
+        with open(self.prompts_text_file, "a") as f:
             for opt_name, prompts_list in self.prompts_data.items():
                 self._write_section_header(f, opt_name)
 
@@ -387,9 +399,7 @@ class WhiteFoxLogger:
                     f.write("\n")
 
     def _write_code_readable(self) -> None:
-        with open(self.cleaned_code_text_file, "w") as f:
-            self._write_header(f, "WHITEFOX CLEANED CODE - READABLE FORMAT")
-
+        with open(self.cleaned_code_text_file, "a") as f:
             for opt_name, code_list in self.cleaned_code_data.items():
                 self._write_section_header(f, opt_name)
 
@@ -486,3 +496,19 @@ class WhiteFoxLogger:
             self._write_cleaned_code()
             self._write_bug_reports()
             self._write_diagnostics()
+
+    def flush_and_clear(self) -> None:
+        """Flush all buffered data to disk and release the in-memory copies.
+
+        Call between optimizations to prevent unbounded memory growth.
+        ``opt_stats`` is preserved since the run summary needs it.
+        """
+        with self._lock:
+            self._write_prompts()
+            self._write_cleaned_code()
+            self._write_bug_reports()
+            self._write_diagnostics()
+            self.prompts_data.clear()
+            self.cleaned_code_data.clear()
+            self.bug_reports_data.clear()
+            self.diagnostic_data.clear()
