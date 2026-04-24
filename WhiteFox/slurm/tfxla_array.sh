@@ -102,9 +102,10 @@ export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 # headroom.  Larger batches mean fewer llvm-profdata invocations and less
 # merge overhead (previously ~50% of wall time at batch_size=3).
 export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-12}"
-# Disabled: every optimization must run the full 1000 tests (100 iterations)
-# regardless of whether it triggers, to ensure uniform coverage.
-export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
+# Early-stop optimizations that produce 0 triggering tests after this many
+# iterations (20 iters × 10 tests = 200 tests).  Saves time on passes that
+# cannot trigger in the current environment (e.g. collective ops on single-GPU).
+export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
