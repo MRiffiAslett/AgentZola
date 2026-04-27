@@ -57,6 +57,18 @@ def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
         return TestExecutionResult(task=task, execution_result=None, error=error_msg)
 
 
+def _pool_worker_init() -> None:
+    """Set RLIMIT_AS on ProcessPoolExecutor workers so TF/XLA allocations
+    in the worker process (not just Popen grandchildren) are bounded."""
+    import resource
+    mem_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8"))
+    rlimit_bytes = mem_gb * 3 * (1024 ** 3)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
+    except Exception:
+        pass
+
+
 _HARNESS = {
     "xla": "generation.harness.xla.TensorFlowXLAHarness",
     "inductor": "generation.harness.inductor.PyTorchInductorHarness",
@@ -306,7 +318,10 @@ class StarCoderGenerator:
         results = []
 
         try:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            with ProcessPoolExecutor(
+                max_workers=max_workers,
+                initializer=_pool_worker_init,
+            ) as executor:
                 future_to_task = {
                     executor.submit(_execute_test_worker, task): task for task in tasks
                 }
