@@ -1,3 +1,4 @@
+import math
 from enum import IntEnum, auto
 from typing import List, Optional, Tuple
 
@@ -14,13 +15,22 @@ class ResType(IntEnum):
     XLA_ACFail = auto()
     AllFail = auto()
     AllPass = auto()
-    XLA_ACDiff = auto()
-    Naive_ACDiff = auto()
-    NaiveXLADiff = auto()
     AllDiff = auto()
     AllDiff_Rand = auto()
     AllDiff_LessLikely = auto()
     AllDiff_TypeMismatch = auto()
+
+
+# Crash errors that indicate bad test code rather than compiler bugs.
+_TEST_CODE_ERRORS = [
+    "Cannot iterate over a scalar tensor",
+    "object cannot be interpreted as an integer",
+    "numpy() is only available when eager execution is enabled",
+    "maximum recursion depth exceeded",
+    "'int' object is not iterable",
+    "don't have the same nested structure",
+    "don't have the same number of elements",
+]
 
 
 class DataType(IntEnum):
@@ -88,6 +98,14 @@ def get_type(output_data) -> DataType:
         return DataType.Unknown
 
 
+def _floats_equal(x: float, y: float) -> bool:
+    if math.isnan(x) and math.isnan(y):
+        return True
+    if math.isinf(x) and math.isinf(y):
+        return math.copysign(1, x) == math.copysign(1, y)
+    return abs(x - y) < 1e-2
+
+
 def is_equal(x, y) -> Tuple[bool, Optional[str]]:
     x_type, y_type = get_type(x), get_type(y)
 
@@ -97,18 +115,19 @@ def is_equal(x, y) -> Tuple[bool, Optional[str]]:
     ):
         try:
             equal = np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True)
-            return equal, "Value mismatch: {} vs {}".format(x, y)
+            return equal, None if equal else "Value mismatch: {} vs {}".format(x, y)
         except (ValueError, TypeError):
-            return False, "Type mismatch: {} vs {}".format(str(x_type), str(y_type))
+            return False, "Type mismatch: {} vs {}".format(x_type.name, y_type.name)
 
     if x_type in [DataType.Int, DataType.Bool, DataType.Null, DataType.Str]:
-        return x == y, "Value mismatch: {} vs {}".format(x, y)
+        eq = x == y
+        return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type == DataType.Float:
-        return abs(x - y) < 1e-2, "Value mismatch: {} vs {}".format(x, y)
+        eq = _floats_equal(x, y)
+        return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.TFTensor, DataType.KerasTensor, DataType.TorchTensor]:
-        return np.allclose(
-            np.array(x), np.array(y), atol=1e-02, equal_nan=True
-        ), "Value mismatch: {} vs {}".format(x, y)
+        eq = np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True)
+        return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.List, DataType.Tuple]:
         if len(x) != len(y):
             return False, "Length mismatch: {} vs {}".format(len(x), len(y))
@@ -118,13 +137,18 @@ def is_equal(x, y) -> Tuple[bool, Optional[str]]:
                 return False, msg
         return True, None
     else:
-        return False, "Unsupported type: {} <-- {}".format(x_type, type(x))
+        return False, "Unsupported type: {} <-- {}".format(x_type.name, type(x))
 
 
 def check_code_randomness(code: str) -> bool:
     if "tf.random" in code or "torch.rand" in code:
         return True
-    if "dropout" in code.lower():
+    if "np.random" in code or "random." in code:
+        return True
+    code_lower = code.lower()
+    if "dropout" in code_lower:
+        return True
+    if "initializer" in code_lower and "random" in code_lower:
         return True
     return False
 
@@ -143,6 +167,14 @@ def value_diff_type(code: str, msg: str) -> ResType:
     elif "Type mismatch" in msg:
         return ResType.AllDiff_TypeMismatch
     return ResType.AllDiff
+
+
+def _is_test_code_error(error: str) -> bool:
+    """Return True if the error is caused by bad test code, not a compiler bug."""
+    for pattern in _TEST_CODE_ERRORS:
+        if pattern in error:
+            return True
+    return False
 
 
 def is_allowed_err(error, allowed_errors: Optional[List[str]] = None) -> bool:
@@ -192,6 +224,17 @@ def check_oracles(
         temp = [fail[i] - allowed[i] for i in range(len(fail))]
 
         if all(t == 0 for t in temp):
+            return bug_reports
+
+        # Discard crashes caused by bad test code, not compiler bugs.
+        all_test_code = all(
+            _is_test_code_error(
+                (result.get_mode(mode_names[i]).runtime_error or
+                 result.get_mode(mode_names[i]).compile_error or "")
+            )
+            for i in range(len(fail)) if fail[i]
+        )
+        if all_test_code:
             return bug_reports
 
         fail_str = str(fail)
