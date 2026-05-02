@@ -21,7 +21,8 @@ class ResType(IntEnum):
     AllDiff_TypeMismatch = auto()
 
 
-# Crash errors that indicate bad test code rather than compiler bugs.
+_NUMERIC_TOLERANCE = 1e-2
+
 _TEST_CODE_ERRORS = [
     "Cannot iterate over a scalar tensor",
     "object cannot be interpreted as an integer",
@@ -103,7 +104,7 @@ def _floats_equal(x: float, y: float) -> bool:
         return True
     if math.isinf(x) and math.isinf(y):
         return math.copysign(1, x) == math.copysign(1, y)
-    return abs(x - y) < 1e-2
+    return abs(x - y) < _NUMERIC_TOLERANCE
 
 
 def is_equal(x, y) -> Tuple[bool, Optional[str]]:
@@ -114,7 +115,7 @@ def is_equal(x, y) -> Tuple[bool, Optional[str]]:
         and y_type in [DataType.List, DataType.Tuple]
     ):
         try:
-            equal = np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True)
+            equal = np.allclose(np.array(x), np.array(y), atol=_NUMERIC_TOLERANCE, equal_nan=True)
             return equal, None if equal else "Value mismatch: {} vs {}".format(x, y)
         except (ValueError, TypeError):
             return False, "Type mismatch: {} vs {}".format(x_type.name, y_type.name)
@@ -126,7 +127,7 @@ def is_equal(x, y) -> Tuple[bool, Optional[str]]:
         eq = _floats_equal(x, y)
         return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.TFTensor, DataType.KerasTensor, DataType.TorchTensor]:
-        eq = np.allclose(np.array(x), np.array(y), atol=1e-02, equal_nan=True)
+        eq = np.allclose(np.array(x), np.array(y), atol=_NUMERIC_TOLERANCE, equal_nan=True)
         return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.List, DataType.Tuple]:
         if len(x) != len(y):
@@ -170,7 +171,6 @@ def value_diff_type(code: str, msg: str) -> ResType:
 
 
 def _is_test_code_error(error: str) -> bool:
-    """Return True if the error is caused by bad test code, not a compiler bug."""
     for pattern in _TEST_CODE_ERRORS:
         if pattern in error:
             return True
@@ -226,7 +226,6 @@ def check_oracles(
         if all(t == 0 for t in temp):
             return bug_reports
 
-        # Discard crashes caused by bad test code, not compiler bugs.
         all_test_code = all(
             _is_test_code_error(
                 (result.get_mode(mode_names[i]).runtime_error or
@@ -237,6 +236,17 @@ def check_oracles(
         if all_test_code:
             return bug_reports
 
+        def _build_error_details() -> dict:
+            details = {}
+            for i, mode in enumerate(mode_names):
+                mr = result.get_mode(mode)
+                if fail[i]:
+                    details[f"{mode} Fail"] = mr.runtime_error or mr.compile_error
+                else:
+                    details[f"{mode} Fail"] = None
+            details["Num Diff"] = None
+            return details
+
         fail_str = str(fail)
         if fail_str in FAIL_MAPPING:
             res_type = FAIL_MAPPING[fail_str]
@@ -244,38 +254,18 @@ def check_oracles(
             if res_type == ResType.AllFail:
                 return bug_reports
 
-            error_details = {}
-            for i, mode in enumerate(mode_names):
-                mr = result.get_mode(mode)
-                if fail[i]:
-                    error_details[f"{mode} Fail"] = mr.runtime_error or mr.compile_error
-                else:
-                    error_details[f"{mode} Fail"] = None
-            error_details["Num Diff"] = None
-
             bug_reports.append(
                 BugReport(
                     test_id=test_id,
                     optimizations_triggered=optimizations_triggered,
                     oracle_type=res_type.name,
-                    details=error_details,
+                    details=_build_error_details(),
                     test_file=result.test_file,
                     logs_file=result.test_file.with_suffix(".log"),
                 )
             )
         else:
             if not all(f == 1 for f in fail):
-                error_details = {}
-                for i, mode in enumerate(mode_names):
-                    mr = result.get_mode(mode)
-                    if fail[i]:
-                        error_details[f"{mode} Fail"] = (
-                            mr.runtime_error or mr.compile_error
-                        )
-                    else:
-                        error_details[f"{mode} Fail"] = None
-                error_details["Num Diff"] = None
-
                 failed_modes = [mode_names[i] for i in range(len(fail)) if fail[i]]
                 oracle_type = "_".join(m.capitalize() for m in failed_modes) + "Fail"
 
@@ -284,7 +274,7 @@ def check_oracles(
                         test_id=test_id,
                         optimizations_triggered=optimizations_triggered,
                         oracle_type=oracle_type,
-                        details=error_details,
+                        details=_build_error_details(),
                         test_file=result.test_file,
                         logs_file=result.test_file.with_suffix(".log"),
                     )

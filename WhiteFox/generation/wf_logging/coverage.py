@@ -143,7 +143,6 @@ class CoverageCollector:
 
         self.profdata_file = self.cov_dir / "merged.profdata"
         self.report_file = logging_dir / "coverage_report.log"
-        self.diag_file = logging_dir / "coverage_diagnostics.log"
         self._so_files: Optional[List[str]] = None
         self._lock = threading.RLock()
         self._llvm_dir: Optional[str] = None
@@ -207,8 +206,7 @@ class CoverageCollector:
             )
             self._disabled = True
 
-        self.diag_file.write_text("\n".join(lines) + "\n")
-        logger.info("Coverage diagnostics written to %s", self.diag_file)
+        logger.info("Coverage verify: %s", "; ".join(lines))
 
     @staticmethod
     def _profraw_version(profraw_path: Path) -> Optional[int]:

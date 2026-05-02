@@ -69,7 +69,6 @@ class Src2NLTFLite(Src2TestTFLite):
 
 class Src2NLTFXLA(Src2NLTFLite):
     PLACEHOLDER_TFLITE_OPTIMIZATION_NAME = "PLACEHOLDER_TFXLA_OPTIMIZATION_NAME"
-    PLACEHOLDER_SRC_CODE = "PLACEHOLDER_SRC_CODE"
     PLACEHOLDER_TARGET_LINE = "PLACEHOLDER_TARGET_LINE"
     PLACEHOLDER_FUNC_NAME = "PLACEHOLDER_FUNC_NAME"
 
@@ -150,7 +149,6 @@ def generate_requirement_prompts(
         ) from e
 
     prompts = {}
-    skipped = []
     used_fallback = []
 
     for opt in optim.get_opts():
@@ -165,14 +163,10 @@ def generate_requirement_prompts(
             output_file.write_text(stacked_prompt)
             print(f"Generated prompt for {opt} -> {output_file}")
         except FileNotFoundError:
-            fallback_file = fallback_path / f"{opt}.txt" if fallback_path else None
-
             prompts[opt] = "[FALLBACK - No prompt needed]"
             print(
                 f"[FALLBACK] {opt} -> Will use pre-existing description (skip prompt & GPT)"
             )
             used_fallback.append(opt)
-
-    actual_generated = len(prompts) - len(used_fallback)
 
     return prompts, set(used_fallback)

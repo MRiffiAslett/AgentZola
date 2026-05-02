@@ -58,8 +58,6 @@ def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
 
 def _pool_worker_init() -> None:
-    """Set RLIMIT_AS on ProcessPoolExecutor workers so TF/XLA allocations
-    in the worker process (not just Popen grandchildren) are bounded."""
     import resource
     mem_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8"))
     rlimit_bytes = mem_gb * 3 * (1024 ** 3)
@@ -102,8 +100,6 @@ class StarCoderGenerator:
         self.parser = _import_class(_PARSER[self.sut_name])()
 
         self.logging_dir = self._get_logging_dir()
-        self.source_dir = self.logging_dir / "source"
-        self.source_dir.mkdir(parents=True, exist_ok=True)
 
         self._setup_environment()
         self._setup_logging()
@@ -156,9 +152,6 @@ class StarCoderGenerator:
             self.logger.warning(f"Seed file not found: {path}")
             return ""
         return path.read_text().strip()
-
-    def _get_state_file_path(self) -> Path:
-        return self.source_dir / "whitefox_state.json"
 
     def _setup_logging(self) -> None:
         log_file_path = Path(self.config.paths.log_file or "whitefox-llm-gen.log")
@@ -367,7 +360,6 @@ class StarCoderGenerator:
         tests_per_iteration = self.config.generation.tests_per_iteration
         examples_per_prompt = self.config.generation.examples_per_prompt
 
-        # Wall-clock timing breakdown to help diagnose slow fuzzing loops.
         opt_llm_time_s = 0.0
         opt_exec_time_s = 0.0
         opt_coverage_merge_time_s = 0.0
@@ -481,8 +473,6 @@ class StarCoderGenerator:
             opt_exec_time_s += t_exec1 - t_exec0
             opt_total_samples_executed += len(generated_texts)
 
-            # LLVM coverage: merging pending profraw can be expensive.
-            # Default (env var unset) preserves old behaviour (merge every iteration).
             should_merge = (
                 coverage_merge_every_iters <= 1
                 or ((iteration + 1) % coverage_merge_every_iters == 0)
@@ -519,6 +509,16 @@ class StarCoderGenerator:
                     pass_triggered = opt_state.spec.matches_any_pass(
                         result.triggered_passes
                     )
+
+                    suffix = "_Triggered" if pass_triggered else "_NotTriggered"
+                    new_name = test_file.stem + suffix + test_file.suffix
+                    new_path = test_file.with_name(new_name)
+                    test_file.rename(new_path)
+                    log_file = test_file.with_suffix(".log")
+                    if log_file.exists():
+                        log_file.rename(new_path.with_suffix(".log"))
+                    test_file = new_path
+                    result.test_file = new_path
 
                     self.logger.info(
                         "  [%s] it%d sample%d: pass_triggered=%s  "
@@ -619,9 +619,6 @@ class StarCoderGenerator:
                 example_tests,
             )
 
-            with self._state_lock:
-                self.whitefox_state.save(self._get_state_file_path())
-
             if (
                 early_stop_iters > 0
                 and iteration + 1 >= early_stop_iters
@@ -641,7 +638,6 @@ class StarCoderGenerator:
                 opt_coverage_merged_profraw += int(n or 0)
                 break
 
-        # Attach extra timing data to the profiler segment for this optimization.
         if hasattr(self, "profiler") and self.profiler is not None:
             self.profiler.set_optimization_metadata(
                 opt_name,
@@ -656,7 +652,10 @@ class StarCoderGenerator:
             )
 
         with self._state_lock:
-            whitefox_logger.generate_run_summary(self.whitefox_state)
+            whitefox_logger.generate_run_summary(
+                sorted(self.whitefox_state.optimizations.keys()),
+                opt_states=self.whitefox_state.optimizations,
+            )
 
     def _run_optimizations_parallel(
         self,
@@ -702,15 +701,15 @@ class StarCoderGenerator:
                     whitefox_logger.flush_and_clear()
 
                 with self._state_lock:
-                    whitefox_logger.generate_run_summary(self.whitefox_state)
+                    whitefox_logger.generate_run_summary(
+                        sorted(self.whitefox_state.optimizations.keys()),
+                        opt_states=self.whitefox_state.optimizations,
+                    )
 
     def generate_whitefox(self, only_optimizations: Optional[List[str]] = None) -> None:
         project_root = self._project_root()
 
-        # -- LLVM coverage: set env before any subprocess is spawned ----------
         self.coverage = CoverageCollector(self.logging_dir)
-        # Set LLVM_PROFILE_FILE *before* verify() so no subprocess writes
-        # a stray ~1GB default.profraw to NFS.
         os.environ.update(self.coverage.env_vars())
         self.coverage.verify()
 
@@ -724,19 +723,7 @@ class StarCoderGenerator:
         self.profiler.begin_run()
         self.profiler.start_monitoring(interval=5.0)
 
-        state_file = self._get_state_file_path()
-        old_state_file = Path(
-            self.config.paths.bandit_state_file or "whitefox_state.json"
-        )
-        if not old_state_file.is_absolute():
-            old_state_file = project_root / old_state_file
-
         import shutil
-
-        if state_file.exists():
-            state_file.unlink()
-        if old_state_file.exists() and old_state_file != state_file:
-            old_state_file.unlink()
 
         self.whitefox_state = self._load_or_init_whitefox_state()
 
@@ -810,7 +797,10 @@ class StarCoderGenerator:
                         exc_info=True,
                     )
                     with self._state_lock:
-                        whitefox_logger.generate_run_summary(self.whitefox_state)
+                        whitefox_logger.generate_run_summary(
+                            sorted(self.whitefox_state.optimizations.keys()),
+                            opt_states=self.whitefox_state.optimizations,
+                        )
                 finally:
                     self.profiler.append_optimization_segment(
                         opt_state.spec.internal_name
@@ -832,35 +822,32 @@ class StarCoderGenerator:
 
         whitefox_logger.flush()
 
-        whitefox_logger.generate_run_summary(self.whitefox_state)
-        self.logger.info("Run summary written to %s", self.logging_dir / "run_summary_detailed.log")
-
-        # -- Shut down vLLM engine before heavy I/O to free GPU/CPU resources --
         self._shutdown_llm()
 
-        # -- LLVM coverage: merge profraw files and generate report -----------
-        profraw_count = len(list(self.coverage.profraw_dir.glob("*.profraw")))
-        profraw_bytes = sum(
-            f.stat().st_size for f in self.coverage.profraw_dir.glob("*.profraw")
-        )
+        profraw_files = list(self.coverage.profraw_dir.glob("*.profraw"))
+        profraw_count = len(profraw_files)
+        profraw_bytes = sum(f.stat().st_size for f in profraw_files)
         self.logger.info(
             "Coverage finalize: %d profraw files (%.1f MB) in %s",
             profraw_count, profraw_bytes / 1024 / 1024,
             self.coverage.profraw_dir,
         )
-        self.coverage.finalize()
+        coverage_result = self.coverage.finalize()
+
+        whitefox_logger.generate_run_summary(
+            sorted(self.whitefox_state.optimizations.keys()),
+            opt_states=self.whitefox_state.optimizations,
+            coverage_data=coverage_result,
+        )
+        self.logger.info("Run summary written to %s", self.logging_dir / "run_summary_detailed.log")
 
         self.profiler.generate_report()
         self.logger.info("Resource profile saved to %s", self.profiler.report_file)
 
-    # ------------------------------------------------------------------
-
     def _shutdown_llm(self) -> None:
-        """Tear down the vLLM engine so its non-daemon child processes exit."""
         try:
             if hasattr(self, "llm") and self.llm is not None:
                 self.logger.info("Shutting down vLLM engine …")
-                # vLLM ≥0.8 exposes llm_engine; try its shutdown first.
                 engine = getattr(self.llm, "llm_engine", None)
                 if engine is not None and hasattr(engine, "shutdown"):
                     engine.shutdown()

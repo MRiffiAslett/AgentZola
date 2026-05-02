@@ -1,7 +1,7 @@
 from typing import Dict, Tuple
 
 from requirement.base.base import RequirementGenerator
-from requirement.prompt_gen import Src2NLTFXLA, generate_requirement_prompts
+from requirement.prompt_gen import generate_requirement_prompts
 
 
 class XLARequirementGenerator(RequirementGenerator):

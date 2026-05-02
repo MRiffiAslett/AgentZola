@@ -38,44 +38,39 @@ class GPTClient:
         self,
         prompt: str,
         n_samples: int = 1,
-        max_retries: int = 3,
-        retry_delay: int = 10,
     ) -> Tuple[List[str], Dict]:
-        retry_count = 0
+        t_start = time.time()
 
-        while retry_count < max_retries:
-            t_start = time.time()
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.system_message},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            top_p=1.0,
+            n=n_samples,
+            timeout=self.timeout,
+        )
 
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.system_message},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                top_p=1.0,
-                n=n_samples,
-                timeout=self.timeout,
-            )
+        generation_time = time.time() - t_start
 
-            generation_time = time.time() - t_start
+        descriptions = [
+            self.process_response(choice.message.content)
+            for choice in response.choices
+        ]
 
-            descriptions = [
-                self.process_response(choice.message.content)
-                for choice in response.choices
-            ]
+        metadata = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "n_samples": n_samples,
+            "generation_time": generation_time,
+            "raw_response": response.model_dump(),
+        }
 
-            metadata = {
-                "model": self.model,
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "n_samples": n_samples,
-                "generation_time": generation_time,
-                "raw_response": response.model_dump(),
-            }
-
-            return descriptions, metadata
+        return descriptions, metadata
 
     def batch_generate_requirements(
         self,
