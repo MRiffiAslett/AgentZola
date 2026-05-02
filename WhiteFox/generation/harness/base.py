@@ -14,12 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def _child_preexec() -> None:
-    """preexec_fn for test subprocesses: set oom_score_adj and RLIMIT_AS.
-
-    Runs after fork() but before exec(), so settings apply to the new
-    Python interpreter reliably (unlike doing it inside the wrapper script
-    which runs *after* the interpreter has already loaded libc/libpython).
-    """
+    """preexec_fn for test subprocesses — runs after fork() before exec()
+    so RLIMIT_AS applies before the interpreter loads libc/libpython."""
     try:
         with open("/proc/self/oom_score_adj", "w") as f:
             f.write("1000")
@@ -30,16 +26,13 @@ def _child_preexec() -> None:
     try:
         resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
     except Exception as exc:
-        import sys
         print(
             f"WHITEFOX_PREEXEC: RLIMIT_AS={rlimit_bytes} FAILED: {exc}",
             file=sys.stderr, flush=True,
         )
-    # Verify the limit was actually applied.
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         if soft != rlimit_bytes:
-            import sys
             print(
                 f"WHITEFOX_PREEXEC: RLIMIT_AS mismatch: "
                 f"wanted={rlimit_bytes}, got soft={soft} hard={hard}",

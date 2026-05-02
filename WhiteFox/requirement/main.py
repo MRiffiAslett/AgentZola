@@ -61,12 +61,8 @@ def main():
         max_tokens = gpt_config.get("max_tokens")
         timeout = gpt_config.get("timeout")
         n_samples = gpt_config.get("n_samples")
-        max_retries = gpt_config.get("max_retries")
-        retry_delay = gpt_config.get("retry_delay")
         skip_existing = gpt_config.get("skip_existing")
         system_message = gpt_config.get("system_message")
-
-        api_key_path = Path(api_key_file)
 
         if gpt_output_dir.exists():
             import shutil
@@ -108,6 +104,4 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"\n[ERROR] {e}")
-        import sys
-
         sys.exit(1)

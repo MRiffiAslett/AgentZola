@@ -23,21 +23,13 @@ class WhiteFoxLogger:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        self.source_dir = self.log_dir / "source"
-        self.source_dir.mkdir(parents=True, exist_ok=True)
-
-        self.prompts_file = self.source_dir / "prompts.json"
-        self.cleaned_code_file = self.source_dir / "all_cleaned_code.json"
-        self.bug_reports_file = self.source_dir / "bug_reports.json"
-        self.diagnostic_file = self.source_dir / "execution_diagnostics.json"
-
-        self.prompts_text_file = self.log_dir / "gen_prompts.log"
-        self.cleaned_code_text_file = self.log_dir / "gen_code.log"
+        self.prompts_file = self.log_dir / "prompts.json"
+        self.cleaned_code_file = self.log_dir / "all_cleaned_code.json"
+        self.bug_reports_file = self.log_dir / "bug_reports.json"
 
         self.prompts_data: Dict[str, List[Dict]] = {}
         self.cleaned_code_data: Dict[str, List[Dict]] = {}
         self.bug_reports_data: List[Dict] = []
-        self.diagnostic_data: List[Dict] = []
 
         self.opt_stats: Dict[str, Dict[str, int]] = {}
 
@@ -53,9 +45,6 @@ class WhiteFoxLogger:
             self.prompts_file,
             self.cleaned_code_file,
             self.bug_reports_file,
-            self.diagnostic_file,
-            self.prompts_text_file,
-            self.cleaned_code_text_file,
         ]
 
         for log_file in all_files:
@@ -68,7 +57,6 @@ class WhiteFoxLogger:
             self.prompts_data,
             self.cleaned_code_data,
             self.bug_reports_data,
-            self.diagnostic_data,
             self.opt_stats,
         ]:
             data.clear()
@@ -78,6 +66,8 @@ class WhiteFoxLogger:
         return {
             "generated": 0,
             "triggered": 0,
+            "valid": 0,
+            "invalid": 0,
         }
 
     def _ensure_stats_initialized(self, opt_key: str) -> None:
@@ -136,7 +126,9 @@ class WhiteFoxLogger:
                     "optimization": optimization_name,
                     "iteration": iteration,
                     "sample_idx": sample_idx,
-                    "code": cleaned_code,
+                    "raw_llm_output": raw_text,
+                    "cleaned_code": cleaned_code,
+                    "parsed_code": parsed_code,
                 }
             )
 
@@ -231,105 +223,20 @@ class WhiteFoxLogger:
 
     def _write_prompts(self) -> None:
         self._append_jsonl(self.prompts_file, self.prompts_data)
-        self._write_prompts_readable()
 
     def _write_cleaned_code(self) -> None:
         self._append_jsonl(
             self.cleaned_code_file, self.cleaned_code_data, ensure_ascii=False
         )
-        self._write_code_readable()
 
     def _write_bug_reports(self) -> None:
         self._append_jsonl(self.bug_reports_file, self.bug_reports_data)
-
-    def _write_diagnostics(self) -> None:
-        self._append_jsonl(self.diagnostic_file, self.diagnostic_data)
-
-    def log_diagnostic(
-        self,
-        optimization_name: str,
-        iteration: int,
-        sample_idx: int,
-        stage: str,
-        status: str,
-        details: Dict[str, Any],
-        test_code: Optional[str] = None,
-    ) -> None:
-        with self._lock:
-            diagnostic_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "optimization": optimization_name,
-                "iteration": iteration,
-                "sample_idx": sample_idx,
-                "stage": stage,
-                "status": status,
-                "details": details,
-            }
-
-            self.diagnostic_data.append(diagnostic_entry)
-            self._write_diagnostics()
-
-    @staticmethod
-    def _unescape_text(text: str) -> str:
-        if isinstance(text, str):
-            return text.replace("\\n", "\n").replace("\\t", "\t")
-        return text
 
     @staticmethod
     def _write_header(f, title: str) -> None:
         f.write("=" * 80 + "\n")
         f.write(f"{title}\n")
         f.write("=" * 80 + "\n\n")
-
-    @staticmethod
-    def _write_section_header(f, opt_name: str) -> None:
-        f.write(f"\n{'=' * 80}\n")
-        f.write(f"OPTIMIZATION: {opt_name}\n")
-        f.write(f"{'=' * 80}\n\n")
-
-    def _write_prompts_readable(self) -> None:
-        with open(self.prompts_text_file, "a") as f:
-            for opt_name, prompts_list in self.prompts_data.items():
-                self._write_section_header(f, opt_name)
-
-                for prompt_entry in prompts_list:
-                    f.write(f"\n{'-' * 80}\n")
-                    f.write(f"Iteration: {prompt_entry['iteration']} | ")
-                    f.write(f"Type: {prompt_entry['prompt_type']} | ")
-                    f.write(f"Timestamp: {prompt_entry['timestamp']}\n")
-                    f.write(f"Number of Examples: {prompt_entry['num_examples']}\n")
-                    f.write(f"{'-' * 80}\n\n")
-
-                    f.write("PROMPT TEXT:\n")
-                    f.write("-" * 40 + "\n")
-                    f.write(self._unescape_text(prompt_entry["prompt"]))
-                    f.write("\n" + "-" * 40 + "\n")
-
-                    if prompt_entry.get("examples"):
-                        f.write("\nEXAMPLES USED:\n")
-                        for i, example in enumerate(prompt_entry["examples"], 1):
-                            f.write(f"  {i}. Test ID: {example['test_id']}\n")
-                            f.write(f"     File: {example['file_path']}\n")
-                            f.write(
-                                f"     Alpha: {example['alpha']}, Beta: {example['beta']}\n"
-                            )
-                    f.write("\n")
-
-    def _write_code_readable(self) -> None:
-        with open(self.cleaned_code_text_file, "a") as f:
-            for opt_name, code_list in self.cleaned_code_data.items():
-                self._write_section_header(f, opt_name)
-
-                for code_entry in code_list:
-                    f.write(f"\n{'-' * 80}\n")
-                    f.write(f"Iteration: {code_entry['iteration']} | ")
-                    f.write(f"Sample: {code_entry['sample_idx']}\n")
-                    f.write(f"{'-' * 80}\n\n")
-
-                    f.write("CLEANED CODE:\n")
-                    f.write("-" * 40 + "\n")
-                    f.write(self._unescape_text(code_entry["code"]))
-                    f.write("\n" + "-" * 40 + "\n\n")
 
     def _track_execution_stats(
         self, optimization_name: str, result: Any, pass_triggered: bool
@@ -341,6 +248,7 @@ class WhiteFoxLogger:
             if pass_triggered:
                 stats["triggered"] += 1
 
+            any_success = False
             for mode in result.modes:
                 key = f"success_{mode}"
                 if key not in stats:
@@ -348,13 +256,23 @@ class WhiteFoxLogger:
                 mr = result.get_mode(mode)
                 if mr.runtime_success:
                     stats[key] += 1
+                    any_success = True
 
-    def generate_run_summary(self, whitefox_state: Any) -> None:
+            if any_success:
+                stats["valid"] += 1
+            else:
+                stats["invalid"] += 1
+
+    def generate_run_summary(
+        self,
+        opt_names: List[str],
+        opt_states: Optional[Dict[str, Any]] = None,
+        coverage_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
         with self._lock:
             detailed_summary_file = self.log_dir / "run_summary_detailed.log"
 
-            # Collect all mode keys across all optimizations
-            mode_keys = []
+            mode_keys: List[str] = []
             for stats in self.opt_stats.values():
                 for key in stats:
                     if key.startswith("success_") and key not in mode_keys:
@@ -364,43 +282,98 @@ class WhiteFoxLogger:
             with open(detailed_summary_file, "w") as f:
                 self._write_header(f, "WHITEFOX DETAILED RUN SUMMARY")
 
+                # --- Test generation table ---
                 mode_labels = [k.replace("success_", "") for k in mode_keys]
                 header = (
-                    "Optimization                             | Created | Triggered"
+                    "Optimization                             "
+                    "| Created |   Valid | Invalid | Triggered"
                 )
                 for label in mode_labels:
-                    header += f" | {label.capitalize()}"
+                    header += f" | {label.capitalize():>11s}"
                 f.write(header + "\n")
-                f.write("-" * max(80, len(header) + 5) + "\n\n")
+                sep_len = max(95, len(header) + 5)
+                f.write("-" * sep_len + "\n\n")
 
-                totals = {"generated": 0, "triggered": 0}
+                totals = {
+                    "generated": 0, "triggered": 0,
+                    "valid": 0, "invalid": 0,
+                }
                 for mk in mode_keys:
                     totals[mk] = 0
 
-                for opt_name in sorted(whitefox_state.optimizations.keys()):
-                    stats = self.opt_stats.get(opt_name, self._get_default_stats())
+                for name in sorted(opt_names):
+                    stats = self.opt_stats.get(name, self._get_default_stats())
 
                     totals["generated"] += stats.get("generated", 0)
                     totals["triggered"] += stats.get("triggered", 0)
+                    totals["valid"] += stats.get("valid", 0)
+                    totals["invalid"] += stats.get("invalid", 0)
 
-                    f.write(f"{opt_name:40s} | ")
+                    f.write(f"{name:40s} | ")
                     f.write(f"{stats.get('generated', 0):7d} | ")
+                    f.write(f"{stats.get('valid', 0):7d} | ")
+                    f.write(f"{stats.get('invalid', 0):7d} | ")
                     f.write(f"{stats.get('triggered', 0):9d}")
-
                     for mk in mode_keys:
                         val = stats.get(mk, 0)
                         totals[mk] += val
-                        f.write(f" | {val:7d}")
+                        f.write(f" | {val:11d}")
                     f.write("\n")
 
-                f.write("-" * max(80, len(header) + 5) + "\n")
+                f.write("-" * sep_len + "\n")
                 f.write(f"{'TOTAL':40s} | ")
                 f.write(f"{totals['generated']:7d} | ")
+                f.write(f"{totals['valid']:7d} | ")
+                f.write(f"{totals['invalid']:7d} | ")
                 f.write(f"{totals['triggered']:9d}")
                 for mk in mode_keys:
-                    f.write(f" | {totals[mk]:7d}")
+                    f.write(f" | {totals[mk]:11d}")
                 f.write("\n")
-                f.write("=" * max(80, len(header) + 5) + "\n")
+                f.write("=" * sep_len + "\n")
+
+                # --- Thompson sampling stats ---
+                if opt_states:
+                    f.write("\n")
+                    self._write_header(f, "THOMPSON SAMPLING STATS")
+                    f.write(
+                        f"{'Optimization':40s} | {'Tests':>5s} | "
+                        f"{'Avg Alpha':>9s} | {'Avg Beta':>9s} | "
+                        f"{'Avg Theta':>9s}\n"
+                    )
+                    f.write("-" * 85 + "\n\n")
+
+                    for name in sorted(opt_names):
+                        os_ = opt_states.get(name)
+                        if os_ is None or not os_.triggering_tests:
+                            f.write(f"{name:40s} |     0 |       - |       - |       -\n")
+                            continue
+                        tests = list(os_.triggering_tests.values())
+                        n = len(tests)
+                        avg_a = sum(t.alpha for t in tests) / n
+                        avg_b = sum(t.beta for t in tests) / n
+                        avg_theta = avg_a / (avg_a + avg_b) if (avg_a + avg_b) > 0 else 0
+                        f.write(
+                            f"{name:40s} | {n:5d} | "
+                            f"{avg_a:9.2f} | {avg_b:9.2f} | "
+                            f"{avg_theta:9.4f}\n"
+                        )
+                    f.write("=" * 85 + "\n")
+
+                # --- Coverage ---
+                if coverage_data:
+                    f.write("\n")
+                    self._write_header(f, "COVERAGE")
+                    xla_hit = coverage_data.get("xla_lines_hit", 0)
+                    xla_total = coverage_data.get("xla_lines_total", 0)
+                    xla_pct = (xla_hit / xla_total * 100) if xla_total else 0
+                    all_hit = coverage_data.get("all_lines_hit", 0)
+                    all_total = coverage_data.get("all_lines_total", 0)
+                    f.write(f"XLA lines hit:    {xla_hit:>10,}\n")
+                    f.write(f"XLA lines total:  {xla_total:>10,}\n")
+                    f.write(f"XLA coverage:     {xla_pct:>9.2f}%\n")
+                    f.write(f"All TF lines hit: {all_hit:>10,}\n")
+                    f.write(f"All TF lines total:{all_total:>9,}\n")
+                    f.write("=" * 40 + "\n")
 
             if self.base_logger:
                 self.base_logger.debug(
@@ -412,7 +385,6 @@ class WhiteFoxLogger:
             self._write_prompts()
             self._write_cleaned_code()
             self._write_bug_reports()
-            self._write_diagnostics()
 
     def flush_and_clear(self) -> None:
         """Flush all buffered data to disk and release the in-memory copies.
@@ -424,8 +396,6 @@ class WhiteFoxLogger:
             self._write_prompts()
             self._write_cleaned_code()
             self._write_bug_reports()
-            self._write_diagnostics()
             self.prompts_data.clear()
             self.cleaned_code_data.clear()
             self.bug_reports_data.clear()
-            self.diagnostic_data.clear()

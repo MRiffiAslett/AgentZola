@@ -64,19 +64,7 @@ def ensure_imports(code: str, framework: str = "TensorFlow") -> str:
     lines = code.split("\n")
     _fw = framework.lower()
 
-    if _fw == "tensorflow":
-        uses_tf = bool(re.search(r"\btf[\.\s]", code))
-        uses_np = bool(re.search(r"\bnp[\.\s]", code))
-
-        has_tf_import = re.search(r"import\s+tensorflow\s+as\s+tf", code, re.IGNORECASE)
-        has_np_import = re.search(r"import\s+numpy\s+as\s+np", code, re.IGNORECASE)
-
-        imports_to_add = []
-        if uses_tf and not has_tf_import:
-            imports_to_add.append("import tensorflow as tf")
-        if uses_np and not has_np_import:
-            imports_to_add.append("import numpy as np")
-    elif _fw == "pytorch":
+    if _fw == "pytorch":
         uses_torch = bool(re.search(r"\btorch[\.\s]", code))
         uses_nn = bool(re.search(r"\bnn[\.\s]", code))
         uses_np = bool(re.search(r"\bnp[\.\s]", code))
