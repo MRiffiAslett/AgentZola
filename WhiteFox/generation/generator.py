@@ -58,11 +58,27 @@ def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
 
 def _pool_worker_init() -> None:
+    """Set RLIMIT_AS on ProcessPoolExecutor workers so TF/XLA allocations
+    in the worker process (not just Popen grandchildren) are bounded."""
     import resource
+    import sys
     mem_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8"))
     rlimit_bytes = mem_gb * 3 * (1024 ** 3)
     try:
         resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
+    except Exception as exc:
+        print(
+            f"WHITEFOX_POOL_INIT: RLIMIT_AS={rlimit_bytes} FAILED: {exc}",
+            file=sys.stderr, flush=True,
+        )
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if soft != rlimit_bytes:
+            print(
+                f"WHITEFOX_POOL_INIT: RLIMIT_AS mismatch: "
+                f"wanted={rlimit_bytes}, got soft={soft} hard={hard}",
+                file=sys.stderr, flush=True,
+            )
     except Exception:
         pass
 

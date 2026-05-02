@@ -198,7 +198,6 @@ class WhiteFoxLogger:
                     "logs_file": str(bug_report.logs_file),
                 }
             )
-            self._write_bug_reports()
 
     @staticmethod
     def _append_jsonl(file_path: Path, data: Any, **kwargs) -> None:
