@@ -107,7 +107,6 @@ export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-8}"
 # at ~iteration 59 under 190 GB.  4 workers × 10 GB RLIMIT_AS = 40 GB virtual,
 # leaving ample headroom for vLLM + coverage merge.
 export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
-export WHITEFOX_USE_CONTAINER="${WHITEFOX_USE_CONTAINER:-0}"
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
 
@@ -115,13 +114,6 @@ PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
 mkdir -p "$WHITEFOX_LOGGING_DIR"
 echo "${SLURM_ARRAY_JOB_ID}" > "$WHITEFOX_LOGGING_DIR/.job_id"
-
-WHITEFOX_SLURM_ROOT="${WHITEFOX_SLURM_ROOT:-$PROJECT_ROOT/slurm}"
-if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/container_launch.sh" ]; then
-  WHITEFOX_SLURM_ROOT="$SLURM_SUBMIT_DIR"
-fi
-source "${WHITEFOX_SLURM_ROOT}/container_launch.sh"
-whitefox_maybe_reexec_container "${BASH_SOURCE[0]}" "tfxla_a100_array.sh" "$@"
 
 echo "[$(date)] Array task $SLURM_ARRAY_TASK_ID ($BATCH_LABEL)"
 echo "[$(date)] Optimizations (${#MY_BATCH[@]}): $OPT_CSV"
@@ -145,7 +137,7 @@ for _llvm_dir in /vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/llvm_l
 done
 export PATH="$LLVM17_BIN:$HOME/.local/bin:$PATH"
 
-if [ -z "${WHITEFOX_IN_CONTAINER:-}" ] && [ -f /vol/cuda/12.0.0/setup.sh ]; then
+if [ -f /vol/cuda/12.0.0/setup.sh ]; then
   . /vol/cuda/12.0.0/setup.sh
 fi
 
