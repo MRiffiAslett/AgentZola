@@ -290,6 +290,14 @@ try:
         raise MemoryError(_skip)
 
     try:
+        # Re-seed before xla mode: naive's random.random() / np.random / tf.random
+        # calls advanced the shared PRNG state.  Without re-seeding, xla draws
+        # different values than naive — any code branching on random.random()
+        # takes a different path, producing a false AllDiff oracle report.
+        random.seed({RANDOM_SEED})
+        np.random.seed({RANDOM_SEED})
+        tf.random.set_seed({RANDOM_SEED})
+
         test_code_xla = add_decorator_inline(test_code, "@tf.function(jit_compile=True)")
         test_globals_xla = {{
             '__name__': '__main__',
@@ -323,6 +331,11 @@ try:
         raise MemoryError(_skip)
 
     try:
+        # Re-seed before autocluster mode (see xla block above for rationale).
+        random.seed({RANDOM_SEED})
+        np.random.seed({RANDOM_SEED})
+        tf.random.set_seed({RANDOM_SEED})
+
         os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
         
         test_code_ac = add_decorator_inline(test_code, "@tf.function")
