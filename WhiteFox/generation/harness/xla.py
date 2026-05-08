@@ -208,6 +208,16 @@ def _serialize_output(output):
     elif isinstance(output, (tuple, list)):
         return [_serialize_output(t) if isinstance(t, tf.Tensor) else t for t in output]
     else:
+        # KerasTensor (symbolic, from tf.keras.layers.Input) carries no numeric
+        # data and its str() embeds a per-instance counter ("name=keras_tensor_N")
+        # that differs between fresh model instances across naive/xla/autocluster,
+        # producing a false AllDiff on identical graphs.  Return a counter-free
+        # representation so all three modes serialise to the same string.
+        try:
+            if tf.keras.backend.is_keras_tensor(output):
+                return "<KerasTensor shape=" + str(tuple(output.shape)) + " dtype=" + str(output.dtype) + ">"
+        except Exception:
+            pass
         return str(output)
 
 
