@@ -252,6 +252,20 @@ try:
     tf.random.set_seed({RANDOM_SEED})
     
     test_code = {test_code_repr}
+    # Strip any user-supplied @tf.function(...) decorator immediately above
+    # `def call` so all three modes (naive, xla, autocluster) start from the
+    # same baseline.  Otherwise add_decorator_inline stacks a second decorator
+    # on top of the user's, giving each mode an asymmetric ConcreteFunction
+    # wrapper — for some models (e.g. tf.while_loop with overflow) this makes
+    # naive return shape (0,) and xla return shape (4,), causing a false
+    # "Length mismatch: 0 vs 4" AllDiff oracle report.
+    import re as _re
+    test_code = _re.sub(
+        r'^[ \\t]*@tf\\.function(?:\\([^)]*\\))?[ \\t]*\\n(?=[ \\t]*def call\\b)',
+        '',
+        test_code,
+        flags=_re.MULTILINE,
+    )
     model_key = 'm'
     input_data_key = 'input_data'
 
