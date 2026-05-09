@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/tfxla/out/whitefox-docker_%j.out
+# (the SBATCH directive above is a safety net: this script is NOT meant to be
+# submitted via `sbatch` — Imperial's compute nodes don't run a Docker daemon.
+# If someone does sbatch it by accident, at least the failure log lands in
+# slurm/tfxla/out/ instead of polluting slurm/tfxla/. The script also detects
+# SLURM_JOB_ID below and exits early with a clear message.)
 # =============================================================================
 # WhiteFox TF/XLA fuzzer — standalone Docker reproducibility wrapper.
 #
@@ -43,6 +49,19 @@
 # =============================================================================
 
 set -euo pipefail
+
+# ---- Refuse to run under sbatch --------------------------------------------
+# Imperial's GPU compute nodes don't expose a Docker daemon (they use Apptainer
+# / Singularity instead), so this script will always fail there. Bail early
+# with a clear message rather than silently producing a useless out file.
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+  cat >&2 <<'MSG'
+ERROR: tfxla_a100_docker.sh is not a SLURM script and must NOT be submitted
+       with sbatch. Run it directly with bash on a host that has Docker +
+       NVIDIA Container Toolkit. For the cluster, use tfxla_a100_array.sh.
+MSG
+  exit 2
+fi
 
 # ---- Resolve script + project paths ----------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

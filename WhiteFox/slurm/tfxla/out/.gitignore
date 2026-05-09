@@ -1,0 +1,5 @@
+# Keep this directory in git but ignore everything that gets written here.
+# SLURM writes per-job logs into this folder via #SBATCH --output in the
+# tfxla_a100_array.sh / tfxla_a100_docker.sh scripts.
+*
+!.gitignore
