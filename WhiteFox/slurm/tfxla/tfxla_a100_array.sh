@@ -7,7 +7,7 @@
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
-#SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/output_tf/whitefox_%A_%a.out
+#SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/tfxla/out/whitefox_%A_%a.out
 
 # ---- Array: 3 tasks, ~17 opts each.  With early-stop disabled every opt runs
 # the full 100 iterations (1000 tests); 17 opts × ~90 min ≈ 25.5 h per task,
@@ -142,7 +142,7 @@ if [ -f /vol/cuda/12.0.0/setup.sh ]; then
 fi
 
 cd "$PROJECT_ROOT"
-mkdir -p "$PROJECT_ROOT/output" "$PROJECT_ROOT/slurm/output_tf" "$PROJECT_ROOT/hf_cache"
+mkdir -p "$PROJECT_ROOT/output" "$PROJECT_ROOT/slurm/tfxla/out" "$PROJECT_ROOT/hf_cache"
 
 if [ -f "$HOME/.hf_token" ]; then
   export HF_TOKEN="$(cat "$HOME/.hf_token")"
