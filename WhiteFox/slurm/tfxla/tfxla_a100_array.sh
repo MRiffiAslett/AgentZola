@@ -190,6 +190,40 @@ poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-op
 GEN_EXIT=$?
 echo "[$(date)] Finished $BATCH_LABEL (exit $GEN_EXIT)"
 
+# ---- OOM postmortem: capture cgroup memory state on non-zero exit ----------
+# We don't yet know what's actually consuming memory before the OOM kill.
+# On any non-zero exit, dump cgroup memory.{current,peak,events,stat} plus
+# recent kernel oom-kill lines to logging/oom_postmortem.log so the next
+# failure is debuggable without needing to re-attach a live srun.
+if [ "$GEN_EXIT" != "0" ]; then
+  OOM_LOG="$WHITEFOX_LOGGING_DIR/oom_postmortem.log"
+  CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
+  CG_DIR="/sys/fs/cgroup${CG_REL}"
+  {
+    echo "=== OOM POSTMORTEM $(date -Iseconds) ==="
+    echo "exit_code=$GEN_EXIT  job=${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}  node=$(hostname)"
+    echo "cgroup=$CG_DIR"
+    for f in memory.current memory.peak memory.swap.current memory.swap.peak \
+             memory.events memory.events.local memory.stat; do
+      if [ -r "$CG_DIR/$f" ]; then
+        echo "--- $f ---"
+        cat "$CG_DIR/$f"
+      fi
+    done
+    echo "--- top RSS users in this job (ps) ---"
+    ps -eo pid,ppid,rss,vsz,comm,args --sort=-rss 2>/dev/null | head -30
+    echo "--- recent dmesg oom lines ---"
+    dmesg 2>/dev/null | grep -iE "oom|killed process|memory cgroup" | tail -40 \
+      || journalctl -k --since "10 min ago" 2>/dev/null \
+         | grep -iE "oom|killed process|memory cgroup" | tail -40 \
+      || echo "(no kernel log access)"
+    echo "--- /tmp usage ---"
+    df -h /tmp 2>/dev/null
+    du -sh /tmp/xla_dump_* 2>/dev/null
+  } > "$OOM_LOG" 2>&1
+  echo "[$(date)] OOM postmortem written to $OOM_LOG"
+fi
+
 # ---- Copy coverage artifacts from local /data to NFS -----------------------
 echo "[$(date)] Copying coverage artifacts to NFS …"
 if [ -f "$WHITEFOX_LOGGING_DIR/coverage/merged.profdata" ]; then

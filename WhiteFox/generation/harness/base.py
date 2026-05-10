@@ -102,11 +102,8 @@ class TestHarness(ABC):
                 optimization_name, test_file.name, timeout,
             )
 
-            mem_cap_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8")) + 2
             process = subprocess.run(
-                ["systemd-run", "--user", "--scope", "--quiet",
-                 "-p", f"MemoryMax={mem_cap_gb}G", "-p", "MemorySwapMax=0", "--",
-                 sys.executable, "-c", wrapper_script],
+                [sys.executable, "-c", wrapper_script],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
