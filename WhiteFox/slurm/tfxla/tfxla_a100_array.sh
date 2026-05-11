@@ -185,9 +185,39 @@ if [ ! -f "$CONFIG_PATH" ]; then
   exit 1
 fi
 
+# ---- Background cgroup memory tracer ---------------------------------------
+# psutil-based profiler only sees the parent process; the cgroup OOM is driven
+# by children + tmpfs + page cache that the parent never sees. Sample the
+# cgroup's own counters every 5 s into cgroup_mem.tsv so we can see the cliff.
+CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
+CG_DIR="/sys/fs/cgroup${CG_REL}"
+TRACE_FILE="$WHITEFOX_LOGGING_DIR/cgroup_mem.tsv"
+(
+  printf 'ts\tmem_current\tmem_peak\tswap_current\tnr_oom\ttmp_kb\ttop3_rss\n' > "$TRACE_FILE"
+  while true; do
+    CUR=$(cat "$CG_DIR/memory.current" 2>/dev/null || echo 0)
+    PEAK=$(cat "$CG_DIR/memory.peak" 2>/dev/null || echo 0)
+    SWAP=$(cat "$CG_DIR/memory.swap.current" 2>/dev/null || echo 0)
+    NROOM=$(awk '/^oom /{print $2}' "$CG_DIR/memory.events" 2>/dev/null || echo 0)
+    TMP_KB=$(du -sk /tmp/xla_dump_${SLURM_ARRAY_JOB_ID:-$$}_${SLURM_ARRAY_TASK_ID:-0} 2>/dev/null | awk '{print $1}')
+    TOP=$(ps -eo rss,comm --no-headers --sort=-rss 2>/dev/null \
+            | head -3 | awk '{printf "%s:%s;", $2, $1}')
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$(date +%s)" "$CUR" "$PEAK" "$SWAP" "$NROOM" "${TMP_KB:-0}" "$TOP" >> "$TRACE_FILE"
+    sleep 5
+  done
+) &
+TRACER_PID=$!
+
 echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
-poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV"
-GEN_EXIT=$?
+echo "[$(date)] cgroup trace: $TRACE_FILE (PID=$TRACER_PID)"
+
+# Don't let set -e short-circuit past the postmortem when python is SIGKILL'd.
+GEN_EXIT=0
+poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV" \
+  || GEN_EXIT=$?
+
+kill "$TRACER_PID" 2>/dev/null || true
 echo "[$(date)] Finished $BATCH_LABEL (exit $GEN_EXIT)"
 
 # ---- OOM postmortem: capture cgroup memory state on non-zero exit ----------
@@ -220,6 +250,8 @@ if [ "$GEN_EXIT" != "0" ]; then
     echo "--- /tmp usage ---"
     df -h /tmp 2>/dev/null
     du -sh /tmp/xla_dump_* 2>/dev/null
+    echo "--- last 20 cgroup_mem.tsv samples ---"
+    tail -20 "$TRACE_FILE" 2>/dev/null || echo "(no trace file)"
   } > "$OOM_LOG" 2>&1
   echo "[$(date)] OOM postmortem written to $OOM_LOG"
 fi
