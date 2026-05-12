@@ -188,23 +188,32 @@ fi
 # ---- Background cgroup memory tracer ---------------------------------------
 # psutil-based profiler only sees the parent process; the cgroup OOM is driven
 # by children + tmpfs + page cache that the parent never sees. Sample the
-# cgroup's own counters every 5 s into cgroup_mem.tsv so we can see the cliff.
+# cgroup's own counters every 2 s into cgroup_mem.tsv so we can see the cliff.
 CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
 CG_DIR="/sys/fs/cgroup${CG_REL}"
 TRACE_FILE="$WHITEFOX_LOGGING_DIR/cgroup_mem.tsv"
+XLA_DUMP_GLOB="/tmp/xla_dump_${SLURM_ARRAY_JOB_ID:-$$}_${SLURM_ARRAY_TASK_ID:-0}"
 (
-  printf 'ts\tmem_current\tmem_peak\tswap_current\tnr_oom\ttmp_kb\ttop3_rss\n' > "$TRACE_FILE"
+  # Loosen strict-mode in the tracer: a single failing `du` (e.g. before the
+  # XLA dump dir exists) must not kill the monitor. Bash inherits set -e and
+  # pipefail into subshells; that bug caused cgroup_mem.tsv to stay empty in
+  # the previous run.
+  set +e
+  set +o pipefail
+  printf 'ts\tmem_current\tmem_peak\tswap_current\toom\toom_kill\ttmp_kb\ttop5_pid_rss_cmd\n' > "$TRACE_FILE"
   while true; do
-    CUR=$(cat "$CG_DIR/memory.current" 2>/dev/null || echo 0)
-    PEAK=$(cat "$CG_DIR/memory.peak" 2>/dev/null || echo 0)
-    SWAP=$(cat "$CG_DIR/memory.swap.current" 2>/dev/null || echo 0)
-    NROOM=$(awk '/^oom /{print $2}' "$CG_DIR/memory.events" 2>/dev/null || echo 0)
-    TMP_KB=$(du -sk /tmp/xla_dump_${SLURM_ARRAY_JOB_ID:-$$}_${SLURM_ARRAY_TASK_ID:-0} 2>/dev/null | awk '{print $1}')
-    TOP=$(ps -eo rss,comm --no-headers --sort=-rss 2>/dev/null \
-            | head -3 | awk '{printf "%s:%s;", $2, $1}')
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$(date +%s)" "$CUR" "$PEAK" "$SWAP" "$NROOM" "${TMP_KB:-0}" "$TOP" >> "$TRACE_FILE"
-    sleep 5
+    CUR=$(cat "$CG_DIR/memory.current" 2>/dev/null)
+    PEAK=$(cat "$CG_DIR/memory.peak" 2>/dev/null)
+    SWAP=$(cat "$CG_DIR/memory.swap.current" 2>/dev/null)
+    OOM=$(awk '/^oom /{print $2}' "$CG_DIR/memory.events" 2>/dev/null)
+    OOMK=$(awk '/^oom_kill /{print $2}' "$CG_DIR/memory.events" 2>/dev/null)
+    TMP_KB=$(du -sk "$XLA_DUMP_GLOB" 2>/dev/null | awk '{print $1}')
+    TOP=$(ps -eo pid,rss,comm --no-headers --sort=-rss 2>/dev/null \
+            | head -5 | awk '{printf "%s/%sK/%s;", $1, $2, $3}')
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$(date +%s)" "${CUR:-0}" "${PEAK:-0}" "${SWAP:-0}" \
+      "${OOM:-0}" "${OOMK:-0}" "${TMP_KB:-0}" "$TOP" >> "$TRACE_FILE"
+    sleep 2
   done
 ) &
 TRACER_PID=$!
