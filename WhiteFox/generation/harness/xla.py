@@ -203,8 +203,19 @@ result = {{
 
 def _serialize_output(output):
     import tensorflow as tf
+    # IPC payload cap. Without this, large outputs (e.g. DotDecomposer's matmul
+    # tests) push ~1 GB/mode of Python-float nested lists across to the parent
+    # per test. The parent's PyMalloc arena never returns small-object pages to
+    # the OS, so anon RSS climbs ~300 MB/test until the slurm cgroup hits its
+    # mem cap and OOM-kills the parent (job 240357_1 died at 190 GiB).
+    # Truncating to the first ~10k elements keeps the cross-process JSON tiny
+    # while still letting the diff oracle catch systematic divergence.
+    _MAX_SERIALIZED_ELEMS = int(os.environ.get("WHITEFOX_MAX_OUTPUT_ELEMS", "10000"))
     if isinstance(output, tf.Tensor):
-        return output.numpy().tolist()
+        arr = output.numpy()
+        if arr.size > _MAX_SERIALIZED_ELEMS:
+            arr = arr.flatten()[:_MAX_SERIALIZED_ELEMS]
+        return arr.tolist()
     elif isinstance(output, (tuple, list)):
         return [_serialize_output(t) if isinstance(t, tf.Tensor) else t for t in output]
     else:
