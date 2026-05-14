@@ -421,7 +421,22 @@ finally:
     _watchdog_stop.set()
     sys.stdout.flush()
     sys.stderr.flush()
-    result["log_text"] = stdout_capture.getvalue() + stderr_capture.getvalue()
+    # With --xla_dump_hlo_pass_re=.* every test floods stderr with HLO-pass
+    # markers (≥1 MB/test on opts like StochasticConvertDecomposer).  The
+    # parent only ever uses log_text to regex out the pass-name set, so
+    # extract that set here and send the parent the (≤~80-string) result;
+    # ship back only a short tail of the raw log for debugging.  Without
+    # this the parent's PyMalloc arena retained ~10s of MB per test and
+    # anon RSS climbed to 190 GiB in job 240645_2 even after ca48f23.
+    _log_combined = stdout_capture.getvalue() + stderr_capture.getvalue()
+    result["triggered_passes"] = sorted(set(
+        re.findall(r'WHITEFOX_PASS_START[^\\n]*\\bpass=([^\\s]+)', _log_combined)
+    ))
+    _MAX_LOG_CHARS = int(os.environ.get("WHITEFOX_MAX_LOG_CHARS", "8192"))
+    if len(_log_combined) > _MAX_LOG_CHARS:
+        _log_combined = _log_combined[-_MAX_LOG_CHARS:]
+    result["log_text"] = _log_combined
+    del _log_combined
     sys.stdout = original_stdout
     sys.stderr = original_stderr
     if old_xla_flags_env:
