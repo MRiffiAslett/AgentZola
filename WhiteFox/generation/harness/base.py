@@ -120,6 +120,7 @@ class TestHarness(ABC):
             )
 
             log_text_from_json = None
+            passes_from_json = None
             if "WHITEFOX_RESULT_START" in output and "WHITEFOX_RESULT_END" in output:
                 start_idx = output.find("WHITEFOX_RESULT_START") + len(
                     "WHITEFOX_RESULT_START"
@@ -142,6 +143,7 @@ class TestHarness(ABC):
                         mr.output = result_data.get(f"output_{mode}")
 
                     log_text_from_json = result_data.get("log_text", "")
+                    passes_from_json = result_data.get("triggered_passes")
 
                     mode_summary = {
                         m: ("OK" if result_data.get(f"runtime_success_{m}") else "FAIL")
@@ -172,7 +174,14 @@ class TestHarness(ABC):
             else:
                 result.log_text = output
 
-            result.triggered_passes = self.extract_triggered_passes(result.log_text)
+            # Prefer the pass set the wrapper already extracted (cheap IPC,
+            # bounded size) over re-regexing the raw log here.  Falling back
+            # to extract_triggered_passes covers older wrappers and the case
+            # where JSON parsing failed and result.log_text holds raw output.
+            if passes_from_json is not None:
+                result.triggered_passes = set(passes_from_json)
+            else:
+                result.triggered_passes = self.extract_triggered_passes(result.log_text)
 
             if result.triggered_passes:
                 logger.info(
