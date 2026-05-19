@@ -179,8 +179,21 @@ class TeeOutput:
 
 original_stdout = sys.stdout
 original_stderr = sys.stderr
-sys.stdout = TeeOutput(original_stdout, stdout_capture)
-sys.stderr = TeeOutput(original_stderr, stderr_capture)
+# Do NOT tee Python-level stdout/stderr to the real fd 1 / fd 2.  Tests can
+# easily print megabyte-scale tracebacks (e.g. TF's OOM error includes the
+# full failing HLO) or even whole tensors; teeing them to original_stdout
+# means the parent's subprocess.run(capture_output=True) absorbs all of it
+# into RAM as a Python string, and CPython's allocator does not return
+# those arenas to the OS — job 241012_0 grew the parent's RSS 1.3 GB ->
+# 197 GB at a steady ~10 MB/s during AllReduceCombiner iter 12 and OOMed.
+# Sending writes only to the in-process StringIO keeps the leak bounded
+# inside the wrapper subprocess (which has RLIMIT_AS=10 GB) and the
+# 8 KB log_text truncation in the finally block keeps the parent payload
+# small.  The fd 1 / fd 2 streams are still used for the WHITEFOX_RESULT
+# markers + JSON, which are printed after the finally block restores
+# sys.stdout / sys.stderr to their originals.
+sys.stdout = stdout_capture
+sys.stderr = stderr_capture
 
 result = {{
     "compile_success_naive": False,
