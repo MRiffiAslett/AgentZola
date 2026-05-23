@@ -169,19 +169,37 @@ class TestHarness(ABC):
                     for line in process.stderr.strip().splitlines()[-3:]:
                         logger.warning("  stderr: %s", line)
 
-            if log_text_from_json is not None and log_text_from_json:
-                result.log_text = log_text_from_json
-            else:
-                result.log_text = output
+            # Always cap log_text.  Previously the "log_text_from_json
+            # truthy" branch fell through to `result.log_text = output`
+            # whenever the wrapper's StringIO was empty (i.e. the test
+            # produced no Python-level stdout/stderr).  After f7a6d57 that
+            # is the *common* case, because TF's C++ logging — most
+            # importantly the per-XLA-pass dump notifications emitted under
+            # `--xla_dump_hlo_pass_re=.*` for collective opts like
+            # AllReduceCombiner — writes directly to fd 2 via write(2,…)
+            # and bypasses Python's sys.stderr entirely.  Those C++ writes
+            # still land in the parent's `process.stderr` (and therefore in
+            # `output`), and at 10s of MB per test × 4 parallel workers
+            # they drove the parent's RSS from 1.4 GB → 188 GB in ~30 min
+            # in job 242824_0 even with the TeeOutput leak plugged.
+            _MAX_LOG_CHARS = 8192
+            chosen_log = log_text_from_json if log_text_from_json else output
+            result.log_text = (
+                chosen_log[-_MAX_LOG_CHARS:]
+                if len(chosen_log) > _MAX_LOG_CHARS
+                else chosen_log
+            )
 
             # Prefer the pass set the wrapper already extracted (cheap IPC,
-            # bounded size) over re-regexing the raw log here.  Falling back
-            # to extract_triggered_passes covers older wrappers and the case
-            # where JSON parsing failed and result.log_text holds raw output.
+            # bounded size) over re-regexing the raw log here.  Falling
+            # back to extract_triggered_passes covers older wrappers; we
+            # do it against `output` (not the truncated log_text) so we
+            # don't miss WHITEFOX_PASS_START markers that fell off the
+            # tail when truncation kicked in.
             if passes_from_json is not None:
                 result.triggered_passes = set(passes_from_json)
             else:
-                result.triggered_passes = self.extract_triggered_passes(result.log_text)
+                result.triggered_passes = self.extract_triggered_passes(output)
 
             if result.triggered_passes:
                 logger.info(
@@ -189,6 +207,18 @@ class TestHarness(ABC):
                     optimization_name, test_file.name,
                     sorted(result.triggered_passes),
                 )
+
+            # Explicitly release the (potentially 10s-of-MB) captured
+            # stdout/stderr buffers before this worker picks up its next
+            # test.  Without this, with 4 parallel workers each holding a
+            # ~50 MB CompletedProcess + concatenated `output` while
+            # waiting on the next subprocess.run, the parent's transient
+            # working set grows monotonically and CPython's allocator
+            # does not return the freed pages between iterations fast
+            # enough to keep up with cgroup pressure.
+            del output
+            process.stdout = ""
+            process.stderr = ""
 
         except subprocess.TimeoutExpired:
             for mode in modes:
