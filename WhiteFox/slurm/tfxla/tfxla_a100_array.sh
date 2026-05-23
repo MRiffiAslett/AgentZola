@@ -84,6 +84,20 @@ MY_BATCH=("${ALL_OPTS[@]:$START:$COUNT}")
 OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
 BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
+# Smoke-test escape hatch: when WHITEFOX_OPT_OVERRIDE is set in the
+# environment (e.g. `sbatch --array=0 --time=02:00:00 \
+#   --export=ALL,WHITEFOX_OPT_OVERRIDE=AllReduceCombiner \
+#   WhiteFox/slurm/tfxla/tfxla_a100_array.sh`) the array task runs only
+# that comma-separated subset and writes its outputs to a sibling
+# logging dir, so we can validate a fix on a single problematic opt in
+# ~1 hour instead of waiting 15 h for the full array to finish.
+if [ -n "${WHITEFOX_OPT_OVERRIDE:-}" ]; then
+    OPT_CSV="$WHITEFOX_OPT_OVERRIDE"
+    BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}_smoke"
+    echo "[$(date)] WHITEFOX_OPT_OVERRIDE active: only running '$OPT_CSV'"
+    echo "[$(date)] Logging to $BATCH_LABEL (separate from regular batch dir)"
+fi
+
 # ---- Coverage: %Nm merge pool on node-local /data --------------------------
 # Instead of one 950 MB profraw per subprocess on NFS (the old bottleneck),
 # LLVM's %Nm merge pool keeps N shared files on local ext4.  Subprocesses

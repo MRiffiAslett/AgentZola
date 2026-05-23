@@ -450,6 +450,24 @@ finally:
         _log_combined = _log_combined[-_MAX_LOG_CHARS:]
     result["log_text"] = _log_combined
     del _log_combined
+
+    # Bulletproof IPC payload size: cap *every* string field in `result`,
+    # not just log_text.  For collective opts like AllReduceCombiner, TF's
+    # ResourceExhaustedError / UnimplementedError exception messages embed
+    # the full failing HLO module — easily 10+ MB per error.  Without this
+    # cap, three modes worth of `compile_error_<mode>` get JSON-serialized
+    # at full size, sent to the parent, deserialized onto `mr.compile_error`,
+    # and held on the result object for the iter's lifetime.  At 4 parallel
+    # workers × 10 samples × 3 modes that's ~1 GB / iter held just in
+    # error strings.  The wrapper-side cap means the parent never sees
+    # more than ~80 KB of IPC payload per test regardless of what TF
+    # decides to dump into an exception message.
+    _MAX_FIELD_CHARS = int(os.environ.get("WHITEFOX_MAX_FIELD_CHARS",
+                                          str(_MAX_LOG_CHARS)))
+    for _k, _v in list(result.items()):
+        if isinstance(_v, str) and len(_v) > _MAX_FIELD_CHARS:
+            result[_k] = _v[-_MAX_FIELD_CHARS:] + "...[truncated]"
+
     sys.stdout = original_stdout
     sys.stderr = original_stderr
     if old_xla_flags_env:

@@ -189,6 +189,11 @@ class TestHarness(ABC):
                 if len(chosen_log) > _MAX_LOG_CHARS
                 else chosen_log
             )
+            # chosen_log aliases `output` in the empty-JSON branch — release
+            # the alias before we hit the regex pass below or `del output`
+            # at the end leaves the original 100 MB string alive via this
+            # local reference.
+            del chosen_log
 
             # Prefer the pass set the wrapper already extracted (cheap IPC,
             # bounded size) over re-regexing the raw log here.  Falling
