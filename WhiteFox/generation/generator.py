@@ -518,6 +518,13 @@ class StarCoderGenerator:
                             opt_name, iteration, sample_idx,
                             (exec_result.error or "unknown error")[:200],
                         )
+                        whitefox_logger.log_execution_failure(
+                            opt_name,
+                            iteration,
+                            sample_idx,
+                            test_file,
+                            exec_result.error or "unknown error",
+                        )
                         continue
 
                     result = exec_result.execution_result
@@ -856,6 +863,10 @@ class StarCoderGenerator:
             coverage_data=coverage_result,
         )
         self.logger.info("Run summary written to %s", self.logging_dir / "run_summary_detailed.log")
+        self.logger.info(
+            "Generation quality log written to %s",
+            self.logging_dir / "generation_quality.log",
+        )
 
         self.profiler.generate_report()
         self.logger.info("Resource profile saved to %s", self.profiler.report_file)

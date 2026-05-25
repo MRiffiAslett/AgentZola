@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from domain.bandit import OptimizationState, TriggeringTest
+from generation.wf_logging.quality import (
+    QUALITY_TABLE_ROWS,
+    accumulate_quality_stats,
+    classify_generation_quality,
+    default_quality_stats,
+)
 
 
 def extract_triggered_passes(log_text: str) -> Set[str]:
@@ -26,10 +32,13 @@ class WhiteFoxLogger:
         self.prompts_file = self.log_dir / "prompts.json"
         self.cleaned_code_file = self.log_dir / "all_cleaned_code.json"
         self.bug_reports_file = self.log_dir / "bug_reports.json"
+        self.execution_results_file = self.log_dir / "execution_results.jsonl"
+        self.generation_quality_file = self.log_dir / "generation_quality.log"
 
         self.prompts_data: Dict[str, List[Dict]] = {}
         self.cleaned_code_data: Dict[str, List[Dict]] = {}
         self.bug_reports_data: List[Dict] = []
+        self.execution_results_data: List[Dict] = []
 
         self.opt_stats: Dict[str, Dict[str, int]] = {}
 
@@ -45,6 +54,8 @@ class WhiteFoxLogger:
             self.prompts_file,
             self.cleaned_code_file,
             self.bug_reports_file,
+            self.execution_results_file,
+            self.generation_quality_file,
         ]
 
         for log_file in all_files:
@@ -57,6 +68,7 @@ class WhiteFoxLogger:
             self.prompts_data,
             self.cleaned_code_data,
             self.bug_reports_data,
+            self.execution_results_data,
             self.opt_stats,
         ]:
             data.clear()
@@ -72,7 +84,9 @@ class WhiteFoxLogger:
 
     def _ensure_stats_initialized(self, opt_key: str) -> None:
         if opt_key not in self.opt_stats:
-            self.opt_stats[opt_key] = self._get_default_stats()
+            stats = self._get_default_stats()
+            stats.update(default_quality_stats())
+            self.opt_stats[opt_key] = stats
 
     def log_prompt(
         self,
@@ -145,7 +159,49 @@ class WhiteFoxLogger:
         pass_triggered: bool,
         pass_log_name: str,
     ) -> None:
+        test_code = None
+        try:
+            test_code = test_file.read_text()
+        except Exception:
+            pass
+
+        quality = classify_generation_quality(test_code, result=result)
+        self._record_generation_quality(
+            optimization_name,
+            iteration,
+            sample_idx,
+            test_file,
+            quality,
+            result=result,
+            pass_triggered=pass_triggered,
+        )
         self._track_execution_stats(optimization_name, result, pass_triggered)
+
+    def log_execution_failure(
+        self,
+        optimization_name: str,
+        iteration: int,
+        sample_idx: int,
+        test_file: Path,
+        worker_error: str,
+    ) -> None:
+        test_code = None
+        try:
+            test_code = test_file.read_text()
+        except Exception:
+            pass
+
+        quality = classify_generation_quality(
+            test_code, result=None, worker_error=worker_error
+        )
+        self._record_generation_quality(
+            optimization_name,
+            iteration,
+            sample_idx,
+            test_file,
+            quality,
+            worker_error=worker_error,
+        )
 
     def log_pass_detection_analysis(
         self,
@@ -230,6 +286,124 @@ class WhiteFoxLogger:
 
     def _write_bug_reports(self) -> None:
         self._append_jsonl(self.bug_reports_file, self.bug_reports_data)
+
+    def _write_execution_results(self) -> None:
+        self._append_jsonl(self.execution_results_file, self.execution_results_data)
+
+    def _record_generation_quality(
+        self,
+        optimization_name: str,
+        iteration: int,
+        sample_idx: int,
+        test_file: Path,
+        quality: Dict[str, Any],
+        result: Any = None,
+        pass_triggered: Optional[bool] = None,
+        worker_error: Optional[str] = None,
+    ) -> None:
+        entry: Dict[str, Any] = {
+            "timestamp": datetime.now().isoformat(),
+            "optimization": optimization_name,
+            "iteration": iteration,
+            "sample_idx": sample_idx,
+            "test_file": str(test_file),
+            "pass_triggered": pass_triggered,
+            "quality": quality,
+        }
+
+        if worker_error:
+            entry["worker_error"] = worker_error[:2000]
+
+        if result is not None:
+            entry["modes"] = {}
+            for mode in result.modes:
+                mr = result.get_mode(mode)
+                entry["modes"][mode] = {
+                    "compile_success": mr.compile_success,
+                    "runtime_success": mr.runtime_success,
+                }
+
+        with self._lock:
+            self.execution_results_data.append(entry)
+            self._ensure_stats_initialized(optimization_name)
+            accumulate_quality_stats(self.opt_stats[optimization_name], quality)
+
+    @staticmethod
+    def _pct(count: int, total: int) -> str:
+        if total <= 0:
+            return "0.0%"
+        return f"{100.0 * count / total:.1f}%"
+
+    def _write_quality_table(
+        self,
+        f,
+        opt_names: List[str],
+        *,
+        title: str,
+    ) -> None:
+        self._write_header(f, title)
+        f.write(
+            f"{'Generated test category':40s} | {'Count':>7s} | {'%':>7s}\n"
+        )
+        f.write("-" * 60 + "\n\n")
+
+        totals = default_quality_stats()
+        generated_total = 0
+        for name in opt_names:
+            stats = self.opt_stats.get(name, {})
+            generated_total += stats.get("generated", 0)
+            for key in totals:
+                totals[key] += stats.get(key, 0)
+
+        for key, label in QUALITY_TABLE_ROWS:
+            count = totals.get(key, 0)
+            f.write(
+                f"{label:40s} | {count:7d} | "
+                f"{self._pct(count, generated_total):>7s}\n"
+            )
+
+        f.write("\n")
+        f.write(f"Generated (denominator): {generated_total}\n")
+        f.write(f"Executed:                {totals.get('executed', 0)}\n")
+        f.write(f"Worker failures:         {totals.get('worker_failed', 0)}\n")
+        f.write("=" * 60 + "\n")
+
+        f.write("\nPer optimization (% of generated tests):\n\n")
+        f.write(
+            f"{'Optimization':40s} | {'Gen':>5s} | "
+            f"{'Syntax':>6s} | {'Import':>6s} | {'Eager':>6s} | "
+            f"{'XLA':>6s} | {'BadAPI':>6s} | {'Unsup':>6s} | {'T/O':>5s}\n"
+        )
+        f.write("-" * 110 + "\n\n")
+
+        for name in sorted(opt_names):
+            stats = self.opt_stats.get(name, self._get_default_stats())
+            generated = stats.get("generated", 0)
+            f.write(f"{name:40s} | {generated:5d} | ")
+            for key in (
+                "syntax_valid",
+                "imports_successfully",
+                "eager_executable",
+                "xla_compilable",
+                "invalid_tf_api",
+                "unsupported_by_xla",
+                "timeout",
+            ):
+                count = stats.get(key, 0)
+                if key in ("invalid_tf_api", "unsupported_by_xla", "timeout"):
+                    f.write(f"{count:6d} | ")
+                else:
+                    f.write(f"{self._pct(count, generated):>6s} | ")
+            f.write("\n")
+        f.write("=" * 110 + "\n")
+
+    def _write_generation_quality_log(self, opt_names: List[str]) -> None:
+        with open(self.generation_quality_file, "w") as f:
+            self._write_quality_table(
+                f,
+                opt_names,
+                title="GENERATION QUALITY DISTRIBUTION (pre-oracle)",
+            )
 
     @staticmethod
     def _write_header(f, title: str) -> None:
@@ -330,6 +504,13 @@ class WhiteFoxLogger:
                 f.write("\n")
                 f.write("=" * sep_len + "\n")
 
+                f.write("\n")
+                self._write_quality_table(
+                    f,
+                    opt_names,
+                    title="GENERATION QUALITY DISTRIBUTION (pre-oracle)",
+                )
+
                 # --- Thompson sampling stats ---
                 if opt_states:
                     f.write("\n")
@@ -374,9 +555,14 @@ class WhiteFoxLogger:
                     f.write(f"All TF lines total:{all_total:>9,}\n")
                     f.write("=" * 40 + "\n")
 
+            self._write_generation_quality_log(opt_names)
+
             if self.base_logger:
                 self.base_logger.debug(
                     f"Run summary updated at {detailed_summary_file}"
+                )
+                self.base_logger.debug(
+                    f"Generation quality log updated at {self.generation_quality_file}"
                 )
 
     def flush(self) -> None:
@@ -384,6 +570,7 @@ class WhiteFoxLogger:
             self._write_prompts()
             self._write_cleaned_code()
             self._write_bug_reports()
+            self._write_execution_results()
 
     def flush_and_clear(self) -> None:
         """Flush all buffered data to disk and release the in-memory copies.
@@ -395,6 +582,8 @@ class WhiteFoxLogger:
             self._write_prompts()
             self._write_cleaned_code()
             self._write_bug_reports()
+            self._write_execution_results()
             self.prompts_data.clear()
             self.cleaned_code_data.clear()
             self.bug_reports_data.clear()
+            self.execution_results_data.clear()
