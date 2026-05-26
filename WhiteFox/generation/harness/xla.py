@@ -216,33 +216,112 @@ result = {{
 
 def _serialize_output(output):
     import tensorflow as tf
-    # IPC payload cap. Without this, large outputs (e.g. DotDecomposer's matmul
-    # tests) push ~1 GB/mode of Python-float nested lists across to the parent
-    # per test. The parent's PyMalloc arena never returns small-object pages to
-    # the OS, so anon RSS climbs ~300 MB/test until the slurm cgroup hits its
-    # mem cap and OOM-kills the parent (job 240357_1 died at 190 GiB).
-    # Truncating to the first ~10k elements keeps the cross-process JSON tiny
-    # while still letting the diff oracle catch systematic divergence.
-    _MAX_SERIALIZED_ELEMS = int(os.environ.get("WHITEFOX_MAX_OUTPUT_ELEMS", "10000"))
-    if isinstance(output, tf.Tensor):
-        arr = output.numpy()
-        if arr.size > _MAX_SERIALIZED_ELEMS:
-            arr = arr.flatten()[:_MAX_SERIALIZED_ELEMS]
-        return arr.tolist()
-    elif isinstance(output, (tuple, list)):
-        return [_serialize_output(t) if isinstance(t, tf.Tensor) else t for t in output]
-    else:
-        # KerasTensor (symbolic, from tf.keras.layers.Input) carries no numeric
-        # data and its str() embeds a per-instance counter ("name=keras_tensor_N")
-        # that differs between fresh model instances across naive/xla/autocluster,
-        # producing a false AllDiff on identical graphs.  Return a counter-free
-        # representation so all three modes serialise to the same string.
+    # IPC payload cap.  Job 244274_0 died because the previous
+    # implementation only recursed one level: a test returning
+    # `[tensor.numpy().tolist()]` (a list containing an already-flattened
+    # nested-Python-list rather than a tf.Tensor) sailed past the per-tensor
+    # elem cap and shipped the full nested structure to the parent.  With
+    # 10 such results held in `_execute_tests_parallel.results` at iter
+    # boundary × 3 modes the parent's RSS jumped 2 GB → 175 GB in one iter
+    # of AllReduceCombiner and OOMed at 190 GB.
+    #
+    # The new policy: enforce a *total leaf-element budget* per call.  The
+    # recursion descends through tf.Tensor, numpy.ndarray, list, tuple and
+    # dict, decrementing a shared budget as it emits scalars.  Anything
+    # past the budget is replaced with a "<truncated_at_N>" marker so the
+    # diff oracle still sees a structurally-comparable value, but the
+    # cross-process JSON cannot exceed ~(budget × ~15 bytes/float) ≈ a few
+    # MB per mode regardless of how the test code wraps its output.
+    _MAX_TOTAL_ELEMS = int(os.environ.get("WHITEFOX_MAX_OUTPUT_ELEMS", "10000"))
+    _budget = [_MAX_TOTAL_ELEMS]
+
+    def _try_keras_tensor_repr(v):
         try:
-            if tf.keras.backend.is_keras_tensor(output):
-                return "<KerasTensor shape=" + str(tuple(output.shape)) + " dtype=" + str(output.dtype) + ">"
+            if tf.keras.backend.is_keras_tensor(v):
+                return (
+                    "<KerasTensor shape="
+                    + str(tuple(v.shape))
+                    + " dtype="
+                    + str(v.dtype)
+                    + ">"
+                )
         except Exception:
             pass
-        return str(output)
+        return None
+
+    def _walk(v):
+        if _budget[0] <= 0:
+            return "<truncated_at_" + str(_MAX_TOTAL_ELEMS) + ">"
+
+        # Scalars: count as 1, return verbatim.
+        if v is None or isinstance(v, (bool, int, float, str)):
+            _budget[0] -= 1
+            return v
+
+        # tf.Tensor and np.ndarray: convert and recurse on the .tolist().
+        # We re-enter _walk on the resulting nested list so the budget
+        # applies even when the tensor is huge.  arr.flatten()[:budget]
+        # keeps the conversion itself bounded for multi-GB tensors.
+        if isinstance(v, tf.Tensor):
+            try:
+                arr = v.numpy()
+            except Exception:
+                # KerasTensor or symbolic tensor — emit a stable repr.
+                kt = _try_keras_tensor_repr(v)
+                return kt if kt is not None else "<TFTensor>"
+        else:
+            try:
+                import numpy as _np_local
+                if isinstance(v, _np_local.ndarray):
+                    arr = v
+                else:
+                    arr = None
+            except Exception:
+                arr = None
+
+        if arr is not None:
+            if arr.size > _budget[0]:
+                flat = arr.flatten()[: _budget[0]].tolist()
+                _budget[0] = 0
+                return flat + ["<truncated_at_" + str(_MAX_TOTAL_ELEMS) + ">"]
+            _budget[0] -= int(arr.size)
+            return arr.tolist()
+
+        # Containers: descend, capping each level by remaining budget.
+        if isinstance(v, (list, tuple)):
+            out = []
+            for item in v:
+                if _budget[0] <= 0:
+                    out.append("<truncated_at_" + str(_MAX_TOTAL_ELEMS) + ">")
+                    break
+                out.append(_walk(item))
+            return out
+        if isinstance(v, dict):
+            out = dict()
+            for k, item in v.items():
+                if _budget[0] <= 0:
+                    out["__truncated__"] = "<truncated_at_" + str(_MAX_TOTAL_ELEMS) + ">"
+                    break
+                # Keys are usually short strings; if not, fall back to str().
+                key = k if isinstance(k, (str, int, bool, float)) else str(k)
+                out[key] = _walk(item)
+            return out
+
+        # Catch-all: KerasTensor (symbolic, no .numpy()) embeds a per-instance
+        # counter in its str() that differs across modes — return a
+        # counter-free representation so identical graphs serialise to the
+        # same string.
+        kt = _try_keras_tensor_repr(v)
+        if kt is not None:
+            return kt
+        # Anything else (custom objects): str() with a hard cap so we don't
+        # ship a 100 MB __repr__ across.
+        s = str(v)
+        if len(s) > 4096:
+            s = s[:4096] + "...[truncated]"
+        return s
+
+    return _walk(output)
 
 
 def add_decorator_inline(code: str, decorator: str) -> str:
