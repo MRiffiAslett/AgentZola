@@ -4,6 +4,7 @@ import os
 import resource
 import subprocess
 import sys
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -11,6 +12,62 @@ from typing import Dict, List, Optional
 from domain.harness import ExecutionResult
 
 logger = logging.getLogger(__name__)
+
+
+class _BoundedTail:
+    """Drain a subprocess pipe in a background thread and retain only the
+    last `cap` bytes.
+
+    Background:
+        subprocess.run(capture_output=True) reads each pipe fully into a
+        Python str/bytes object with no upper bound.  For tests where the
+        wrapper emits megabytes of fd-2 output (TF FATAL stack traces,
+        --xla_dump_hlo_pass_re=.* HLO dumps under collective opts, or a
+        --xla_dump_to write that hit stderr) that buffer can reach
+        gigabytes inside a single ProcessPoolExecutor worker — and 4
+        workers holding several GB each, then pickling the contents back
+        to the parent at iter boundary, pushed the parent past the cgroup
+        limit and OOM-killed job 244274_0 mid-AllReduceCombiner.
+
+        This reader keeps only the *tail* of each pipe in RAM, dropping
+        older bytes on the fly, so worker RSS attributable to subprocess
+        captures stays at most `cap` per stream regardless of how much
+        the wrapper writes.  We keep the tail rather than the head because
+        the parser looks for WHITEFOX_RESULT_START/END markers and the
+        JSON payload, which the wrapper prints last.
+    """
+
+    def __init__(self, stream, cap: int = 1024 * 1024) -> None:
+        self._cap = cap
+        self._buf = bytearray()
+        self._stream = stream
+        self._total = 0
+        self._lock = threading.Lock()
+        self._t = threading.Thread(target=self._drain, daemon=True)
+        self._t.start()
+
+    def _drain(self) -> None:
+        try:
+            while True:
+                chunk = self._stream.read(65536)
+                if not chunk:
+                    return
+                with self._lock:
+                    self._total += len(chunk)
+                    self._buf.extend(chunk)
+                    excess = len(self._buf) - self._cap
+                    if excess > 0:
+                        del self._buf[:excess]
+        except Exception:
+            return
+
+    def text(self) -> str:
+        self._t.join()
+        with self._lock:
+            return self._buf.decode("utf-8", errors="replace")
+
+    def total_bytes(self) -> int:
+        return self._total
 
 
 def _child_preexec() -> None:
@@ -102,21 +159,48 @@ class TestHarness(ABC):
                 optimization_name, test_file.name, timeout,
             )
 
-            process = subprocess.run(
+            # Use Popen + bounded-tail readers instead of subprocess.run
+            # so worker RSS attributable to captured stdout/stderr is
+            # bounded by _PIPE_CAP per stream regardless of how much the
+            # wrapper writes.  See the _BoundedTail docstring for the
+            # full rationale (job 244274_0 OOM).
+            _PIPE_CAP = int(
+                os.environ.get("WHITEFOX_PIPE_CAP_BYTES", str(1024 * 1024))
+            )
+            proc = subprocess.Popen(
                 [sys.executable, "-c", wrapper_script],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 env=env,
                 preexec_fn=_child_preexec,
             )
+            out_reader = _BoundedTail(proc.stdout, cap=_PIPE_CAP)
+            err_reader = _BoundedTail(proc.stderr, cap=_PIPE_CAP)
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                # Surface this through the same path as the original code
+                # by re-raising — the outer except handles it identically.
+                raise
 
+            stdout_text = out_reader.text()
+            stderr_text = err_reader.text()
+            process = subprocess.CompletedProcess(
+                args=proc.args,
+                returncode=proc.returncode,
+                stdout=stdout_text,
+                stderr=stderr_text,
+            )
             output = process.stdout + process.stderr
 
             logger.debug(
-                "[%s] Subprocess exit_code=%d, stdout=%d chars, stderr=%d chars",
+                "[%s] Subprocess exit_code=%d, stdout=%d chars (of %d emitted), "
+                "stderr=%d chars (of %d emitted)",
                 optimization_name, process.returncode,
-                len(process.stdout), len(process.stderr),
+                len(process.stdout), out_reader.total_bytes(),
+                len(process.stderr), err_reader.total_bytes(),
             )
 
             log_text_from_json = None
