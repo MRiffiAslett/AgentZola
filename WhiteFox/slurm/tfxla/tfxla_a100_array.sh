@@ -17,6 +17,19 @@ N_TASKS=3
 
 set -euo pipefail
 
+# Make the script robust to minimal Slurm env propagation.  Submitting
+# with `--export=WHITEFOX_OPT_OVERRIDE=...` (a workaround for the
+# "user env retrieval failed requeued held" lock-up we hit on jobs
+# 243717 and 244274) drops $HOME and $USER, so any `$HOME`/`$USER`
+# reference under `set -u` aborts the script before a single test
+# runs (job 244874_0 died at line 152 in 2 s).  Resolve them from
+# /etc/passwd via getent so the script doesn't depend on which
+# `--export` flavour the submitter used.
+: "${USER:=$(id -un)}"
+: "${HOME:=$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)}"
+: "${HOME:=/tmp}"
+export HOME USER
+
 ALL_OPTS=(
     "AllGatherBroadcastReorder"
     "AllGatherCombiner"
