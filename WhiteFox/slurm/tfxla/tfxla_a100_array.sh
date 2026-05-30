@@ -202,6 +202,18 @@ export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
+# Switch the parent (generation.main) from CPython's pymalloc to glibc
+# malloc.  pymalloc keeps small-object arenas in-process forever and
+# only returns very large single allocations to the OS, which is why
+# job 244274_0's OOM postmortem showed `inactive_anon=141 GB` —
+# Python had freed those objects but the arenas were still held by the
+# process.  glibc malloc maps large blocks via mmap and releases them
+# back to the kernel on free, so the parent's RSS actually decreases
+# when objects go out of scope.  This converts the bounded-per-iter
+# IPC caps from be85c1c into a bounded *steady-state* footprint
+# instead of bounded *peak* with monotonically-creeping baseline.
+export PYTHONMALLOC=malloc
+
 TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-V2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl"
 
 poetry --version || exit 1
