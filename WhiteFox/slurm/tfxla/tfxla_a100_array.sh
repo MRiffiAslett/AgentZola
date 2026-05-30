@@ -98,12 +98,22 @@ OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
 BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
 # Smoke-test escape hatch: when WHITEFOX_OPT_OVERRIDE is set in the
-# environment (e.g. `sbatch --array=0 --time=02:00:00 \
-#   --export=ALL,WHITEFOX_OPT_OVERRIDE=AllReduceCombiner \
-#   WhiteFox/slurm/tfxla/tfxla_a100_array.sh`) the array task runs only
-# that comma-separated subset and writes its outputs to a sibling
-# logging dir, so we can validate a fix on a single problematic opt in
-# ~1 hour instead of waiting 15 h for the full array to finish.
+# environment the array task runs only that comma-separated subset and
+# writes its outputs to a sibling logging dir, so we can validate a fix
+# on a small subset of opts in ~1-3 h instead of waiting 25 h per task
+# for the full array to finish.
+#
+# IMPORTANT: `sbatch --export` parses commas as variable separators, NOT
+# value separators.  Submitting with
+#   --export=ALL,WHITEFOX_OPT_OVERRIDE=opt_a,opt_b,opt_c
+# silently truncates the override to `opt_a` and creates empty env vars
+# named `opt_b` and `opt_c` — job 245233_0 ran only AllGatherBroadcastReorder
+# instead of the 4-opt sequence we wanted because of this.
+# Always pass the value in the calling shell and let sbatch pull it in
+# by *name*:
+#   export WHITEFOX_OPT_OVERRIDE=opt_a,opt_b,opt_c
+#   sbatch --export=WHITEFOX_OPT_OVERRIDE \
+#          WhiteFox/slurm/tfxla/tfxla_a100_array.sh
 if [ -n "${WHITEFOX_OPT_OVERRIDE:-}" ]; then
     OPT_CSV="$WHITEFOX_OPT_OVERRIDE"
     BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}_smoke"
