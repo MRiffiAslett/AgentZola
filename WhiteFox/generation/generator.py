@@ -28,6 +28,41 @@ from generation.prompts import (
 from generation.wf_logging import CoverageCollector, WhiteFoxLogger, WhiteFoxProfiler
 from vllm import LLM, SamplingParams
 
+try:
+    import ctypes
+    import ctypes.util
+
+    _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+    _HAS_MALLOC_TRIM = hasattr(_libc, "malloc_trim")
+except Exception:
+    _libc = None
+    _HAS_MALLOC_TRIM = False
+
+
+def _release_freed_memory() -> None:
+    """Return the parent's freed heap to the OS at each iteration boundary.
+
+    The parent generator deserialises every worker's per-test output into
+    transient Python objects each iteration, then drops them.  With
+    PYTHONMALLOC=malloc set (see tfxla_a100_array.sh) glibc keeps those
+    freed blocks on its per-arena free-lists and does not return them, so
+    the parent's anonymous RSS ratchets monotonically upward until the
+    cgroup OOM-kills it — job 244274_0 died with a single python process
+    at 187 GB and memory.stat anon=189 GB / file=181 MB / shmem=180 MB,
+    i.e. pure freed-but-retained arenas (inactive_anon=141 GB), not tmpfs
+    or page cache.  malloc_trim(0) releases the freed top-of-arena pages
+    back to the kernel; pymalloc has no equivalent, which is why glibc
+    malloc is the chosen allocator.  No-op on a non-glibc libc.
+    """
+    import gc
+
+    gc.collect()
+    if _HAS_MALLOC_TRIM:
+        try:
+            _libc.malloc_trim(0)
+        except Exception:
+            pass
+
 
 def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
@@ -641,6 +676,19 @@ class StarCoderGenerator:
                 new_triggering_tests,
                 example_tests,
             )
+
+            # Release this iteration's transient deserialised payloads back
+            # to the OS before the next iteration allocates more.  Without
+            # this the parent's glibc arenas grow monotonically across
+            # iterations and OOM the cgroup (see _release_freed_memory;
+            # job 244274_0 OOM).  In a try/finally so a late raise in the
+            # bandit/logging calls above can't skip the reclaim.
+            try:
+                del execution_results
+            except NameError:
+                pass
+            finally:
+                _release_freed_memory()
 
             if (
                 early_stop_iters > 0

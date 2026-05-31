@@ -149,6 +149,17 @@ export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
+# Archive any prior-run artifacts in this batch's logging dir before we
+# start, so leftover cgroup_mem.tsv / oom_postmortem.log rows from an
+# earlier job cannot contaminate this run's diagnostics.  This is the root
+# cause of the "190 GB peak" misread: job 245837_0's batch0 dir still held
+# job 244274's rows, and a naive `awk max` reported the old cliff as fresh.
+if [ -d "$WHITEFOX_LOGGING_DIR" ]; then
+  _archive="${WHITEFOX_LOGGING_DIR}.$(date +%s)"
+  if mv "$WHITEFOX_LOGGING_DIR" "$_archive" 2>/dev/null; then
+    echo "[$(date)] Archived prior logging dir to $_archive"
+  fi
+fi
 mkdir -p "$WHITEFOX_LOGGING_DIR"
 echo "${SLURM_ARRAY_JOB_ID}" > "$WHITEFOX_LOGGING_DIR/.job_id"
 
@@ -220,13 +231,24 @@ poetry --version || exit 1
 
 LOCKFILE="$PROJECT_ROOT/.install.lock"
 (
-  flock -x 200
-  echo "[$(date)] [$BATCH_LABEL] Acquired install lock"
-  poetry lock
+  # NFS flock needs rpc.statd/lockd; some compute nodes have it broken and
+  # return ENOLCK immediately ("flock: 200: No locks available"), which under
+  # `set -e` aborted the whole script before a single test ran (job 245837_0
+  # died here on linnet, leaving batch0 untested since be85c1c).  Make lock
+  # acquisition best-effort with a generous timeout: `poetry install` is
+  # idempotent against the committed lockfile, so racing two nodes is at
+  # worst wasteful, not corrupting.  `poetry lock` is dropped entirely to
+  # avoid concurrent lockfile rewrites across array tasks.
+  if flock -w 120 200; then
+    echo "[$(date)] [$BATCH_LABEL] Acquired install lock"
+  else
+    echo "[$(date)] [$BATCH_LABEL] WARN: flock failed/timeout on $(hostname); proceeding without lock"
+    : > "$WHITEFOX_LOGGING_DIR/.flock_skipped" 2>/dev/null || true
+  fi
   poetry install --no-interaction
   echo "[$(date)] Force-reinstalling TensorFlow wheel"
   poetry run pip install --force-reinstall --no-deps "$TF_WHEEL"
-  echo "[$(date)] [$BATCH_LABEL] Install done, releasing lock"
+  echo "[$(date)] [$BATCH_LABEL] Install done"
 ) 200>"$LOCKFILE"
 
 if [ ! -f "$CONFIG_PATH" ]; then
