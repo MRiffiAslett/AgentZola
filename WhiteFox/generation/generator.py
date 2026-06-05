@@ -93,29 +93,28 @@ def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
 
 def _pool_worker_init() -> None:
-    """Set RLIMIT_AS on ProcessPoolExecutor workers so TF/XLA allocations
-    in the worker process (not just Popen grandchildren) are bounded."""
-    import resource
-    import sys
-    mem_gb = int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8"))
-    rlimit_bytes = mem_gb * 3 * (1024 ** 3)
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
-    except Exception as exc:
-        print(
-            f"WHITEFOX_POOL_INIT: RLIMIT_AS={rlimit_bytes} FAILED: {exc}",
-            file=sys.stderr, flush=True,
-        )
-    try:
-        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-        if soft != rlimit_bytes:
-            print(
-                f"WHITEFOX_POOL_INIT: RLIMIT_AS mismatch: "
-                f"wanted={rlimit_bytes}, got soft={soft} hard={hard}",
-                file=sys.stderr, flush=True,
-            )
-    except Exception:
-        pass
+    """Initialise ProcessPoolExecutor worker processes.
+
+    We intentionally do NOT set RLIMIT_AS on the workers here.
+
+    The original rationale was to bound TF/XLA memory in workers, but pool
+    workers are forked from the parent process and therefore inherit its full
+    virtual address space (VSZ), which includes vLLM's model weights (~20-30 GB).
+    Setting RLIMIT_AS = 6*3 = 18 GB after the fork means the inherited VSZ
+    already exceeds the limit, so every subsequent memory allocation in the
+    worker — including bytearray.extend() in _BoundedTail drain threads — raises
+    MemoryError immediately.  This caused the job to hang indefinitely at
+    AllReduceCombiner it11: all four drain threads died with MemoryError, the
+    subprocess pipes filled, proc.wait() blocked, and as_completed() in the
+    parent never returned (job 246803_0, ~26 h hung at mem=93G).
+
+    Protection against runaway memory is already applied at the right level:
+      - _child_preexec sets RLIMIT_AS before exec()ing the grandchild
+      - the wrapper script tightens it further after exec()
+      - the in-wrapper RSS watchdog kills grandchildren that grow beyond the limit
+    Pool workers themselves just coordinate Popen + pipe reads and do not run TF.
+    """
+    pass
 
 
 _HARNESS = {
