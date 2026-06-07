@@ -689,6 +689,17 @@ class StarCoderGenerator:
             finally:
                 _release_freed_memory()
 
+            # Checkpoint the run summary every 10 iterations so a mid-opt
+            # SIGKILL (cgroup OOM) loses at most 10 iterations of stats
+            # instead of the full optimization.  Cost: one ~20 KB file write
+            # every 10 iterations — negligible vs. I/O already happening.
+            if (iteration + 1) % 10 == 0:
+                with self._state_lock:
+                    whitefox_logger.generate_run_summary(
+                        sorted(self.whitefox_state.optimizations.keys()),
+                        opt_states=self.whitefox_state.optimizations,
+                    )
+
             if (
                 early_stop_iters > 0
                 and iteration + 1 >= early_stop_iters
@@ -876,8 +887,15 @@ class StarCoderGenerator:
                         opt_state.spec.internal_name
                     )
                     whitefox_logger.flush_and_clear()
-                    import gc
-                    gc.collect()
+                    # Between-optimization deep clean: release all freed arenas
+                    # back to the OS before forking workers for the next opt.
+                    # The per-iteration _release_freed_memory() handles intra-opt
+                    # drift, but by the time an opt with 100 iterations finishes
+                    # (e.g. HloConstantFolding at it82 in batch1 job 247525), the
+                    # parent's glibc arenas have grown substantially.  This call
+                    # flushes that accumulated slack between opts so the cgroup
+                    # pressure resets rather than compounding across the full run.
+                    _release_freed_memory()
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"
