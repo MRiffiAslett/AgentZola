@@ -64,6 +64,21 @@ def _release_freed_memory() -> None:
             pass
 
 
+def _log_parent_rss(logger: logging.Logger, label: str) -> None:
+    """Log the parent process's RSS from /proc/self/status for OOM diagnosis."""
+    try:
+        rss_kb = -1
+        with open("/proc/self/status") as _f:
+            for _line in _f:
+                if _line.startswith("VmRSS:"):
+                    rss_kb = int(_line.split()[1])
+                    break
+        if rss_kb >= 0:
+            logger.info("  Parent RSS %s: %.1f GB", label, rss_kb / (1024 * 1024))
+    except Exception:
+        pass
+
+
 def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
     try:
@@ -895,7 +910,15 @@ class StarCoderGenerator:
                     # parent's glibc arenas have grown substantially.  This call
                     # flushes that accumulated slack between opts so the cgroup
                     # pressure resets rather than compounding across the full run.
+                    _log_parent_rss(
+                        self.logger,
+                        f"after {opt_state.spec.internal_name}",
+                    )
                     _release_freed_memory()
+                    _log_parent_rss(
+                        self.logger,
+                        f"after malloc_trim post-{opt_state.spec.internal_name}",
+                    )
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"
