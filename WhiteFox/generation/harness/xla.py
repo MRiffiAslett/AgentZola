@@ -345,6 +345,20 @@ if '--xla_dump_hlo_pass_re=' not in old_xla_flags_env:
     xla_flags_parts.append('--xla_dump_hlo_pass_re=.*')
 os.environ['XLA_FLAGS'] = ' '.join(xla_flags_parts) if xla_flags_parts else ''
 
+# Force absl/glog to write to fd 2 (the captured pipe) as well as its log
+# file.  Without this, absl::InitializeLog() redirects LOG() messages to a
+# /tmp/*.INFO file; WHITEFOX_PASS_START/END markers (logged via LOG(INFO) in
+# the custom TF build) then only reach the parent when absl's SIGSEGV crash
+# handler flushed the buffer — i.e. only for crashed tests (exit_code=-11).
+# Normally-completing tests had triggered_passes={} even though XLA ran all
+# passes, because the markers were in the log file, not in process.stderr.
+# Setting GLOG_logtostderr=1 makes absl always mirror output to fd 2 so
+# base.py's extract_triggered_passes(output) can find the markers regardless
+# of exit code.  The _BoundedTail cap (default 1 MB) keeps worker RSS
+# bounded; target passes run in the later XLA pipeline stages and reliably
+# fall within the tail.
+os.environ.setdefault('GLOG_logtostderr', '1')
+
 try:
     import tensorflow as tf
     import numpy as np

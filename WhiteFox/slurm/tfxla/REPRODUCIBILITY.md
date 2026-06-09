@@ -131,6 +131,64 @@ Knobs:
 | `WHITEFOX_DOCKER_SHELL`     | `0`                              | If `1`, drop into bash inside the container   |
 | `HF_TOKEN`                  | from `~/.hf_token` if unset      | Hugging Face access token (gated StarCoder)   |
 
+## Running the experiment via Apptainer (Imperial GPU cluster)
+
+The cluster compute nodes do not run a Docker daemon (they use Apptainer /
+Singularity instead). `tfxla_a100_apptainer.sh` + `build_apptainer.sh`
+provide the cluster-native container path and mirror `tfxla_a100_docker.sh`
+exactly — same base image, same Apptainer `.def` file built from the same
+Dockerfile logic.
+
+### Prerequisites
+
+Check that Apptainer is available and that `--fakeroot` is configured for
+your account (required to build the image without root):
+
+```bash
+apptainer --version
+apptainer build --fakeroot /dev/null /dev/null 2>&1 | head -3
+```
+
+If the second command prints `fakeroot: not configured`, ask DoC CSG to
+enable fakeroot for your username, **or** use sandbox mode as a fallback
+(see below).
+
+### Build the image (once, from the login node)
+
+```bash
+# Wheel is already at the default path on the Imperial cluster:
+bash WhiteFox/slurm/tfxla/build_apptainer.sh
+
+# Produces: /vol/bitbucket/mtr25/whitefox-tfxla.sif (~3–4 GB)
+# Takes ~10–20 min (downloads LLVM 17 + installs deps)
+```
+
+If `--fakeroot` is not available, use sandbox mode instead:
+
+```bash
+WHITEFOX_APPTAINER_SANDBOX=1 bash WhiteFox/slurm/tfxla/build_apptainer.sh
+# Produces: /vol/bitbucket/mtr25/whitefox-tfxla_sandbox/  (a directory)
+```
+
+### Submit a run
+
+```bash
+# Quick single-opt test:
+sbatch WhiteFox/slurm/tfxla/tfxla_a100_apptainer.sh --only-opt HloDce
+
+# Full run (all 49 optimizations, sequential — slower than the 3-node array):
+sbatch WhiteFox/slurm/tfxla/tfxla_a100_apptainer.sh
+```
+
+Output lands in `WhiteFox/slurm/tfxla/out/whitefox-apptainer_<jobid>.out`.
+
+| Variable                    | Default                                                | Purpose                                              |
+|-----------------------------|--------------------------------------------------------|------------------------------------------------------|
+| `WHITEFOX_SIF_PATH`         | `/vol/bitbucket/mtr25/whitefox-tfxla.sif`              | Path to the built `.sif` or sandbox directory        |
+| `WHITEFOX_RESULTS_DIR`      | `/vol/bitbucket/mtr25/AgentZola/WhiteFox`              | Host directory for `logging/`, `output/`, `hf_cache/`|
+| `WHITEFOX_EARLY_STOP_ITERS` | `20`                                                   | 0 to disable early-stop                              |
+| `HF_TOKEN`                  | from `~/.hf_token` if unset                            | Hugging Face access token (gated StarCoder)          |
+
 ## Result artefacts
 
 A successful run writes to (host paths chosen by the reproducer at run time):

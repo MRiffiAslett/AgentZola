@@ -279,16 +279,29 @@ class TestHarness(ABC):
             # local reference.
             del chosen_log
 
-            # Prefer the pass set the wrapper already extracted (cheap IPC,
-            # bounded size) over re-regexing the raw log here.  Falling
-            # back to extract_triggered_passes covers older wrappers; we
-            # do it against `output` (not the truncated log_text) so we
-            # don't miss WHITEFOX_PASS_START markers that fell off the
-            # tail when truncation kicked in.
-            if passes_from_json is not None:
-                result.triggered_passes = set(passes_from_json)
-            else:
-                result.triggered_passes = self.extract_triggered_passes(output)
+            # Always scan the raw subprocess output (C++ fd 2) for
+            # WHITEFOX_PASS_START markers and merge with whatever the wrapper
+            # extracted from its Python-level streams.
+            #
+            # History: the wrapper redirects sys.stderr to a StringIO so
+            # Python-level output is captured, but TF/XLA's C++ runtime writes
+            # pass notifications directly to fd 2 via write(2,...), bypassing
+            # the Python redirect.  Those markers land in process.stderr (and
+            # therefore in `output`) but NOT in the wrapper's StringIO, so
+            # result["triggered_passes"] in the JSON is always [].
+            #
+            # Previously we fell back to scanning `output` only when
+            # passes_from_json was None (subprocess crashed without markers).
+            # After removing RLIMIT_AS from pool workers (f892797) tests
+            # complete normally, passes_from_json is always [] (not None),
+            # and the fallback never fired — Triggered=0 for all passes.
+            #
+            # The fix: always merge both sources.  `output` is already in
+            # memory here and is del'd three lines below, so the regex scan
+            # costs nothing extra in terms of peak RSS.
+            passes_set = set(passes_from_json) if passes_from_json is not None else set()
+            passes_set |= self.extract_triggered_passes(output)
+            result.triggered_passes = passes_set
 
             if result.triggered_passes:
                 logger.info(
