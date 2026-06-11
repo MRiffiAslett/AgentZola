@@ -350,7 +350,7 @@ os.environ['XLA_FLAGS'] = ' '.join(xla_flags_parts) if xla_flags_parts else ''
 # /tmp/*.INFO file; WHITEFOX_PASS_START/END markers (logged via LOG(INFO) in
 # the custom TF build) then only reach the parent when absl's SIGSEGV crash
 # handler flushed the buffer — i.e. only for crashed tests (exit_code=-11).
-# Normally-completing tests had triggered_passes={} even though XLA ran all
+# Normally-completing tests had triggered_passes={{}} even though XLA ran all
 # passes, because the markers were in the log file, not in process.stderr.
 # Setting GLOG_logtostderr=1 makes absl always mirror output to fd 2 so
 # base.py's extract_triggered_passes(output) can find the markers regardless
