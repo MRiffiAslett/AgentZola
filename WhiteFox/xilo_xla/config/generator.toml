@@ -16,7 +16,7 @@ name = "bigcode/starcoder"
 dtype = "float16"
 max_model_len = 8192
 gpu_memory_utilization = 0.85
-swap_space = 4
+swap_space = 0
 
 [generation]
 num_samples = 1     
