@@ -3,7 +3,7 @@
 #SBATCH --partition=a100
 #SBATCH --gres=gpu:3
 #SBATCH --cpus-per-gpu=6
-#SBATCH --mem=190G
+#SBATCH --mem=250G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -145,7 +145,7 @@ export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-8}"
 # leaving ample headroom for vLLM + coverage merge.
 export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
-export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-20}"
+export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
@@ -203,9 +203,10 @@ export HF_HOME="$HF_CACHE_DIR"
 export HUGGINGFACE_HUB_CACHE="$HF_CACHE_DIR"
 export VLLM_CACHE_DIR="$HF_CACHE_DIR"
 
-XLA_DUMP_DIR="/tmp/xla_dump_${SLURM_ARRAY_JOB_ID:-$$}_${SLURM_ARRAY_TASK_ID:-0}"
+XLA_DUMP_DIR="$LOCAL_COV_DIR/xla_dump"
 rm -rf "$XLA_DUMP_DIR" 2>/dev/null || true
 rm -rf /tmp/wf_profraw_* 2>/dev/null || true
+mkdir -p "$XLA_DUMP_DIR"
 
 export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
@@ -263,7 +264,7 @@ fi
 CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
 CG_DIR="/sys/fs/cgroup${CG_REL}"
 TRACE_FILE="$WHITEFOX_LOGGING_DIR/cgroup_mem.tsv"
-XLA_DUMP_GLOB="/tmp/xla_dump_${SLURM_ARRAY_JOB_ID:-$$}_${SLURM_ARRAY_TASK_ID:-0}"
+XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
 (
   # Loosen strict-mode in the tracer: a single failing `du` (e.g. before the
   # XLA dump dir exists) must not kill the monitor. Bash inherits set -e and

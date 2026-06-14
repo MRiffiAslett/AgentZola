@@ -919,6 +919,33 @@ class StarCoderGenerator:
                         self.logger,
                         f"after malloc_trim post-{opt_state.spec.internal_name}",
                     )
+                    # Purge XLA dump dir between optimizations: TF subprocesses
+                    # write HLO files there and they accumulate unboundedly across
+                    # opts.  On nodes where /tmp is a tmpfs the dump files count
+                    # toward the cgroup memory limit; moving the dump to /data
+                    # avoids this, but purging between opts keeps the dir bounded
+                    # regardless of backing filesystem.
+                    _xla_flags = os.environ.get("XLA_FLAGS", "")
+                    _m = None
+                    try:
+                        import re as _re
+                        _m = _re.search(r"--xla_dump_to=(\S+)", _xla_flags)
+                    except Exception:
+                        pass
+                    if _m:
+                        _xla_dump_dir = _m.group(1)
+                        try:
+                            import shutil as _shutil
+                            if os.path.isdir(_xla_dump_dir):
+                                _shutil.rmtree(_xla_dump_dir)
+                                os.makedirs(_xla_dump_dir, exist_ok=True)
+                                self.logger.info(
+                                    "  Purged XLA dump dir: %s", _xla_dump_dir
+                                )
+                        except Exception as _xe:
+                            self.logger.warning(
+                                "  XLA dump purge failed (non-fatal): %s", _xe
+                            )
         else:
             self.logger.info(
                 f"Running optimizations in parallel with {parallel_optimizations} workers"
