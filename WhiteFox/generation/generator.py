@@ -102,10 +102,11 @@ def _log_llm_call(
     """Log diagnostic context immediately before an LLM generate call.
 
     Returns cgroup_gb_before so the caller can compute the delta after.
-    Logs:
-     - prompt token count (expensive per-call tokenisation, so only INFO)
-     - cgroup memory.current from inside Python
-     - top-3 processes by RSS at this moment
+    Logs every iteration:
+     - prompt token count
+     - cgroup memory.current
+    Logs every 10th iteration only (expensive):
+     - top-3 processes by RSS via ps (reads /proc for every PID on the node)
     """
     cgroup_gb = _read_cgroup_mem_gb()
     try:
@@ -113,25 +114,25 @@ def _log_llm_call(
         n_tokens = len(tok.encode(prompt))
     except Exception:
         n_tokens = -1
-    try:
-        top3 = []
-        import subprocess as _sp
-        _ps = _sp.run(
-            ["ps", "--no-headers", "-eo", "pid,rss,comm", "--sort=-rss"],
-            capture_output=True, text=True, timeout=3,
-        )
-        for _line in _ps.stdout.splitlines()[:3]:
-            _parts = _line.split()
-            if len(_parts) >= 3:
-                top3.append(f"pid={_parts[0]} rss={int(_parts[1])//1024}MB cmd={_parts[2]}")
-        top3_str = " | ".join(top3)
-    except Exception:
-        top3_str = "unavailable"
     logger.info(
         "  [LLM-PRE]  [%s] it%d prompt_type=%s prompt_tokens=%d cgroup=%.1fGB",
         opt_name, iteration, prompt_type, n_tokens, cgroup_gb,
     )
-    logger.info("  [LLM-PRE]  top3-rss: %s", top3_str)
+    if iteration % 10 == 0:
+        try:
+            top3 = []
+            import subprocess as _sp
+            _ps = _sp.run(
+                ["ps", "--no-headers", "-eo", "pid,rss,comm", "--sort=-rss"],
+                capture_output=True, text=True, timeout=3,
+            )
+            for _line in _ps.stdout.splitlines()[:3]:
+                _parts = _line.split()
+                if len(_parts) >= 3:
+                    top3.append(f"pid={_parts[0]} rss={int(_parts[1])//1024}MB cmd={_parts[2]}")
+            logger.info("  [LLM-PRE]  top3-rss (it%d): %s", iteration, " | ".join(top3))
+        except Exception:
+            pass
     return cgroup_gb
 
 
