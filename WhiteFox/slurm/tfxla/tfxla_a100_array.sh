@@ -211,7 +211,14 @@ mkdir -p "$XLA_DUMP_DIR"
 export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
 export TOKENIZERS_PARALLELISM=false
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# expandable_segments:True causes vLLM GPU workers to lazily map new GPU
+# memory segments into CPU address space during each generation call.
+# That produces the linear ~1 GB/2 sec CPU RSS growth seen in PID 1153851
+# (cgroup_mem.tsv job 249955) that pushes total cgroup RAM from 80 GB to
+# 180 GB mid-run despite GPU memory being fine.  Without this flag PyTorch
+# pre-allocates the full KV-cache pool at vLLM startup so the "spike"
+# becomes part of the fixed baseline rather than an unbounded runtime ramp.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
 # Switch the parent (generation.main) from CPython's pymalloc to glibc
@@ -290,8 +297,30 @@ XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
 ) &
 TRACER_PID=$!
 
+# ---- Background GPU memory tracer ------------------------------------------
+# Runs nvidia-smi in a loop, writing per-GPU used/free/total memory every 5 s.
+# Lets us correlate CPU cgroup spikes with GPU-side allocation changes so we
+# can distinguish: KV-cache swap spill to CPU, CUDA pinned-memory growth,
+# pytorch expandable_segments growth, or something else entirely.
+GPU_TRACE_FILE="$WHITEFOX_LOGGING_DIR/gpu_mem.tsv"
+(
+  set +e; set +o pipefail
+  printf 'ts\tgpu\tused_mb\tfree_mb\ttotal_mb\n' > "$GPU_TRACE_FILE"
+  while true; do
+    _ts=$(date +%s)
+    nvidia-smi --query-gpu=index,memory.used,memory.free,memory.total \
+               --format=csv,noheader,nounits 2>/dev/null \
+    | while IFS=', ' read -r _idx _used _free _total; do
+        printf '%s\t%s\t%s\t%s\t%s\n' "$_ts" "$_idx" "$_used" "$_free" "$_total"
+      done >> "$GPU_TRACE_FILE"
+    sleep 5
+  done
+) &
+GPU_TRACER_PID=$!
+
 echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
 echo "[$(date)] cgroup trace: $TRACE_FILE (PID=$TRACER_PID)"
+echo "[$(date)] GPU trace:    $GPU_TRACE_FILE (PID=$GPU_TRACER_PID)"
 
 # Don't let set -e short-circuit past the postmortem when python is SIGKILL'd.
 GEN_EXIT=0
@@ -299,6 +328,7 @@ poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-op
   || GEN_EXIT=$?
 
 kill "$TRACER_PID" 2>/dev/null || true
+kill "$GPU_TRACER_PID" 2>/dev/null || true
 echo "[$(date)] Finished $BATCH_LABEL (exit $GEN_EXIT)"
 
 # ---- OOM postmortem: capture cgroup memory state on non-zero exit ----------
@@ -328,6 +358,11 @@ if [ "$GEN_EXIT" != "0" ]; then
       || journalctl -k --since "10 min ago" 2>/dev/null \
          | grep -iE "oom|killed process|memory cgroup" | tail -40 \
       || echo "(no kernel log access)"
+    echo "--- GPU memory at OOM time ---"
+    nvidia-smi --query-gpu=index,memory.used,memory.free,memory.total \
+               --format=csv 2>/dev/null || echo "(nvidia-smi unavailable)"
+    echo "--- last 10 GPU trace rows ---"
+    tail -10 "$GPU_TRACE_FILE" 2>/dev/null || echo "(no GPU trace file)"
     echo "--- /tmp usage ---"
     df -h /tmp 2>/dev/null
     du -sh /tmp/xla_dump_* 2>/dev/null
