@@ -79,6 +79,86 @@ def _log_parent_rss(logger: logging.Logger, label: str) -> None:
         pass
 
 
+def _read_cgroup_mem_gb() -> float:
+    """Return the cgroup's memory.current in GB, or -1 on any error."""
+    try:
+        with open("/proc/self/cgroup") as _f:
+            _rel = _f.readline().split("::")[-1].strip()
+        _cg = f"/sys/fs/cgroup{_rel}/memory.current"
+        with open(_cg) as _f:
+            return int(_f.read().strip()) / (1024 ** 3)
+    except Exception:
+        return -1.0
+
+
+def _log_llm_call(
+    logger: logging.Logger,
+    llm,
+    opt_name: str,
+    iteration: int,
+    prompt: str,
+    prompt_type: str,
+) -> float:
+    """Log diagnostic context immediately before an LLM generate call.
+
+    Returns cgroup_gb_before so the caller can compute the delta after.
+    Logs:
+     - prompt token count (expensive per-call tokenisation, so only INFO)
+     - cgroup memory.current from inside Python
+     - top-3 processes by RSS at this moment
+    """
+    cgroup_gb = _read_cgroup_mem_gb()
+    try:
+        tok = llm.get_tokenizer()
+        n_tokens = len(tok.encode(prompt))
+    except Exception:
+        n_tokens = -1
+    try:
+        top3 = []
+        import subprocess as _sp
+        _ps = _sp.run(
+            ["ps", "--no-headers", "-eo", "pid,rss,comm", "--sort=-rss"],
+            capture_output=True, text=True, timeout=3,
+        )
+        for _line in _ps.stdout.splitlines()[:3]:
+            _parts = _line.split()
+            if len(_parts) >= 3:
+                top3.append(f"pid={_parts[0]} rss={int(_parts[1])//1024}MB cmd={_parts[2]}")
+        top3_str = " | ".join(top3)
+    except Exception:
+        top3_str = "unavailable"
+    logger.info(
+        "  [LLM-PRE]  [%s] it%d prompt_type=%s prompt_tokens=%d cgroup=%.1fGB",
+        opt_name, iteration, prompt_type, n_tokens, cgroup_gb,
+    )
+    logger.info("  [LLM-PRE]  top3-rss: %s", top3_str)
+    return cgroup_gb
+
+
+def _log_llm_call_post(
+    logger: logging.Logger,
+    opt_name: str,
+    iteration: int,
+    cgroup_gb_before: float,
+    outputs,
+) -> None:
+    """Log cgroup memory delta and output token counts after llm.generate()."""
+    cgroup_gb_after = _read_cgroup_mem_gb()
+    delta = cgroup_gb_after - cgroup_gb_before if cgroup_gb_before >= 0 else float("nan")
+    out_token_counts = []
+    try:
+        for _o in outputs:
+            for _s in _o.outputs:
+                out_token_counts.append(len(_s.token_ids) if hasattr(_s, "token_ids") else len(_s.text.split()))
+    except Exception:
+        pass
+    logger.info(
+        "  [LLM-POST] [%s] it%d cgroup_before=%.1fGB cgroup_after=%.1fGB delta=%+.1fGB out_tokens=%s",
+        opt_name, iteration, cgroup_gb_before, cgroup_gb_after, delta,
+        out_token_counts[:5],
+    )
+
+
 def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
     try:
@@ -491,11 +571,17 @@ class StarCoderGenerator:
 
             try:
                 sampling_params = self._create_sampling_params(tests_per_iteration)
+                cgroup_gb_pre = _log_llm_call(
+                    self.logger, self.llm, opt_name, iteration, prompt, prompt_type
+                )
                 t_llm0 = time.monotonic()
                 with self._llm_lock:
                     outputs = self.llm.generate([prompt], sampling_params)
                 t_llm1 = time.monotonic()
                 opt_llm_time_s += t_llm1 - t_llm0
+                _log_llm_call_post(
+                    self.logger, opt_name, iteration, cgroup_gb_pre, outputs
+                )
             except Exception as e:
                 whitefox_logger.log_error(
                     opt_name,
