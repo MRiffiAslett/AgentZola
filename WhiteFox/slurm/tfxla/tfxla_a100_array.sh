@@ -211,13 +211,17 @@ mkdir -p "$XLA_DUMP_DIR"
 export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
 export TOKENIZERS_PARALLELISM=false
-# expandable_segments:True causes vLLM GPU workers to lazily map new GPU
-# memory segments into CPU address space during each generation call.
-# That produces the linear ~1 GB/2 sec CPU RSS growth seen in PID 1153851
-# (cgroup_mem.tsv job 249955) that pushes total cgroup RAM from 80 GB to
-# 180 GB mid-run despite GPU memory being fine.  Without this flag PyTorch
-# pre-allocates the full KV-cache pool at vLLM startup so the "spike"
-# becomes part of the fixed baseline rather than an unbounded runtime ramp.
+# expandable_segments:True caused rapid CPU RSS growth in job 249955 (PID 1153851
+# grew ~1 GB/2 sec) by lazily cuMemMap-ing new GPU segments into CPU address space
+# on every generate() call.  :False defers that mapping to first-use instead of
+# startup, which slows the ramp but does not eliminate the ultimate plateau — the
+# entire GPU memory pool (model + KV cache, ~80 GB) still page-faults into CPU
+# address space as inference proceeds.  The actual OOM trigger in job 250154 was
+# KV-cache overflow: with n=10 samples × max_tokens=4096 the worst-case call needed
+# ~2648 blocks vs the 2530-block pre-allocated pool, forcing an emergency cudaMalloc
+# that added +130 GB of CPU RSS in ~3 minutes.  That is now fixed by max_tokens=2048
+# (worst case 1367 blocks << 2530).  Keep :False so the plateau stays gradual
+# (first-use page faults spread over hours) rather than a hard spike at startup.
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -321,6 +325,15 @@ GPU_TRACER_PID=$!
 echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
 echo "[$(date)] cgroup trace: $TRACE_FILE (PID=$TRACER_PID)"
 echo "[$(date)] GPU trace:    $GPU_TRACE_FILE (PID=$GPU_TRACER_PID)"
+
+# Raise the process/thread limit to the hard cap before launching Python.
+# TF/XLA's LLVM codegen spawns one thread per CPU during JIT compilation;
+# when the Slurm node's soft nproc limit is lower than the hard limit the
+# first thread that can't be created kills the process with SIGABRT
+# (pthread_create errno=11/EAGAIN → exit 134, as seen in job 250154 batch1).
+# Setting soft=hard is always safe for unprivileged users and costs nothing.
+ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
+echo "[$(date)] nproc limit: $(ulimit -u)"
 
 # Don't let set -e short-circuit past the postmortem when python is SIGKILL'd.
 GEN_EXIT=0

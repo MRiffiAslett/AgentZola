@@ -20,7 +20,17 @@ swap_space = 4
 
 [generation]
 num_samples = 1     
-max_tokens = 4096   
+# KV-cache sizing: with n=10 samples and max_model_len=8192 the worst-case call
+# (long feedback prompt ~1400 tokens + 10 samples × output tokens) needs
+# 1400/16 + (output/16)×10 KV blocks.  With gpu_memory_utilization=0.85 the
+# pre-allocated pool is (0.85×80-30) GB ÷ 15 MB/block ≈ 2530 blocks.
+#   max_tokens=4096 → worst case 1400/16 + 4096/16×10 = 87+2560 = 2647 blocks > 2530 → OVERFLOW
+#   max_tokens=2048 → worst case 1400/16 + 2048/16×10 = 87+1280 = 1367 blocks < 2530 → safe
+# KV overflow forces vLLM to emit an emergency cudaMalloc which maps new GPU
+# pages into CPU address space, triggering the sudden +130 GB CPU RSS spike
+# observed in job 250154 batch0/batch2 at ts≈1781653982 after 23 h of stability.
+# Generated test functions rarely exceed 1000 tokens in practice; 2048 is 2×.
+max_tokens = 2048
 temperature = 1.0    
 top_p = 1.0        
 split_size = 20      
