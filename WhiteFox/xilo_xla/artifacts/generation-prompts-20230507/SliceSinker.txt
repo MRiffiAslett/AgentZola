@@ -1,0 +1,18 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.slice(input_tensor1, ...)
+t2 = tf.slice(input_tensor2, ...)
+output = tf.some_elementwise_op(t1, t2)
+```
+
+The pattern describes that there are two slice operators in the model. The first `slice` operator extracts a portion of a tensor `input_tensor1` and the second `slice` operator extracts a portion of another tensor `input_tensor2`. The output is then computed by applying an elementwise operation on the results of the two slices.
+
+The following conditions should also be met:
+
+1. The slices are taken from the same indices of tensors with compatible shapes.
+2. The elementwise operation is applied on the slices.
+3. The operands of the elementwise operation are slices taken from the same indices as the operands of the other similar operations.
+4. The accumulated size of the group of operations is not less than the size of such a bigger tensor. This is a heuristic to ensure that the transformation never causes us to do more elementwise operations.
+
+If these conditions are met, the `SliceSinker` optimization pass is triggered.

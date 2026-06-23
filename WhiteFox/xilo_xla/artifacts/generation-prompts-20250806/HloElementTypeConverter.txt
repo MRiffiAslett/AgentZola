@@ -1,0 +1,7 @@
+The TensorFlow model should contain arithmetic operations that use a specific data type, referred to as `eliminate_type_` in the code. The `HloElementTypeConverter` optimization pass is triggered when the model contains operations that use this `eliminate_type_` and the goal is to convert these operations to use another data type, referred to as `replace_with_type_`.
+
+The model should not contain operations where it does not make sense to convert them. These operations include `kParameter`, `kConstant`, `kTuple`, `kConvert`, `kBitcastConvert`, `kGetTupleElement`, `kInfeed`, `kOutfeed`, and `kCustomCall`.
+
+The model should also not contain operations with embedded computations where it suffices to convert the embedded computations instead of converting the operations themselves. These operations include `kWhile`, `kCall`, `kAllReduce`, `kReduceScatter`, `kAllReduceStart`, `kFusion`, `kMap`, `kReduce`, `kReduceWindow`, `kScatter`, `kSelectAndScatter`, `kSort`, and `kConditional`.
+
+The model should contain instructions that perform arithmetic operations and contain operands with `eliminate_type_`. These operands will be converted to `replace_with_type_`. If the result of the instruction is of `eliminate_type_`, it will be converted to `replace_with_type_` and then converted back to `eliminate_type_`. If the result of the instruction is a tuple, the elements of the tuple that are of `eliminate_type_` will be converted to `replace_with_type_` and then converted back to `eliminate_type_`.

@@ -1,0 +1,14 @@
+The model should contain a non-canonical dot operation. A dot operation is considered non-canonical if it meets any of the following conditions:
+
+1. There is more than one contracting dimension.
+2. It has more than one non-contracting dimension.
+3. The batch dimensions, if present, are not canonical. The batch dimensions are considered canonical if they are in ascending order starting from 0.
+
+The pattern in TensorFlow could look like this:
+
+```python
+# Non-canonical dot operation
+t1 = tf.linalg.matmul(input_tensor1, input_tensor2)
+```
+
+In this case, the `DotDecomposer` optimization pass is triggered if the dimensions of the dot operation (matrix multiplication in this case) are not in the canonical form as described above.

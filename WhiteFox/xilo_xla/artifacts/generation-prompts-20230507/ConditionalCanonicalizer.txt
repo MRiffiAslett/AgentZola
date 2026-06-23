@@ -1,0 +1,17 @@
+The model should contain a `tf.cond` operation where the output of the conditional branches is not a tuple. 
+
+In TensorFlow, `tf.cond` is a conditional operation that allows you to choose to execute a block of operations depending on a predicate. In the model, the `tf.cond` operation should be used in such a way that the output of the true and false branches are not tuples. 
+
+Here is an example of such a pattern:
+
+```python
+def true_fn():
+  return tf.constant(1)
+
+def false_fn():
+  return tf.constant(0)
+
+result = tf.cond(tf.less(0.5, 0.6), true_fn, false_fn)
+```
+
+In this example, the `tf.cond` operation is used with `true_fn` and `false_fn` as the branches. The output of both branches is a single tensor, not a tuple. This pattern in the model will trigger the `ConditionalCanonicalizer` optimization pass in TensorFlow XLA.

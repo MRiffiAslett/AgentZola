@@ -1,0 +1,11 @@
+The TensorFlow model triggers the optimization pass `HloDce` when it contains computations or instructions that are not used by any other computations or instructions in the model. 
+
+The model should contain the following patterns:
+
+1. Dead computations: These are computations that are not called by any instructions. They are considered dead because they do not contribute to the final output of the model.
+
+2. Dead instructions: These are instructions that are not used by any other instructions. They are considered dead because they do not contribute to the final output of the model.
+
+3. Dead roots: These are instructions that are not used by any other instructions and do not have any side effects. They are considered dead because they do not contribute to the final output of the model and removing them does not affect the behavior of the model.
+
+The `HloDce` optimization pass removes these dead computations, instructions, and roots from the model, which can lead to a more efficient execution of the model.

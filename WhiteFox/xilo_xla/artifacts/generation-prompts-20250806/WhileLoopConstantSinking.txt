@@ -1,0 +1,21 @@
+The model should contain a while loop where the initial value of the loop is a tuple and at least one of the elements of the tuple is a constant or a broadcast of a constant. This constant value should be used inside the loop body or condition but does not change across iterations (i.e., it is loop invariant). 
+
+Here is an example of such a pattern in TensorFlow:
+
+```python
+def cond(i, max_val, tensor):
+    return i < max_val
+
+def body(i, max_val, tensor):
+    # tensor is a constant or broadcast of a constant
+    tensor = tf.add(tensor, 1)
+    return i + 1, max_val, tensor
+
+i = tf.constant(0)
+max_val = tf.constant(10)
+tensor = tf.constant(5)  # This is the constant that will be sunk into the loop
+
+result = tf.while_loop(cond, body, [i, max_val, tensor])
+```
+
+In this example, `tensor` is a constant that is used inside the loop but does not change across iterations. Therefore, the `WhileLoopConstantSinking` optimization pass will be triggered.

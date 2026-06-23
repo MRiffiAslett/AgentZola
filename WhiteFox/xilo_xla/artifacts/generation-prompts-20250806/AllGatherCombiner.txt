@@ -1,0 +1,35 @@
+The model should contain multiple AllGather operations that can be combined into a single AllGather operation. The conditions for combining are:
+
+1. The AllGather operations should have the same preferred all_gather_dimension if `combine_by_dim` is true. This dimension is the axis along which the all-gather operation is performed.
+
+2. The AllGather operations should have the same data type if `combine_different_dtypes` is false. 
+
+3. The AllGather operations should have the same replica groups. A replica group is a subset of all available replicas/processors where the all-gather operation is performed.
+
+4. The total size of the combined AllGather operations should not exceed `combine_threshold_in_bytes` and the total number of AllGather operations should not exceed `combine_threshold_count`.
+
+5. If `combine_while_loops` is false, the AllGather operations should not be in the body of a while loop.
+
+6. The AllGather operations should not have constrained layouts.
+
+Here is an example of a model that can trigger the `AllGatherCombiner` optimization:
+
+```python
+import tensorflow as tf
+import numpy as np
+
+# Assume we have a distributed system with 4 replicas
+strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+
+with strategy.scope():
+    # Create a variable in each replica
+    v = tf.Variable(initial_value=np.array([1, 2, 3, 4]), dtype=tf.float32)
+
+    # Perform AllGather operations
+    gathered_v1 = strategy.experimental_local_results(strategy.gather(v, axis=0))
+    gathered_v2 = strategy.experimental_local_results(strategy.gather(v, axis=0))
+
+# The two AllGather operations can be combined into a single AllGather operation
+```
+
+In this example, `gathered_v1` and `gathered_v2` are two AllGather operations that gather the values of the variable `v` from all replicas along the axis 0. These two operations can be combined into a single AllGather operation by the `AllGatherCombiner` optimization pass.

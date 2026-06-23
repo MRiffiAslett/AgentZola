@@ -1,0 +1,16 @@
+The model should contain the following pattern:
+```
+t1 = tf.all_reduce(input_tensor, ...)
+t2 = tf.all_reduce(t1, ...)
+```
+The pattern describes that there are two all-reduce operators in the model. The first `all_reduce` operator performs an all-reduce operation on a tensor input `input_tensor`, and the second `all_reduce` operator performs an all-reduce operation on the output of the first `all_reduce`.
+
+The two all-reduce operations must be compatible, except for the replica groups. This means they must have the same reduction operation, the same datatype, and the same shape. 
+
+The replica groups of the two all-reduce operations must be non-empty and they must list all the participants. The optimization pass attempts to fold the two sets of replica groups into a single set. If this is not possible, the optimization pass is not triggered. 
+
+The first all-reduce operation must only have one user, which is the second all-reduce operation. 
+
+If the first all-reduce operation has a channel ID, a new channel ID is assigned to the new all-reduce operation created by the optimization pass. 
+
+The optimization pass replaces the two all-reduce operations with a new all-reduce operation that has the combined replica groups. The two original all-reduce operations are removed from the computation.

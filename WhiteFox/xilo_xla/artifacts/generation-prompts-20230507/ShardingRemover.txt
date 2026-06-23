@@ -1,0 +1,10 @@
+The model should contain a custom call operation with a target that is one of the following: "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape". The custom call operation should have exactly one operand. 
+
+Here is an example of such a pattern in TensorFlow:
+
+```python
+# Assume `input_tensor` is a tensor in your model
+sharded_tensor = tf.raw_ops.XlaSharding(input=input_tensor, sharding="SPMDShardToFullShape")
+```
+
+In this example, `tf.raw_ops.XlaSharding` is a custom call to the "Sharding" operation. The `ShardingRemover` optimization pass will be triggered because the model contains a custom call operation with "Sharding" as its target.

@@ -1,0 +1,10 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.all_reduce(input_tensor1, ...)
+t2 = tf.all_gather(input_tensor2, ...)
+```
+
+The pattern describes that there are multiple collective operations in the model, such as `all_reduce`, `all_gather`, `collective_permute_start`, or `async_start`. These operations are not dependent on each other, meaning there is no data dependency from the output of one operation to the input of the other. 
+
+The `CollectivesScheduleLinearizer` optimization pass is triggered when these independent collective operations are found in the model. The pass adds control dependencies between these operations to enforce a linear execution order. This is done to avoid potential deadlocks that can occur due to the non-deterministic execution order of these operations.

@@ -1,0 +1,12 @@
+The model should contain the following pattern:
+```
+t1 = tf.all_reduce(input_tensor, ...)
+t2 = tf.all_reduce(t1, ...)
+```
+The pattern describes that there are two `all_reduce` operators in the model. The first `all_reduce` operator performs a reduction operation across multiple replicas of `input_tensor`, and the second `all_reduce` operator performs a reduction operation on the output of the first `all_reduce`.
+
+The two `all_reduce` operations must be compatible, except for their replica groups. This means they must have the same reduction operation, the same input and output shapes, and the same constraints on their layouts. 
+
+Both `all_reduce` operations must have non-empty replica groups, which list all the participants in the reduction operation. The replica groups of the first `all_reduce` operation and the second `all_reduce` operation must be able to be folded into a single set of replica groups. 
+
+The output of the first `all_reduce` operation must only be used by the second `all_reduce` operation. If the first `all_reduce` operation has a channel ID, a new channel ID will be assigned to the new `all_reduce` operation that replaces the two original `all_reduce` operations.

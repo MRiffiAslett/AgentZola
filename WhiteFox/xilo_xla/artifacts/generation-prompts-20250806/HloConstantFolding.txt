@@ -1,0 +1,28 @@
+The TensorFlow model triggers the optimization pass `HloConstantFolding` when it contains operations where at least one operand is a constant and all other operands are either constants or broadcasts of constants. 
+
+The model should not contain instructions that are side-effecting, have control dependencies, or are of type `kBroadcast`, `kIota`, `kFft`, `kWhile`, `kAfterAll`, `kRng`, `kParameter`, `kConstant`, or `kTuple`. 
+
+The model should also not contain instructions that are or transitively contain an instruction that we shouldn't fold, such as `kRng` or `kAfterAll`. 
+
+The model should not contain instructions that have a pad instruction with a broadcast operand. 
+
+The model should not contain instructions that have a size larger than 45 million elements. 
+
+The model should not contain computations that are only used by call instructions, unless for any of the parameters of the computation, the argument passed by the call-sites is always the same constant. 
+
+Here is an example of a model that would trigger this optimization pass:
+
+```python
+import tensorflow as tf
+
+# Define a constant tensor
+x = tf.constant([1, 2, 3, 4, 5])
+
+# Define a computation that uses the constant tensor
+y = tf.math.add(x, x)
+
+# The computation `y` will trigger the `HloConstantFolding` optimization pass
+# because it contains an operation (tf.math.add) where all operands are constants.
+```
+
+In this example, the `tf.math.add` operation in the computation `y` has two operands that are both constants (`x` and `x`), so it will trigger the `HloConstantFolding` optimization pass.

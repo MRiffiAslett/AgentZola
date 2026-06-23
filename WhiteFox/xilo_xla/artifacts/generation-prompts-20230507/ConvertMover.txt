@@ -1,0 +1,11 @@
+The model should contain the following patterns:
+
+1. Increase precision "down" the graph: `instr(increase_precision(x)) -> increase_precision(instr(x))`. This pattern describes that there is an operation `instr` in the model that takes as input the result of an increase precision operation on a tensor `x`. The increase precision operation converts the tensor `x` from a lower precision type to a higher precision type.
+
+2. Decrease precision "up" the graph: `decrease_precision(instr(x)) -> instr(decrease_precision(x))`. This pattern describes that there is a decrease precision operation in the model that takes as input the result of an operation `instr` on a tensor `x`. The decrease precision operation converts the tensor `x` from a higher precision type to a lower precision type.
+
+The operation `instr` must be one of the following types: `kConcatenate`, `kPad`, `kReshape`, `kSlice`, `kTranspose`. 
+
+For the increase precision pattern, all operands of `instr` must be either a `kConvert` operation or a `kConstant`. At least one of the operands must be a `kConvert` operation, and all `kConvert` operations must have the same source data type. The source data type must have a smaller bit width than the destination data type. If any operand is a `kConstant`, it must be losslessly convertible to the source data type.
+
+For the decrease precision pattern, the operand of the decrease precision operation must be an operation `instr` that commutes with the convert operation, and the operand of `instr` must have only one user. The source data type must have a larger bit width than the destination data type.

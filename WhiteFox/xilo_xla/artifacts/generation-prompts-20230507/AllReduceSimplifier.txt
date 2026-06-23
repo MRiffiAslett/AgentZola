@@ -1,0 +1,27 @@
+The model should contain the following patterns:
+
+1. The model contains `AllGather` or `ReduceScatter` operations where the input and output shapes are compatible. This means that the shape of the tensor before and after the operation remains the same.
+
+```python
+# Example in TensorFlow
+input_tensor = tf.constant([1, 2, 3, 4])
+gathered_tensor = tf.raw_ops.AllGather(input_tensor, group_size=2)
+```
+
+2. The model contains `AllReduce` operations where the input is either replicated across all replicas or the size of the replica group is 1. This means that the operation is performed across multiple replicas but the input is the same for all replicas or there is only one replica.
+
+```python
+# Example in TensorFlow
+input_tensor = tf.constant([1, 2, 3, 4])
+reduced_tensor = tf.raw_ops.AllReduce(input_tensor, reduction_op='Add', group_size=1)
+```
+
+3. The model contains `AllReduce` operations with a reduction function that is either `Add`, `Minimum`, `Maximum`, `Or`, or `And`. The reduction function is applied to all elements of the input tensor across all replicas.
+
+```python
+# Example in TensorFlow
+input_tensor = tf.constant([1, 2, 3, 4])
+reduced_tensor = tf.raw_ops.AllReduce(input_tensor, reduction_op='Add', group_size=2)
+```
+
+In all these cases, the `AllReduceSimplifier` optimization pass can be triggered, leading the function to return true.

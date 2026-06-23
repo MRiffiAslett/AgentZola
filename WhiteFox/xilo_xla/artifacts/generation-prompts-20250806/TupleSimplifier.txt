@@ -1,0 +1,17 @@
+The model should contain the following patterns:
+
+1. A pattern where a tuple is created from elements that are all extracted from another tuple with the same shape and in the same order. This pattern can be represented as:
+
+```python
+t1 = tf.tuple([input_tuple[i] for i in range(len(input_tuple))])
+```
+
+2. A pattern where a chain of `GetTupleElement` (GTE) operations is used to extract an element from a tuple. This pattern can be represented as:
+
+```python
+t1 = tf.tuple([op1, op2, op3])
+t2 = t1[i]  # GTE operation
+t3 = t2[j]  # GTE operation
+```
+
+In both cases, the `TupleSimplifier` optimization pass is triggered, leading the function `TupleSimplifier::Run` to return true.

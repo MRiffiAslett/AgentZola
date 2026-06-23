@@ -1,0 +1,19 @@
+The model should contain the following pattern:
+
+```
+lhs = tf.Variable(...)
+rhs0 = tf.Variable(...)
+rhs1 = tf.Variable(...)
+dot0 = tf.linalg.matmul(lhs, rhs0)
+dot1 = tf.linalg.matmul(lhs, rhs1)
+```
+
+The pattern describes that there are two `matmul` operators in the model. Both `matmul` operators share the same left-hand-side operand `lhs` but have different right-hand-side operands `rhs0` and `rhs1`. 
+
+The `DotMerger` optimization pass is triggered when there are multiple `matmul` operations in the model that share a common operand. The optimization pass attempts to merge these `matmul` operations into a single operation, which can potentially reduce the computational cost and memory usage. 
+
+The function `MergeDots` is the main function that performs this optimization. It first builds a dependency graph of the computation, then iterates over all pairs of `matmul` operations in the model. If a pair of `matmul` operations share a common operand and meet certain conditions (e.g., they do not have control dependencies, their shapes are compatible, etc.), the function attempts to merge them into a single `matmul` operation. 
+
+The function `TryMergeOperand` is called to perform the actual merging of the `matmul` operations. It first checks if the `matmul` operations can be merged by calling `TryMergeSameOperand`. If this fails, it then tries to merge the `matmul` operations by calling `TryMergeLHSWithRHSOperand`. 
+
+If any `matmul` operations are successfully merged, the function `MergeDots` returns `true`, indicating that the model has been modified.

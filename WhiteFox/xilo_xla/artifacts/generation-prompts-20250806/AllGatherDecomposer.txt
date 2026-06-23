@@ -1,0 +1,5 @@
+The model should contain an `AllGather` operation that meets the criteria defined in the `ShouldDecompose` function. The `AllGather` operation is a collective operation that gathers values from all participating replicas and combines them into a single tensor. 
+
+The `ShouldDecompose` function is not provided in the given code, but it typically checks certain conditions to decide whether the `AllGather` operation should be decomposed into simpler operations. The exact conditions can vary, but they might include things like the size of the tensor, the number of replicas, or the specific hardware being used.
+
+If the `AllGather` operation meets these conditions, the `AllGatherDecomposer::Run` function will decompose it into simpler operations, which can improve performance or compatibility with certain hardware. The function will then return `true`, indicating that changes have been made to the model.

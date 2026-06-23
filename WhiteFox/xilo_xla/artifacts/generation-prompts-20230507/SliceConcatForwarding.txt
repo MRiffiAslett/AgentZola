@@ -1,0 +1,8 @@
+The model should contain the following pattern:
+```
+t1 = tf.concat([A1, A2, ..., An, ...], axis=0)
+t2 = tf.slice(t1, [n], [1])
+```
+The pattern describes that there is a `concat` operator followed by a `slice` operator in the model. The `concat` operator concatenates a list of tensors `[A1, A2, ..., An, ...]` along the first dimension (axis=0). The `slice` operator then slices the concatenated tensor `t1` starting from the `n`th position and the size of the slice is 1.
+
+The slice operation should have a stride of 1 and the slice size should be equal to the difference between the slice limit and the slice start. The slice operation should only work for size 1 tensor. The operand that can be forwarded is found when the size so far is equal to the slice start and the dimension of the operand is equal to the slice size.

@@ -1,0 +1,14 @@
+The model should contain a `while` loop operation. The `WhileLoopTripCountAnnotator` optimization pass is triggered when the trip count (the number of iterations) of the `while` loop can be statically determined. 
+
+The pattern in the model that triggers this optimization pass is a `while` loop where the number of iterations is known and constant. This can be a loop with a fixed number of iterations or a loop where the number of iterations can be computed from the input tensors.
+
+Here is an example of a TensorFlow model that would trigger this optimization:
+
+```python
+i = tf.constant(0)
+c = lambda i: tf.less(i, 10)
+b = lambda i: tf.add(i, 1)
+r = tf.while_loop(c, b, [i])
+```
+
+In this example, the `while` loop will always execute 10 times, so the `WhileLoopTripCountAnnotator` optimization pass can annotate the loop with its trip count.

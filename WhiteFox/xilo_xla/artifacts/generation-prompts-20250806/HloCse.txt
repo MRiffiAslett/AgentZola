@@ -1,0 +1,21 @@
+The TensorFlow model triggers the optimization pass `HloCSE` in TensorFlow XLA when it contains duplicate computations that can be eliminated. This includes duplicate constants, duplicate iota instructions, and duplicate instructions that are equivalent and can be safely removed. 
+
+For example, if the model contains the following pattern:
+
+```python
+t1 = tf.add(input_tensor1, input_tensor2)
+t2 = tf.add(input_tensor1, input_tensor2)
+```
+
+The `HloCSE` optimization pass will identify that `t1` and `t2` are performing the same computation and can be combined. 
+
+The model should also contain computations that are equivalent but not identical. For example, if the model contains the following pattern:
+
+```python
+t1 = tf.add(input_tensor1, input_tensor2)
+t2 = tf.add(input_tensor2, input_tensor1)
+```
+
+The `HloCSE` optimization pass will identify that `t1` and `t2` are equivalent (since addition is commutative) and can be combined.
+
+Note that the optimization pass will not be triggered if the duplicate computations have side effects or if they cannot be safely removed.

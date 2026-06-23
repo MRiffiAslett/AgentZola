@@ -1,0 +1,17 @@
+The model should contain multiple AllReduce operations that can be combined into a single AllReduce operation. The characteristics of these AllReduce operations should be:
+
+1. They all belong to the same computation.
+2. They all have exactly one operand.
+3. They all use the same reduction operation.
+4. The total size of the operands of these AllReduce operations should exceed the threshold defined by `combine_threshold_in_bytes_` and `combine_threshold_count_`.
+
+The pattern in the model could be like this:
+
+```python
+t1 = tf.reduce_sum(input_tensor1)
+t2 = tf.reduce_sum(input_tensor2)
+t3 = tf.reduce_sum(input_tensor3)
+...
+```
+
+In this pattern, `input_tensor1`, `input_tensor2`, `input_tensor3`, ... are the operands of the AllReduce operations. The total size of these operands should exceed the threshold for the `AllReduceCombiner` optimization to be triggered.

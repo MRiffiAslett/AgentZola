@@ -1,0 +1,24 @@
+The TensorFlow model triggers the optimization pass `HloDce` in TensorFlow XLA when it contains dead code, i.e., instructions that are not contributing to the final output of the model. This includes:
+
+1. Instructions whose outputs are not used by any other instruction.
+2. Instructions that are not reachable from the root instruction of the computation.
+3. Parameters that are not used by any instruction in the computation.
+4. Multi-output fusion instructions where some of the outputs are not used.
+
+The model should have the following characteristics:
+
+- It may contain computations that are not called by any instruction in the module.
+- It may contain instructions that are not used by any other instruction or do not contribute to the final output.
+- It may contain parameters that are not used by any instruction in the computation.
+- It may contain fusion instructions where some of the outputs are not used.
+
+For example, consider the following TensorFlow code:
+
+```python
+x = tf.constant([1, 2, 3])
+y = tf.constant([4, 5, 6])
+z = tf.add(x, y)
+unused = tf.multiply(x, y)
+```
+
+In this case, the multiplication operation `unused = tf.multiply(x, y)` is a dead code because its output is not used anywhere. Therefore, the `HloDce` optimization pass will be triggered to remove this dead code.

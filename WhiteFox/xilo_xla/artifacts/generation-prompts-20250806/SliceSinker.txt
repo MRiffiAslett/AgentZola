@@ -1,0 +1,25 @@
+The TensorFlow model triggers the optimization pass `SliceSinker` in TensorFlow XLA when it contains a group of elementwise operations on slices that meet the following conditions:
+
+1. The operands of each operation are slices taken from the same indices of larger tensors with the same dimensions.
+2. All operations have the same opcode.
+3. The corresponding operands of all operations are slices taken from the same larger tensors.
+4. The accumulated size of the group of operations is not less than the size of such a larger tensor. This is a heuristic to ensure that the transformation never causes us to do more elementwise operations.
+
+Here is an example of a model that would trigger this optimization:
+
+```python
+import tensorflow as tf
+
+# Define a tensor
+p = tf.constant([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=tf.float32)
+
+# Define slices
+a = tf.slice(p, [0], [6])
+b = tf.slice(p, [6], [4])
+
+# Define elementwise operations
+aa = tf.add(a, a)
+bb = tf.add(b, b)
+```
+
+In this example, the operations `aa` and `bb` are elementwise operations on slices `a` and `b` of tensor `p`. The slices are taken from the same indices of `p`, and the operations have the same opcode (`tf.add`). The accumulated size of the operations (10) is not less than the size of the tensor `p` (10). Therefore, this model would trigger the `SliceSinker` optimization pass.

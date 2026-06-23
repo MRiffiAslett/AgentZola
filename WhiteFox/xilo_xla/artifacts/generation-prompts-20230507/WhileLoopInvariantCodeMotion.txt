@@ -1,0 +1,28 @@
+The TensorFlow model should contain a while loop where some instructions inside the loop body are invariant, meaning they produce the same result in every iteration of the loop. The `WhileLoopInvariantCodeMotion` optimization pass is triggered when it identifies such invariant instructions that can be hoisted out of the loop body, thus reducing the computational overhead inside the loop.
+
+The model should have the following characteristics:
+
+1. The while loop should have a tuple as its state. This is because the current implementation of `WhileLoopInvariantCodeMotion` does not support hoisting from while loops that do not use a tuple state.
+
+2. The invariant instructions inside the loop body should not have side effects, should not be parameters, and should not have control predecessors or successors.
+
+3. The invariant instructions should be worth hoisting. This is determined by the `NotWorthHoistingIndividually` function, which checks the opcode of the instruction. By default, constants and reshapes are considered worth hoisting, and other instructions are not unless the `hoist_other_` flag is set.
+
+4. The invariant instructions should not cause a significant memory blow-up when hoisted. This is checked if the `hoist_size_inflation_ratio_` is set. The output size of the instruction should not be more than the input size times the `hoist_size_inflation_ratio_`.
+
+5. The invariant instructions should be either constants or their operands should also be invariant.
+
+Here is an example of a TensorFlow model that would trigger this optimization:
+
+```python
+import tensorflow as tf
+
+@tf.function
+def model(x):
+    c = tf.constant(1.0)
+    for _ in tf.range(10):
+        x = x + c
+    return x
+```
+
+In this model, the constant `c` is invariant inside the loop body and can be hoisted out of the loop by the `WhileLoopInvariantCodeMotion` optimization pass.

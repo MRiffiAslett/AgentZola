@@ -1,0 +1,17 @@
+The model should contain multiple `ReduceScatter` operations that can be combined into a single `ReduceScatter` operation. The conditions for this are:
+
+1. All `ReduceScatter` operations must have exactly one operand and the same reduction operation.
+2. The total size of the operands of the `ReduceScatter` operations to be combined should exceed the `combine_threshold_in_bytes` and the total count of the `ReduceScatter` operations should exceed the `combine_threshold_count`.
+3. The model should not contain any `ReduceScatter` operations with constrained layouts.
+
+The pattern in the model would look something like this:
+
+```python
+# Assume x1, x2, ..., xn are tensors
+y1 = tf.reduce_scatter(x1, ...)
+y2 = tf.reduce_scatter(x2, ...)
+...
+yn = tf.reduce_scatter(xn, ...)
+```
+
+Where `...` represents the same reduction operation and the total size of `x1, x2, ..., xn` exceeds `combine_threshold_in_bytes` and the total count of `ReduceScatter` operations exceeds `combine_threshold_count`.

@@ -1,0 +1,21 @@
+The model should contain the following pattern:
+
+```
+dot0 = tf.linalg.matmul(lhs, rhs0)
+dot1 = tf.linalg.matmul(lhs, rhs1)
+```
+
+The pattern describes that there are two `matmul` operators in the model. Both `matmul` operators share the same left-hand-side operand `lhs` but have different right-hand-side operands `rhs0` and `rhs1`. 
+
+The shapes of `lhs`, `rhs0`, and `rhs1` should satisfy the following conditions:
+
+1. The shapes of `lhs`, `rhs0`, and `rhs1` should have the same element type.
+2. The shapes of `rhs0` and `rhs1` should have the same layout.
+3. The shapes of `lhs`, `rhs0`, and `rhs1` should have the same batch dimensions and contracting dimensions.
+4. The shapes of `rhs0` and `rhs1` should have exactly one non-contracting dimension.
+
+The total byte size of the shapes of `lhs`, `rhs0`, and `rhs1` should not exceed the `max_size_to_merge` parameter of the `DotMerger` pass.
+
+The `matmul` operators should not have any control dependencies. 
+
+The `matmul` operators should not be transitively dependent on each other.

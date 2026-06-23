@@ -1,0 +1,21 @@
+The TensorFlow model should contain multiple `tf.raw_ops.ReduceScatter` operations that can be combined into a single `ReduceScatter` operation. The `ReduceScatter` operations should have the same reduction operation and exactly one operand. 
+
+The `ReduceScatter` operation in TensorFlow is used to perform a reduction on a tensor and then scatter the result. It is often used in distributed computing where the tensor is divided across multiple devices and the reduction operation is performed on each device's portion of the tensor. The results are then scattered back to the devices.
+
+The `ReduceScatterCombiner` optimization pass in TensorFlow XLA is triggered when there are multiple `ReduceScatter` operations that can be combined into a single operation. This can reduce the communication overhead and improve the performance of the model.
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+import tensorflow as tf
+
+# Assume `a` and `b` are tensors divided across multiple devices
+a = tf.random.uniform([1000])
+b = tf.random.uniform([1000])
+
+# Perform ReduceScatter operations
+a_sum = tf.raw_ops.ReduceScatter(input=a, reduction_op='SUM', scatter_dim=0)
+b_sum = tf.raw_ops.ReduceScatter(input=b, reduction_op='SUM', scatter_dim=0)
+```
+
+In this example, the `ReduceScatter` operations on tensors `a` and `b` can be combined into a single `ReduceScatter` operation.

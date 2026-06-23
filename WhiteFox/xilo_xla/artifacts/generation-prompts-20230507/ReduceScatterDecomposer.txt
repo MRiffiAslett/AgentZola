@@ -1,0 +1,18 @@
+The model should contain a `HloReduceScatterInstruction` that is an array. This instruction is a collective operation that combines values across multiple devices and scatters the result. The `ReduceScatterDecomposer` optimization pass is triggered when such an instruction is found in the model. 
+
+The `HloReduceScatterInstruction` should be part of a non-fusion computation in the model. The instruction should have a valid shape and should be an array. 
+
+Here is an example of how such a model might look:
+
+```python
+# Assume we have a distributed system with multiple devices
+devices = ...
+
+# Create a tensor
+tensor = tf.constant([...])
+
+# Apply a reduce scatter operation
+reduced = tf.xla.experimental.reduce_scatter(tensor, devices)
+```
+
+In this example, the `reduce_scatter` operation would trigger the `ReduceScatterDecomposer` optimization pass in TensorFlow XLA.

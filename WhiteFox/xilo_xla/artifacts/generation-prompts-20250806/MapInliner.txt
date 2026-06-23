@@ -1,0 +1,26 @@
+The model should contain a `tf.map_fn` operation where the function applied to each element of the input tensor is a simple operation that only depends on the input parameters. 
+
+The pattern describes that there is a `map` operation in the model. The function applied to each element of the input tensor(s) must be a simple operation that only depends on the input parameters. This means that the function should not contain any other operations except for the operation applied to the input parameters. 
+
+For example, if the function applied to each element of the input tensor is a simple addition operation, the model would look like this:
+
+```python
+def add_one(x):
+    return x + 1
+
+t1 = tf.map_fn(add_one, input_tensor)
+```
+
+In this case, the `MapInliner` optimization pass would be triggered because the function `add_one` is a simple operation that only depends on the input parameter `x`. 
+
+However, if the function contains other operations, the `MapInliner` optimization pass would not be triggered. For example:
+
+```python
+def add_one_and_multiply(x):
+    y = x + 1
+    return y * 2
+
+t1 = tf.map_fn(add_one_and_multiply, input_tensor)
+```
+
+In this case, the `MapInliner` optimization pass would not be triggered because the function `add_one_and_multiply` contains an additional multiplication operation that is not a simple operation applied to the input parameter `x`.

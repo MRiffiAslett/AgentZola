@@ -21,9 +21,19 @@ def main():
         choices=["xla", "inductor", "tflite"],
         default="xla",
     )
+    parser.add_argument(
+        "--source-version",
+        type=str,
+        default=None,
+        help="Source code version tag (e.g. 20230507 or 20250806). "
+             "Selects optimization_specification_{sut}-{version}.json and "
+             "writes to requirement-prompts-{version}/ and generation-prompts-{version}/. "
+             "Omit to use the default (unversioned) spec and output dirs.",
+    )
     args = parser.parse_args()
 
     sut = args.sut
+    source_version = args.source_version
     sut_dir_name = _SUT_DIR_MAP[sut]
 
     base_dir = Path(__file__).parent.parent
@@ -38,13 +48,16 @@ def main():
     gpt_config = config.get("gpt", {})
     use_mini = gpt_config.get("use_mini", False)
 
+    spec_suffix = f"-{source_version}" if source_version else ""
+    dir_suffix = f"-{source_version}" if source_version else ""
+
     opt_spec_path = (
-        base_dir / sut_dir_name / "artifacts" / f"optimization_specification_{sut}.json"
+        base_dir / sut_dir_name / "artifacts" / f"optimization_specification_{sut}{spec_suffix}.json"
     )
     template_path = base_dir / sut_dir_name / "artifacts" / "prompt_template.txt"
     exemplar_desc_path = base_dir / sut_dir_name / "artifacts" / "exemplar_description.txt"
-    prompts_dir = base_dir / sut_dir_name / "artifacts" / "requirement-prompts"
-    gpt_output_dir = base_dir / sut_dir_name / "artifacts" / "generation-prompts"
+    prompts_dir = base_dir / sut_dir_name / "artifacts" / f"requirement-prompts{dir_suffix}"
+    gpt_output_dir = base_dir / sut_dir_name / "artifacts" / f"generation-prompts{dir_suffix}"
 
     prompts, fallback_optimizations = generate_requirement_prompts(
         optpath=str(opt_spec_path),

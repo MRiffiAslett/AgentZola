@@ -1,0 +1,10 @@
+The model should contain the following pattern:
+
+```
+async_start = tf.xla.experimental.start_async_outbound_data_transfer(...)
+async_done = tf.xla.experimental.done_async_outbound_data_transfer(async_start)
+```
+
+The pattern describes that there are asynchronous collective operations in the model. The `start_async_outbound_data_transfer` operator starts an asynchronous data transfer operation, and the `done_async_outbound_data_transfer` operator marks the completion of the asynchronous data transfer operation started by `async_start`.
+
+The optimization pass `ConvertAsyncCollectivesToSync` is triggered when there are no other operations between the `start_async_outbound_data_transfer` and `done_async_outbound_data_transfer` operations. This means that there is no opportunity to overlap other operations with the asynchronous collective operations, and therefore, these asynchronous collective operations can be converted to synchronous operations to simplify the computation.

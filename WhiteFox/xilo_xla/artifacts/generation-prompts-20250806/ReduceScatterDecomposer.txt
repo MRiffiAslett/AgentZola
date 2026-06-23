@@ -1,0 +1,28 @@
+The model should contain a `HloReduceScatterInstruction` that is an array. This instruction is a collective operation that reduces input data from multiple sources and scatters the result. The `ReduceScatterDecomposer` optimization pass is triggered when such an instruction is found in the model.
+
+The `HloReduceScatterInstruction` should be in a non-fusion computation of the model. The instruction is decomposed into an all-reduce operation followed by a dynamic slice operation. The all-reduce operation combines values across replicas, and the dynamic slice operation extracts a slice from the all-reduce result.
+
+The model may optionally specify a channel ID for the `HloReduceScatterInstruction`. If a channel ID is specified, it is used to create a unique channel ID for the all-reduce operation.
+
+The model may also optionally specify a function `should_decompose_` that determines whether the `HloReduceScatterInstruction` should be decomposed. If this function is specified and returns false for the instruction, the instruction is not decomposed.
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+import tensorflow as tf
+from tensorflow.python.ops import collective_ops
+
+# Assume we have a multi-replica context
+strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+
+with strategy.scope():
+  # Create a tensor
+  tensor = tf.constant([1.0, 2.0, 3.0, 4.0])
+
+  # Perform a reduce scatter operation
+  reduced = collective_ops.reduce_scatter(tensor, group_size=4, group_key=1, instance_key=2)
+
+  # The reduce scatter operation will be decomposed by the ReduceScatterDecomposer optimization pass
+```
+
+Note: The actual TensorFlow code may not directly contain `HloReduceScatterInstruction`. It is an intermediate representation in XLA. The TensorFlow code is just an example to illustrate the concept.

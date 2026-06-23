@@ -1,0 +1,10 @@
+The model should contain an operation that matches the `op_matcher_` and has operands of uniform type, which is not a parameter operation and is an array. The operand type should be present in the `to_type_map_` for the conversion to be possible. 
+
+Here is an example of a pattern that could trigger this optimization:
+
+```python
+t1 = tf.constant([1, 2, 3], dtype=tf.float32)
+t2 = tf.math.sin(t1)
+```
+
+In this case, if `op_matcher_` matches the `sin` operation and `float32` is present in the `to_type_map_`, the `ChangeOpDataType` optimization pass will be triggered. The `sin` operation will be replaced with a new operation where the operands are converted to the target type specified in `to_type_map_`, and the result is converted back to the original type.

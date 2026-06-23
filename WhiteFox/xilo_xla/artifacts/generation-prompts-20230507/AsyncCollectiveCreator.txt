@@ -1,0 +1,26 @@
+The model should contain collective operations such as `AllReduce`, `AllGather`, `CollectivePermute`, `AllToAll`, or `ReduceScatter`. These operations are used for communication between different parts of a distributed system. The `AsyncCollectiveCreator` optimization pass is triggered when these collective operations are present in the model and the configuration allows their conversion to asynchronous versions. 
+
+For example, if the model contains an `AllReduce` operation and the configuration allows its conversion (`config_.convert_all_reduce(instruction)` returns true), the `AsyncCollectiveCreator` optimization pass will be triggered. 
+
+The same applies to other collective operations. If the model contains an `AllGather` operation and the configuration allows its conversion (`config_.convert_all_gather(instruction)` returns true), the optimization pass will be triggered. The same goes for `CollectivePermute`, `AllToAll`, and `ReduceScatter` operations. 
+
+Here is an example of how these operations might be used in a TensorFlow model:
+
+```python
+# AllReduce operation
+sum = tf.raw_ops.AllReduce(input=a, reduction_op='Add', num_devices=4, shared_name='nccl')
+
+# AllGather operation
+gather = tf.raw_ops.AllGather(input=a, num_devices=4, shared_name='nccl')
+
+# CollectivePermute operation
+permute = tf.raw_ops.CollectivePermute(input=a, source_target_pairs=[[0,1],[1,0]], shared_name='nccl')
+
+# AllToAll operation
+all_to_all = tf.raw_ops.AllToAll(input=a, concat_dimension=0, split_dimension=0, num_split=4, shared_name='nccl')
+
+# ReduceScatter operation
+reduce_scatter = tf.raw_ops.ReduceScatter(input=a, reduction_op='Add', num_devices=4, shared_name='nccl')
+```
+
+In these examples, `a` is a tensor and the operations are performed across 4 devices. The `shared_name` argument is used to specify the collective operation instance.

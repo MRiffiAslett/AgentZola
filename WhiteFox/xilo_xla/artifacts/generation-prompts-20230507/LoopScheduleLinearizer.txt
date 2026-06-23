@@ -1,0 +1,16 @@
+The model should contain a loop structure with a `while` operation where the loop body computation has a specific pattern of data dependencies. Specifically, the model should have a loop where the loop body writes to a buffer that is also read within the same loop iteration. 
+
+The pattern can be illustrated as follows:
+
+```python
+def body_fn(x):
+    y = some_operation(x)
+    z = some_other_operation(y)
+    return z
+
+x = tf.while_loop(cond_fn, body_fn, [initial_value])
+```
+
+In this pattern, `some_operation(x)` is a write operation to a buffer `x` and `some_other_operation(y)` is a read operation from the same buffer `x`. The `LoopScheduleLinearizer` optimization pass is triggered when such a pattern is detected in the model. 
+
+Note that the optimization pass is conservative and does not handle nested tuples or cases where the parent computations of the read and write instructions differ. Also, it does not add a control dependency if it would introduce a cycle in the computation graph.

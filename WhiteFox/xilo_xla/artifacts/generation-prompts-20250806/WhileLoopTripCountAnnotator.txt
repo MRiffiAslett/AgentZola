@@ -1,0 +1,18 @@
+The model should contain a while loop operation where the loop induction variable can be identified. The loop induction variable is the variable that changes its value in each iteration of the loop. 
+
+The `WhileLoopTripCountAnnotator` optimization pass is triggered when the model contains a while loop operation and the trip count (the number of times the loop is executed) can be determined either trivially or through brute force computation. 
+
+A trivial loop range is one where the maximum, minimum, and step values of the loop induction variable are known and the values are within the range of signed integers. If the loop range is not trivial, the optimization pass attempts to compute the trip count by brute force. 
+
+The optimization pass annotates the while loop operation with the computed trip count and other related information (like the induction variable index and the initial step value) in the backend configuration of the operation. 
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+i = tf.constant(0)
+c = lambda i: tf.less(i, 10)
+b = lambda i: tf.add(i, 1)
+r = tf.while_loop(c, b, [i])
+```
+
+In this model, the while loop operation is executed 10 times, and the loop induction variable `i` is incremented by 1 in each iteration.
