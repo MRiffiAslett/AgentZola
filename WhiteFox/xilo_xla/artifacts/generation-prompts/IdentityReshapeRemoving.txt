@@ -1,5 +1,0 @@
-The model should contain the following pattern:
-```
-t1 = tf.reshape(input_tensor, input_tensor.shape)
-```
-The pattern describes that there is a reshape operator in the model that transforms a tensor input `input_tensor` from `input_tensor.shape` to the same shape `input_tensor.shape`. This is essentially an identity operation as the shape of the tensor remains unchanged.

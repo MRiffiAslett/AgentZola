@@ -18,14 +18,14 @@ N_TASKS=3
 set -euo pipefail
 
 # ===========================================================================
-# RUN CONFIGURATION  — edit only these three lines
-# MODEL:   starcoder | starcoder2-15b | starcoder2-7b
+# RUN CONFIGURATION  
+# MODEL:   starcoder |
 # WHEEL:   20250806  | 20230507
-# PROMPTS: 20250806  | 20230507  | default
+# PROMPTS: 20250806  | 20230507
 # ===========================================================================
 WHITEFOX_MODEL="bigcode/starcoder"
 WHITEFOX_WHEEL_VERSION="20250806"
-WHITEFOX_PROMPTS_VERSION="default"
+WHITEFOX_PROMPTS_VERSION="20250806"
 # ===========================================================================
 
 _WHEEL_DIR="/vol/bitbucket/mtr25/tfbuild/wheels"
@@ -38,7 +38,6 @@ esac
 case "$WHITEFOX_PROMPTS_VERSION" in
   20250806) WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts-20250806" ;;
   20230507) WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts-20230507" ;;
-  default)  WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts" ;;
   *) echo "ERROR: unknown WHITEFOX_PROMPTS_VERSION=$WHITEFOX_PROMPTS_VERSION" >&2; exit 1 ;;
 esac
 

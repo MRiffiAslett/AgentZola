@@ -1,6 +1,0 @@
-The model should contain the following pattern:
-```
-t1 = tf.concat([A, B], axis)
-t2 = tf.concat([t1, C], axis)
-```
-The pattern describes that there are two concatenate operators in the model. The first `concat` operator concatenates tensors `A` and `B` along a specified axis, and the second `concat` operator concatenates the result of the first `concat` operation with another tensor `C` along the same axis.

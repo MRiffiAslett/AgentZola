@@ -1,6 +1,0 @@
-The model should contain the following pattern:
-```
-t1 = tf.broadcast_to(input_tensor, [1])
-t2 = tf.reshape(t1, [])
-```
-The pattern describes that there is a `broadcast_to` operator that transforms a scalar `input_tensor` to a 1D tensor with a single element, and then a `reshape` operator transforms this 1D tensor back to a scalar. The `broadcast_to` operator's output shape should be `[1]` and the `reshape` operator's output shape should be `[]` (scalar).

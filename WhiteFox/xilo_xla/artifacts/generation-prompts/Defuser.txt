@@ -1,5 +1,0 @@
-The model should contain a fusion computation. A fusion computation is a sub-computation that is fused into a single HLO instruction. This is typically done for performance reasons, to reduce memory bandwidth requirements or to expose more opportunities for compiler optimizations.
-
-In the context of the `Defuser` optimization pass, the model should have a fusion computation that is only called from a single callsite. This is indicated by the check `call_graph_node.caller_callsites().size() == 1`.
-
-The `Defuser` optimization pass is triggered when such a fusion computation is found in the model. The fusion instruction is then defused, which means it is replaced by its constituent instructions. This changes the structure of the model, which is why the function returns `true` for `changed`.
