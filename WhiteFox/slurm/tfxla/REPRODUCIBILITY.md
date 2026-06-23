@@ -12,7 +12,7 @@ This is what produces the `.profraw` files merged by `llvm-profdata` during a
 fuzzing run. **Stock upstream `tensorflow` from PyPI will not work** — the
 fuzzer will run, but coverage will always be unavailable.
 
-- File name: `tensorflow_cpu-V2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl`
+- File name: `tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl`
 - Python: 3.12 (cp312)
 - Platform: Linux x86_64
 - Approx. size: ~500–700 MB (TBC)
