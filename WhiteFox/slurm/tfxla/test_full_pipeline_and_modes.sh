@@ -4,12 +4,13 @@
 # TensorFlow imports cleanly, and StarCoder model name passes config patch.
 #
 # Submit:
-#   sbatch WhiteFox/slurm/tfxla/test_modes.sh
+#   sbatch WhiteFox/slurm/tfxla/test_full_pipeline_and_modes.sh
 #
 #SBATCH --job-name=wf_test_modes
-#SBATCH --partition=gpucluster
+#SBATCH --partition=a100
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --mem=32G
 #SBATCH --time=00:30:00
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/tfxla/out/test_modes_%j.out
 #SBATCH --array=0-1
