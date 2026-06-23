@@ -6,14 +6,16 @@
 #
 # Usage:
 #   bash WhiteFox/slurm/tfxla/setup_venv_20230507.sh
+#
+# If python3.10 is not in PATH, prepend the standalone build:
+#   PATH="/vol/bitbucket/mtr25/python/bin:$PATH" \
+#     bash WhiteFox/slurm/tfxla/setup_venv_20230507.sh
 # =============================================================================
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VENV_DIR="$PROJECT_ROOT/venv-cp310"
 WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl"
-PYPROJECT="$PROJECT_ROOT/pyproject-20230507.toml"
-
 echo "[$(date)] PROJECT_ROOT : $PROJECT_ROOT"
 echo "[$(date)] VENV_DIR     : $VENV_DIR"
 echo "[$(date)] WHEEL        : $WHEEL"
@@ -38,15 +40,14 @@ source "$VENV_DIR/bin/activate"
 
 pip install --upgrade pip wheel
 
-# Install dependencies from the 20230507 pyproject using poetry
-# We swap pyproject.toml temporarily so poetry uses the right spec.
-cp "$PROJECT_ROOT/pyproject.toml" "$PROJECT_ROOT/pyproject.toml.bak"
-cp "$PYPROJECT" "$PROJECT_ROOT/pyproject.toml"
-
-trap 'mv "$PROJECT_ROOT/pyproject.toml.bak" "$PROJECT_ROOT/pyproject.toml"' EXIT
-
-poetry config virtualenvs.create false
-poetry install --no-interaction
+# Install dependencies directly (mirrors pyproject-20230507.toml, no poetry needed).
+pip install \
+  "numpy>=1.24,<2.3" \
+  "pydantic>=2.12.5,<3.0" \
+  "tomli>=2.3.0,<3.0" \
+  "vllm>=0.12.0,<0.13.0" \
+  "astunparse>=1.6.3" \
+  "psutil>=6.1.1"
 
 # Force-reinstall the TF wheel last to ensure it takes precedence.
 pip install --force-reinstall --no-deps "$WHEEL"
