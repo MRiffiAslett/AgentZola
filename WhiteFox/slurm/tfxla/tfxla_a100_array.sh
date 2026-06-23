@@ -17,41 +17,30 @@ N_TASKS=3
 
 set -euo pipefail
 
-# =============================================================================
-# CONFIGURATION KNOBS
-# Edit the three variables below to switch model / wheel / prompts.
-# Each block lists the available options as copy-paste comments.
-# =============================================================================
-
-# --- 1. Generation model (passed to vLLM) ------------------------------------
-# Options:
-#   "bigcode/starcoder"        15B StarCoder v1  — original WhiteFox paper model
-#   "bigcode/starcoder2-15b"   15B StarCoder v2  — newer, same HF token required
-#   "bigcode/starcoder2-7b"    7B  StarCoder v2  — lower VRAM, experimental
+# ===========================================================================
+# RUN CONFIGURATION  — edit only these three lines
+# MODEL:   starcoder | starcoder2-15b | starcoder2-7b
+# WHEEL:   20250806  | 20230507
+# PROMPTS: 20250806  | 20230507  | default
+# ===========================================================================
 WHITEFOX_MODEL="bigcode/starcoder"
+WHITEFOX_WHEEL_VERSION="20250806"
+WHITEFOX_PROMPTS_VERSION="default"
+# ===========================================================================
 
-# --- 2. TensorFlow wheel (force-reinstalled into the poetry venv) ------------
-# NOTE: switching to the 20230507 wheel also requires updating pyproject.toml
-# to point at the cp310 wheel AND recreating the venv with Python 3.10.
-# The 20250806 wheel is the safe default — it matches the current cp312 venv.
-#
-# Options:
-#   20250806 — TF 2.20.0.dev0 + OpenXLA (cp312, matches current venv) [DEFAULT]
-WHITEFOX_TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl"
-#   20230507 — TF 2.14.0, original WhiteFox paper version (cp310, backup only — see NOTE above)
-# WHITEFOX_TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl"
+_WHEEL_DIR="/vol/bitbucket/mtr25/tfbuild/wheels"
+case "$WHITEFOX_WHEEL_VERSION" in
+  20250806) WHITEFOX_TF_WHEEL="$_WHEEL_DIR/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl" ;;
+  20230507) WHITEFOX_TF_WHEEL="$_WHEEL_DIR/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl" ;;
+  *) echo "ERROR: unknown WHITEFOX_WHEEL_VERSION=$WHITEFOX_WHEEL_VERSION" >&2; exit 1 ;;
+esac
 
-# --- 3. Generation prompts directory (relative to project root) --------------
-# This selects which set of per-optimization requirement descriptions StarCoder
-# uses. Each directory contains one <OptName>.txt file per optimization.
-#
-# Options:
-#   "xilo_xla/artifacts/generation-prompts"           unversioned default (current fuzzer input)
-#   "xilo_xla/artifacts/generation-prompts-20250806"  2025 TF/OpenXLA source, 34/49 complete
-#   "xilo_xla/artifacts/generation-prompts-20230507"  2023 original WhiteFox paper, 49/49 complete
-WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts"
-
-# =============================================================================
+case "$WHITEFOX_PROMPTS_VERSION" in
+  20250806) WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts-20250806" ;;
+  20230507) WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts-20230507" ;;
+  default)  WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts" ;;
+  *) echo "ERROR: unknown WHITEFOX_PROMPTS_VERSION=$WHITEFOX_PROMPTS_VERSION" >&2; exit 1 ;;
+esac
 
 # Make the script robust to minimal Slurm env propagation.  Submitting
 # with `--export=WHITEFOX_OPT_OVERRIDE=...` (a workaround for the
