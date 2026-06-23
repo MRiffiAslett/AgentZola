@@ -41,16 +41,32 @@ source "$VENV_DIR/bin/activate"
 pip install --upgrade pip wheel
 
 # Install dependencies directly (mirrors pyproject-20230507.toml, no poetry needed).
+# vllm and its transitive deps first (brings in torch, numpy 2.x, protobuf 7.x, etc.)
 pip install \
-  "numpy>=1.24,<2.3" \
   "pydantic>=2.12.5,<3.0" \
   "tomli>=2.3.0,<3.0" \
   "vllm>=0.12.0,<0.13.0" \
   "astunparse>=1.6.3" \
   "psutil>=6.1.1"
 
-# Force-reinstall the TF wheel last to ensure it takes precedence.
-pip install --force-reinstall --no-deps "$WHEEL"
+# Pin TF 2.14.0 runtime deps — must come AFTER vllm so these overrides win.
+# TF 2.14 was compiled against NumPy 1.x and protobuf < 5.0; newer versions
+# either fail at import or corrupt the protobuf MessageFactory at init time.
+pip install \
+  "numpy>=1.24,<2.0" \
+  "protobuf>=3.20.3,<5.0" \
+  "keras>=2.13.1,<2.14" \
+  "tensorflow-estimator>=2.13.0,<2.14" \
+  "gast<=0.4.0" \
+  "wrapt<1.15" \
+  absl-py \
+  libclang
+
+# TF wheel: pip >= 23 rejects this wheel because the dist-info inside is named
+# 'tensorflow' while the filename says 'tensorflow_cpu'. Bypass by unzipping
+# the wheel (a zip archive) directly into site-packages.
+SITE=$(python -c "import site; print(site.getsitepackages()[0])")
+unzip -o "$WHEEL" -d "$SITE"
 
 echo "[$(date)] venv-cp310 setup complete."
 echo "[$(date)] Python: $(python --version)"
