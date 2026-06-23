@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "whitefox"
+version = "0.1.0"
+description = "This is a Whitefox rebuild using the initial source code as reference (https://github.com/ise-uiuc/WhiteFox)"
+authors = [
+    "Max Riffi-Aslett <max.riffi3@gmail.com>"
+]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.12,<3.14"
+tensorflow-cpu = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl" }
+# TODO: Update tensorflow path or install via pip separately
+numpy = ">=1.24,<2.3"
+pydantic = "^2.12.5"
+tomli = "^2.3.0"
+vllm = "^0.12.0"
+astunparse = "^1.6.3"
+psutil = "^6.1.1"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
