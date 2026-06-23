@@ -1,0 +1,9 @@
+The model should contain arithmetic operations that use a specific data type, which is targeted to be eliminated and replaced with another data type. The `HloElementTypeConverter` optimization pass is triggered when the model contains operations that use the `eliminate_type_` data type either in their operands or as their output type. 
+
+The operations that are considered for this conversion are those that perform arithmetic operations and are not among the following: `kParameter`, `kConstant`, `kTuple`, `kConvert`, `kBitcastConvert`, `kGetTupleElement`, `kInfeed`, `kOutfeed`, `kCustomCall`, `kWhile`, `kCall`, `kAllReduce`, `kReduceScatter`, `kAllReduceStart`, `kFusion`, `kMap`, `kReduce`, `kReduceWindow`, `kScatter`, `kSelectAndScatter`, `kSort`, `kConditional`.
+
+For example, if the `eliminate_type_` is `F32` and `replace_with_type_` is `F16`, and the model contains an operation like:
+```python
+t1 = tf.add(tf.constant([1.0, 2.0], dtype=tf.float32), tf.constant([3.0, 4.0], dtype=tf.float32))
+```
+This operation would trigger the `HloElementTypeConverter` optimization pass, as it uses `F32` data type in its operands. The optimization pass would convert this operation to use `F16` data type instead.

@@ -1,0 +1,23 @@
+The TensorFlow model triggers the optimization pass `HloConstantFolding` when it contains operations where at least one operand is a constant and all other operands are either constants or broadcasts of constants. 
+
+The model should not contain the following operations as they are skipped by the optimization pass:
+- `kParameter`, `kConstant`, `kTuple`, `kBroadcast`, `kIota`, `kFft`, `kRng`, `kAfterAll` operations
+- Operations that have side effects
+- Operations that are or contain illegal instructions
+- Operations that are across asynchronous execution threads not supposed to be changed by this pass
+- Operations that would result in a constant of size greater than 45 million elements
+
+For example, the following TensorFlow code would trigger the `HloConstantFolding` optimization pass:
+
+```python
+import tensorflow as tf
+
+# Define constants
+a = tf.constant([1, 2, 3])
+b = tf.constant([4, 5, 6])
+
+# Perform operation with constants
+c = tf.add(a, b)
+```
+
+In this example, the `tf.add` operation has two constant operands, `a` and `b`, which satisfies the conditions for the `HloConstantFolding` optimization pass.

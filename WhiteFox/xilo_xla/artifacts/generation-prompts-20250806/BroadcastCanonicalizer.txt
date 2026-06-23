@@ -1,0 +1,10 @@
+The model should contain a broadcast operation where the dimensions are not sorted. The pattern describes a broadcast operation that expands the input tensor to a larger size. The dimensions of the broadcast operation are not in ascending order. 
+
+Here is an example of such a pattern in TensorFlow:
+
+```python
+input_tensor = tf.constant([1, 2, 3])
+broadcast_tensor = tf.broadcast_to(input_tensor, [3, 3, 3])
+```
+
+In this example, the `broadcast_to` operation is equivalent to a broadcast operation in XLA. The dimensions of the broadcast operation are [0, 1, 2], which are already sorted. If the dimensions were not sorted (e.g., [1, 0, 2]), it would trigger the `BroadcastCanonicalizer` optimization pass.

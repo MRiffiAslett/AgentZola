@@ -1,0 +1,13 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.some_operator(input_tensors, ...)
+```
+
+The pattern describes that there is an operator in the model that takes one or more tensors as input. The operator should be matched by the `op_matcher_` function in the `ChangeOpDataType` class. 
+
+All input tensors to this operator should have the same data type, which is matched by the `GetUniformOperandType` function. This data type should be present in the `to_type_map_` of the `ChangeOpDataType` class, indicating that it can be converted to another data type.
+
+The operator should not be a `Parameter` operator and its output should be an array. 
+
+When these conditions are met, the `ChangeOpDataType` optimization pass will be triggered, converting the data type of the input tensors to the target data type and then converting the output back to the original data type.

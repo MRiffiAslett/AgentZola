@@ -1,0 +1,25 @@
+The model should contain a `CustomCall` operation with a target that matches one of the following:
+
+- "Sharding"
+- "SPMDShardToFullShape"
+- "SPMDFullToShardShape"
+- "ShardingGroupCustomCallTargetName"
+- "PropagationBarrierCustomCallTargetName"
+- "FuncResultShardingTargetName"
+- "ShardBarrierFrom"
+- "ShardBarrierTo"
+
+The `CustomCall` operation should have exactly one operand. The `ShardingRemover` optimization pass is triggered when such a `CustomCall` operation is found in the model. 
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+import tensorflow as tf
+from tensorflow.compiler.tf2xla.ops import gen_xla_ops
+
+input_tensor = tf.constant([1, 2, 3, 4])
+sharding = gen_xla_ops.sharding(input_tensor, sharding="SPMDShardToFullShape")
+output = tf.add(sharding, 1)
+```
+
+In this example, the `gen_xla_ops.sharding` operation is a `CustomCall` operation with the target "SPMDShardToFullShape", which is one of the targets that triggers the `ShardingRemover` optimization pass.

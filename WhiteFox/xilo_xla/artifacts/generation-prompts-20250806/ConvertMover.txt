@@ -1,0 +1,15 @@
+The model should contain the following patterns:
+
+1. Increase precision "down" the graph:
+```python
+t1 = tf.cast(input_tensor, tf.float32)
+t2 = tf.some_op(t1)
+```
+In this pattern, the `tf.cast` operation is used to increase the precision of `input_tensor` (e.g., from float16 to float32). Then, `tf.some_op` is an operation that commutes with the convert operation (e.g., `tf.reshape`, `tf.pad`, `tf.slice`, `tf.transpose`, `tf.concat`). The operands of `tf.some_op` should be either a `tf.cast` operation or a `tf.constant` operation. If the operand is a `tf.constant`, it should be losslessly convertible to the lower precision type.
+
+2. Decrease precision "up" the graph:
+```python
+t1 = tf.some_op(input_tensor)
+t2 = tf.cast(t1, tf.float16)
+```
+In this pattern, `tf.some_op` is an operation that commutes with the convert operation (e.g., `tf.reshape`, `tf.pad`, `tf.slice`, `tf.transpose`, `tf.concat`). The `tf.cast` operation is used to decrease the precision of the result of `tf.some_op` (e.g., from float32 to float16). The operands of `tf.some_op` should not be sub-byte non-predicate types.

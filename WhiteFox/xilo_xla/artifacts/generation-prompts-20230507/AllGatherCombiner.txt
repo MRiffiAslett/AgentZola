@@ -1,0 +1,20 @@
+The model should contain multiple AllGather operations that can be combined into a single AllGather operation. The characteristics of these AllGather operations should be:
+
+1. They all have exactly one operand.
+2. They all have the same all_gather_dimension.
+3. They all have the same replica groups.
+4. They all have the same channel_id.
+5. They all have the same use_global_device_ids flag.
+
+The pattern in the model would look something like this:
+
+```python
+t1 = tf.distribute.AllGather(input_tensor1, ...)
+t2 = tf.distribute.AllGather(input_tensor2, ...)
+...
+tn = tf.distribute.AllGather(input_tensorn, ...)
+```
+
+Where `input_tensor1`, `input_tensor2`, ..., `input_tensorn` are the operands of the AllGather operations, and the `...` represents the same all_gather_dimension, replica groups, channel_id, and use_global_device_ids flag for all AllGather operations.
+
+The total size of the operands of these AllGather operations should exceed the `combine_threshold_in_bytes` and the total number of these AllGather operations should exceed the `combine_threshold_count` for the `AllGatherCombiner` optimization to be triggered.

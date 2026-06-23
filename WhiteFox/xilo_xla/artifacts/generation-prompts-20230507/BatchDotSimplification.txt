@@ -1,0 +1,24 @@
+The model should contain a `tf.linalg.batch_matmul` operation (or any operation that can be lowered to a batched dot product in XLA) with the following characteristics:
+
+1. The batch dimensions of the left-hand side (lhs) and right-hand side (rhs) tensors are equal and strictly ascending. This means that the batch dimensions are ordered from least to most significant. For example, if the lhs tensor has shape `[2, 3, 4, 5]` and the rhs tensor has shape `[2, 3, 6, 7]`, the batch dimensions are `[0, 1]`.
+
+2. The operation has exactly one contracting dimension. This means that there is exactly one dimension along which the dot product is computed. For example, if the lhs tensor has shape `[2, 3, 4, 5]` and the rhs tensor has shape `[2, 3, 5, 6]`, the contracting dimension is `2` for the lhs tensor and `1` for the rhs tensor.
+
+3. There is at least one batch dimension in the lhs tensor that has size 1. This is the "degenerate" dimension that the optimization pass aims to remove. For example, if the lhs tensor has shape `[2, 1, 4, 5]`, the second dimension is a degenerate dimension.
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+import tensorflow as tf
+
+# lhs tensor has shape [2, 1, 4, 5]
+lhs = tf.random.normal([2, 1, 4, 5])
+
+# rhs tensor has shape [2, 3, 5, 6]
+rhs = tf.random.normal([2, 3, 5, 6])
+
+# Perform batched matrix multiplication
+result = tf.linalg.batch_matmul(lhs, rhs)
+```
+
+In this example, the batch dimensions are `[0, 1]`, the contracting dimension is `2` for the lhs tensor and `1` for the rhs tensor, and the second dimension of the lhs tensor is a degenerate dimension. Therefore, this model would trigger the `BatchDotSimplification::ElideDegenerateBatchDimensionFromBatchDot` optimization pass in TensorFlow XLA.

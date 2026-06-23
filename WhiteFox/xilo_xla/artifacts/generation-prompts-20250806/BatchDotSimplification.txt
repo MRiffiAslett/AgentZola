@@ -1,0 +1,16 @@
+The model should contain a `tf.linalg.batch_matmul` operation (or any equivalent operation that results in a `Dot` operation in the HLO representation) with the following characteristics:
+
+1. The batch dimensions of the left-hand side (lhs) and right-hand side (rhs) tensors are equal and strictly ascending. This means that the batch dimensions are arranged in the order of 0, 1, 2, ..., n.
+
+2. The `Dot` operation has exactly one contracting dimension. Contracting dimensions are the dimensions along which the dot product is computed in a `Dot` operation.
+
+3. There exists at least one batch dimension in the lhs tensor that has a size of 1. These are referred to as degenerate dimensions.
+
+The pattern can be illustrated as follows:
+
+```python
+# Assume `lhs` and `rhs` are tensors with shapes that satisfy the above conditions
+output = tf.linalg.batch_matmul(lhs, rhs)
+```
+
+In this pattern, `lhs` and `rhs` are the input tensors to the `batch_matmul` operation. The batch dimensions of `lhs` and `rhs` should be equal and strictly ascending, the `batch_matmul` operation should have exactly one contracting dimension, and there should be at least one batch dimension in `lhs` that has a size of 1.

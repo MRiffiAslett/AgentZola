@@ -1,0 +1,13 @@
+The model should contain a `StochasticConvert` operation. This operation takes two operands, where the first operand is the tensor to be converted and the second operand is a tensor of random values. The `StochasticConvert` operation is used to convert the data type of the first operand to a new type, using the random values to decide how to round fractional values during the conversion.
+
+The `StochasticConvert` operation is currently only supported for converting floating point types to signed integral types. The conversion process involves comparing the fractional part of the floating point values against the random values to decide whether to round up or down. Special handling is also provided for minimum and maximum values of the target type.
+
+Here is an example of how this operation might be used in a TensorFlow model:
+
+```python
+# input_tensor is a tensor of floating point values
+# random_tensor is a tensor of random values, same shape as input_tensor
+stochastic_convert = tf.xla.experimental.stochastic_convert(input_tensor, random_tensor, tf.int32)
+```
+
+In this example, `input_tensor` is converted to `tf.int32` using `random_tensor` to decide how to round fractional values. The `StochasticConvertDecomposer` optimization pass would be triggered for the `stochastic_convert` operation.

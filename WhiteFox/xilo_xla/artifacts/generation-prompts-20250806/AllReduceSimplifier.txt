@@ -1,0 +1,33 @@
+The model should contain the following patterns:
+
+1. The model contains `AllGather` or `ReduceScatter` operations where the input and output shapes are compatible. This means that the shape of the tensor before and after the operation remains the same.
+
+```python
+# Example of AllGather operation
+t1 = tf.distribute.all_gather(input_tensor, axis=0)
+
+# Example of ReduceScatter operation
+t2 = tf.distribute.reduce_scatter(input_tensor, reduction='sum', axis=0)
+```
+
+2. The model contains `AllReduce` operations where the shape of the tensor is an array (not a tuple). The `AllReduce` operation should be either cross-replica or cross-module. The number of participants in a replica group should be the same for all groups. If the `AllReduce` operation is not cross-replica, the group size should be 1 and the module should use SPMD partitioning. The operand of the `AllReduce` operation should be replicated at all replicas or the group size should be 1.
+
+```python
+# Example of AllReduce operation
+t3 = tf.distribute.all_reduce(input_tensor, reduction='sum')
+```
+
+3. The model contains `AllReduce` operations where the reduction function is either `Add`, `Minimum`, `Maximum`, `Or`, or `And`. The reduction function should have exactly 2 parameters and 3 instructions.
+
+```python
+# Example of AllReduce operation with Add reduction function
+t4 = tf.distribute.all_reduce(input_tensor, reduction='sum')
+
+# Example of AllReduce operation with Minimum reduction function
+t5 = tf.distribute.all_reduce(input_tensor, reduction='min')
+
+# Example of AllReduce operation with Maximum reduction function
+t6 = tf.distribute.all_reduce(input_tensor, reduction='max')
+```
+
+Note: The `Or` and `And` reduction functions are not directly available in TensorFlow's `tf.distribute.all_reduce` API, but they can be used in lower-level APIs or custom operations.

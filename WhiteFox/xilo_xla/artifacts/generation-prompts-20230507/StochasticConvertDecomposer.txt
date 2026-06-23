@@ -1,0 +1,20 @@
+The model should contain a `stochastic_convert` operation with two operands. The `stochastic_convert` operation is used to convert a floating-point number to an integer stochastically. The first operand is the floating-point number to be converted, and the second operand is a random number used for rounding. 
+
+The `stochastic_convert` operation should be converting from a floating-point type to a signed integral type. The conversion from floating-point types to floating-point types is not supported and will result in an error.
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+import tensorflow as tf
+
+# Create a floating-point tensor
+float_tensor = tf.constant([1.5, 2.5, 3.5, 4.5], dtype=tf.float32)
+
+# Create a random tensor
+random_tensor = tf.random.uniform(shape=[4], dtype=tf.float32)
+
+# Convert the floating-point tensor to an integer tensor stochastically
+int_tensor = tf.experimental.numpy.stochastic_convert(float_tensor, random_tensor)
+```
+
+In this example, `tf.experimental.numpy.stochastic_convert` is a placeholder for the actual `stochastic_convert` operation in XLA, which is not directly accessible in TensorFlow. The `stochastic_convert` operation takes a floating-point tensor and a random tensor as inputs, and outputs an integer tensor. The random tensor is used for stochastic rounding during the conversion.

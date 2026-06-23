@@ -1,0 +1,14 @@
+The model should contain a `tf.map_fn` operation where the function applied to each element of the input tensor is a simple operation that only depends on the input element itself. This operation should not be a fusion operation.
+
+The pattern describes that there is a `map` operation in the model. The function applied to each element of the input tensor(s) is a simple operation that only depends on the input element itself. This function should not be a fusion operation.
+
+Here is an example of such a pattern in TensorFlow:
+
+```python
+def simple_op(x):
+    return x + 1
+
+result = tf.map_fn(simple_op, input_tensor)
+```
+
+In this example, `simple_op` is a simple operation that only depends on the input element itself and is not a fusion operation. Therefore, this pattern would trigger the `MapInliner` optimization pass in TensorFlow XLA.

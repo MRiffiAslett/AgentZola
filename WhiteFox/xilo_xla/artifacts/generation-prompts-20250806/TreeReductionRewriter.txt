@@ -1,0 +1,12 @@
+The model should contain a `tf.reduce_*` operation where at least one of the dimensions being reduced is larger than a specified window size. The `tf.reduce_*` operation could be any of the reduction operations in TensorFlow such as `tf.reduce_sum`, `tf.reduce_max`, `tf.reduce_min`, etc.
+
+The pattern describes that there is a reduction operation in the model that operates on a tensor with a dimension larger than the specified window size. The optimization pass `TreeReductionRewriter` is triggered to rewrite the reduction operation into a tree of reductions to improve performance.
+
+Here is an example of such a pattern:
+
+```python
+input_tensor = tf.random.uniform([1000, 1000])
+reduced_tensor = tf.reduce_sum(input_tensor, axis=0)
+```
+
+In this example, the `tf.reduce_sum` operation is reducing the `input_tensor` along the 0th dimension which has a size of 1000. If the specified window size is less than 1000, this would trigger the `TreeReductionRewriter` optimization pass.

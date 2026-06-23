@@ -1,0 +1,12 @@
+The model should contain multiple collective operations (like `AllReduce`, `AllGather`, `CollectivePermute`, etc.) that are not already ordered by control dependencies. 
+
+The pattern describes that there are multiple collective operations in the model, and these operations are not connected by control dependencies. The `CollectivesScheduleLinearizer` optimization pass will add control dependencies between these operations to enforce a linear execution order. 
+
+For example, consider the following TensorFlow code:
+
+```python
+t1 = tf.distribute.AllReduce(input_tensor1)
+t2 = tf.distribute.AllReduce(input_tensor2)
+```
+
+In this case, `t1` and `t2` are two collective operations that are not connected by control dependencies. The `CollectivesScheduleLinearizer` optimization pass will add a control dependency from `t1` to `t2` to enforce a linear execution order.

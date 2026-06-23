@@ -1,0 +1,9 @@
+The model should contain a `broadcast` operation where the dimensions are not sorted. The `broadcast` operation in TensorFlow is used to make the shapes of two tensors compatible for element-wise operations. It does this by replicating the smaller tensor along the missing or non-matching dimensions.
+
+The pattern in the model that triggers the `BroadcastCanonicalizer` optimization pass is as follows:
+
+```python
+t1 = tf.broadcast_to(input_tensor, shape)
+```
+
+In this pattern, `input_tensor` is the tensor to be broadcasted and `shape` is the shape we want to broadcast `input_tensor` to. The `shape` should be specified in such a way that the dimensions are not sorted. If the dimensions are already sorted, the optimization pass will not be triggered.

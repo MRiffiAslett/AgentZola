@@ -1,0 +1,12 @@
+The model should contain a fusion operation. The fusion operation is a special type of operation in TensorFlow XLA that combines multiple operations into a single kernel for execution. The `Defuser` optimization pass is triggered when such a fusion operation is present in the model. 
+
+The fusion operation can be represented in TensorFlow as follows:
+
+```python
+@tf.function(experimental_compile=True)
+def fused_function(x, y):
+    z = tf.add(x, y)
+    return tf.multiply(z, z)
+```
+
+In this example, the `add` and `multiply` operations are fused into a single operation. The `Defuser` optimization pass will be triggered for this model, and it will defuse the fused operation, i.e., it will separate the fused operation back into its constituent operations.

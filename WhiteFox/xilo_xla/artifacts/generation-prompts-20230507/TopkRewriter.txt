@@ -1,0 +1,16 @@
+The model should contain the following pattern:
+
+```
+top_k_values, top_k_indices = tf.nn.top_k(input_tensor, k)
+```
+
+The pattern describes that there is a `tf.nn.top_k` operator in the model. The `tf.nn.top_k` operator returns the `k` largest elements along a particular axis of the `input_tensor` and their indices. 
+
+The `TopkRewriter` optimization pass is triggered when the model contains a `tf.nn.top_k` operation and the following conditions are met:
+
+1. The `tf.nn.top_k` operation is applied to a 1D or 2D tensor of type `F32` or `BF16`.
+2. The `tf.nn.top_k` operation is profitable to convert, as determined by the `is_profitable_to_convert_` function.
+3. The `tf.nn.top_k` operation is followed by a slice operation that extracts the top `k` elements and their indices. The slice operation must not be strided and must not slice along the batch dimension (if present).
+4. All users of the `tf.nn.top_k` operation must use the same `k` value. Different `k` values for different operands are not supported.
+
+If these conditions are met, the `tf.nn.top_k` operation is transformed into a custom call to a "TopK" function, and the function `TopkRewriter::TransformToCustomCall` returns true.

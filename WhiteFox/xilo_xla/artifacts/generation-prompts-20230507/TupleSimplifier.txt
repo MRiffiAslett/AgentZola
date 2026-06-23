@@ -1,0 +1,24 @@
+The model should contain the following patterns:
+
+1. A `Tuple` operation where all its operands are `GetTupleElement` operations, and each `GetTupleElement` operation extracts an element from the same tuple at the same index as its position in the `Tuple` operation. The shapes of the original tuple and the new tuple created by the `Tuple` operation should be compatible.
+
+```python
+# Python pseudocode
+t = tf.tuple([a, b, c])  # Original tuple
+a1 = tf.get_tuple_element(t, 0)
+b1 = tf.get_tuple_element(t, 1)
+c1 = tf.get_tuple_element(t, 2)
+t1 = tf.tuple([a1, b1, c1])  # New tuple
+```
+
+2. A chain of `GetTupleElement` operations where each operation extracts an element from the tuple produced by the previous operation. The optimization pass will replace this chain with the operation that produces the element at the index of the last `GetTupleElement` operation in the chain.
+
+```python
+# Python pseudocode
+t = tf.tuple([a, b, c])  # Original tuple
+gte1 = tf.get_tuple_element(t, 1)  # Extracts 'b'
+gte2 = tf.get_tuple_element(gte1, 0)  # Extracts 'b' again
+gte3 = tf.get_tuple_element(gte2, 0)  # Extracts 'b' again
+```
+
+In both cases, the optimization pass will replace the `Tuple` or `GetTupleElement` operations with the original tuple or the operation that produces the element, respectively.

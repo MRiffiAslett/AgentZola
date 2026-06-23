@@ -1,0 +1,8 @@
+The model should contain the following pattern:
+```
+t1 = tf.concat([input_tensor1, input_tensor2], axis)
+t2 = tf.concat([t1, input_tensor3], axis)
+```
+The pattern describes that there are two concatenate operators in the model. The first `concat` operator concatenates `input_tensor1` and `input_tensor2` along a specified axis. The second `concat` operator concatenates the result of the first `concat` operation (`t1`) and `input_tensor3` along the same axis. 
+
+The optimization pass `ConcatForwarding` is triggered when the model contains nested concatenate operations that can be flattened into a single concatenate operation. The axis of concatenation must be the same for all concatenate operations.

@@ -1,0 +1,17 @@
+The model should contain the following patterns:
+
+1. A dot operation where at least one of the operands is a non-identity transpose operation. A non-identity transpose operation is one where the dimensions of the transpose operation are not in the same order as the original dimensions. For example, if the original dimensions are [0, 1, 2], a non-identity transpose operation could be a transpose to [1, 0, 2]. The dot operation should not have a 1D operand.
+
+```python
+t1 = tf.transpose(input_tensor1, perm=[1, 0, 2])
+t2 = tf.linalg.matmul(t1, input_tensor2)
+```
+
+2. A convolution operation where at least one of the operands is a transpose operation. The convolution operation should be able to fold the transpose operation into itself. 
+
+```python
+t1 = tf.transpose(input_tensor1, perm=[1, 0, 2])
+t2 = tf.nn.conv2d(t1, filter, strides, padding)
+```
+
+In both cases, the optimization pass `TransposeFolding` is triggered when the model contains these patterns. The optimization pass will attempt to fold the transpose operation into the dot or convolution operation, simplifying the computation and potentially improving performance.

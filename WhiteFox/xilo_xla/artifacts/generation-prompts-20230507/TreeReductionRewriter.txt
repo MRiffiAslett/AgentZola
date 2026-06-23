@@ -1,0 +1,9 @@
+The model should contain a `tf.reduce_*` operation where at least one of the dimensions being reduced is larger than a certain threshold (`reduce_window_size_`). The `tf.reduce_*` operation could be any of the reduction operations in TensorFlow such as `tf.reduce_sum`, `tf.reduce_max`, `tf.reduce_min`, etc.
+
+Here is an example of such a pattern:
+
+```python
+t1 = tf.reduce_sum(input_tensor, axis=[1, 2])
+```
+
+In this example, if the size of dimensions 1 and 2 of `input_tensor` is larger than `reduce_window_size_`, the `TreeReductionRewriter` optimization pass will be triggered.

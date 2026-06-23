@@ -1,0 +1,24 @@
+The TensorFlow model triggers the optimization pass `LoopScheduleLinearizer` when it contains a `while` loop operation that does not have asynchronous collective operations in its body. 
+
+The `while` loop operation should have a body computation where the values at the root and input of the computation are unique and not associated with multiple values. The defining instruction of the value at the root (write operation) and the instruction using the value at the input (read operation) should be different and belong to the same parent computation. 
+
+The model should allow adding a control dependency from the read operation to the write operation without introducing a cycle in the computation graph. 
+
+Here is an example of a TensorFlow model that could trigger this optimization:
+
+```python
+import tensorflow as tf
+
+def body(x):
+    a = tf.add(x, 2)
+    b = tf.multiply(a, 3)
+    return tf.add(b, 3)
+
+def condition(x):
+    return tf.less(x, 100)
+
+x = tf.Variable(0)
+result = tf.while_loop(condition, body, [x])
+```
+
+In this example, the `while` loop operation does not have asynchronous collective operations in its body. The values at the root and input of the computation are unique and not associated with multiple values. The defining instruction of the value at the root (write operation) and the instruction using the value at the input (read operation) are different and belong to the same parent computation. The model allows adding a control dependency from the read operation to the write operation without introducing a cycle in the computation graph.

@@ -1,0 +1,18 @@
+The model should contain a while loop where the initial value of the loop is a tuple. The elements of the tuple that are either constants or broadcasts of constants and are used inside the loop body or condition are considered invariant. 
+
+The optimization pass `WhileLoopConstantSinking` is triggered when these invariant elements are used more than once in the loop body or at least once in the loop condition. 
+
+Here is an example of a TensorFlow model that would trigger this optimization:
+
+```python
+def condition(x):
+    return tf.reduce_sum(x) < 1000
+
+def body(x):
+    return tf.add(x, tf.constant([1, 1, 1]))
+
+x = tf.constant([0, 0, 0])
+result = tf.while_loop(condition, body, [x])
+```
+
+In this example, the constant `[1, 1, 1]` is an invariant element that is used inside the loop body. Since it is used more than once (in each iteration of the loop), the `WhileLoopConstantSinking` optimization would be triggered.

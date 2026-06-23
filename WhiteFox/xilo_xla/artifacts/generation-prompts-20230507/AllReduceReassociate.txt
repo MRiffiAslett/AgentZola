@@ -1,0 +1,17 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.all_reduce(input_tensor1, ...)
+t2 = tf.all_reduce(input_tensor2, ...)
+t3 = tf.some_binary_operation(t1, t2)
+```
+
+The pattern describes that there are two `all_reduce` operators in the model, each reducing `input_tensor1` and `input_tensor2` respectively. The outputs of these two `all_reduce` operators are then used as inputs to a binary operation.
+
+The binary operation should be a reduction operation that matches any valid all-reduce reduction function. The reduction operation should have an identity element for the reduction type.
+
+The `all_reduce` operations should be compatible with each other, meaning they should have the same reduction kind, and their keys should be equal. The keys are compared in all elements except the element type if the `ignore_element_type` flag is set.
+
+The model may also contain optional `convert` operations before the `all_reduce` operations. If present, these `convert` operations should preserve values and precision. The `convert` operations should cast from a narrow type to a wider type for numerical stability.
+
+The reassociation of the `all_reduce` operations should be profitable, meaning the total number of elements in the shapes of the original `all_reduce` operations should be greater than or equal to the number of elements in the shape of the reassociated instruction.

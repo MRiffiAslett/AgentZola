@@ -1,0 +1,21 @@
+The model should contain a `tf.sort` operation where the output is a tuple, but not all elements of the tuple are used in subsequent computations. 
+
+The `tf.sort` operation should have multiple operands, and the output of the sort operation is a tuple where each element corresponds to an operand. However, not all elements of the tuple are used in subsequent computations. 
+
+The optimization pass `SortSimplifier` is triggered when there are unused elements in the tuple output of the `tf.sort` operation. The optimization pass will remove these unused elements from the sort operation, simplifying the computation. 
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+# input tensors
+x = tf.constant([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])
+y = tf.constant([2, 7, 1, 8, 2, 8, 1, 8, 2, 8])
+
+# sort operation with multiple operands
+sorted_x, sorted_y = tf.sort([x, y], axis=-1)
+
+# only use sorted_x in subsequent computations
+z = sorted_x + 1
+```
+
+In this example, `sorted_y` is not used in any subsequent computations, so the `SortSimplifier` optimization pass would be triggered to remove `sorted_y` from the sort operation.

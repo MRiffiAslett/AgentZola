@@ -1,0 +1,13 @@
+The model should contain a fusion computation. In TensorFlow XLA, a fusion computation is a sequence of operations that are fused together into a single kernel for execution. The `Defuser` optimization pass is triggered when the model contains a fusion computation that needs to be defused. 
+
+The pattern that triggers the `Defuser` optimization pass can be illustrated as follows:
+
+```python
+@tf.function(experimental_compile=True)
+def model(input):
+    t1 = tf.add(input, input)
+    t2 = tf.multiply(t1, t1)
+    return t2
+```
+
+In this example, the `add` and `multiply` operations could be fused together into a single kernel for execution. The `Defuser` optimization pass would be triggered to defuse this fusion computation, breaking it back down into separate operations.

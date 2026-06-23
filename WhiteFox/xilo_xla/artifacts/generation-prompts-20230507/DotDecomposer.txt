@@ -1,0 +1,14 @@
+The model should contain a non-canonical dot operation. A dot operation is considered non-canonical if it meets any of the following conditions:
+
+1. There is more than one contracting dimension.
+2. It has more than one non-contracting dimension.
+3. The batch dimensions, if present, are not canonical.
+
+Here is an example of a non-canonical dot operation in TensorFlow:
+
+```python
+# Assume a, b are tensors with appropriate shapes
+c = tf.tensordot(a, b, axes=[[1, 2], [0, 1]])
+```
+
+In this example, the dot operation is non-canonical because it has more than one contracting dimension. The `DotDecomposer` optimization pass will be triggered to convert this non-canonical dot operation into a canonical form.

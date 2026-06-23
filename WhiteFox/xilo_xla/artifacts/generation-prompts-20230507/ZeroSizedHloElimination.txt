@@ -1,0 +1,9 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.some_operation(input_tensor)
+```
+
+The pattern describes that there is an operation in the model that does not have side effects, produces an array output, and is not a constant operation. The output of this operation is a zero-element array with a static shape. The operation should be safely removable from the computation without affecting the correctness of the program. 
+
+For example, if `some_operation` is a reshape operation that reshapes `input_tensor` to a zero-element array, this optimization pass will be triggered.

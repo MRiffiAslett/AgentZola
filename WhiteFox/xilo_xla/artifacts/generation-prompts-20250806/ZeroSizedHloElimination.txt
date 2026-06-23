@@ -1,0 +1,12 @@
+The model should contain HLO instructions that produce zero-sized arrays. These instructions should not have side effects, should not be constants, and their shapes should be static and array-like. 
+
+The pattern can be illustrated as follows:
+
+```python
+# A TensorFlow operation that results in a zero-sized array
+zero_sized_array = tf.some_operation(...)  # The output shape is [0, ...]
+```
+
+In this pattern, `tf.some_operation(...)` represents any TensorFlow operation that results in a zero-sized array. The operation should not have side effects, should not be a constant, and its shape should be static and array-like. 
+
+Additionally, if the instruction is a parameter, it should not have control dependencies and should not be dead.

@@ -1,0 +1,10 @@
+The model should contain the following pattern:
+```
+t1 = tf.dynamic_slice(input_tensor, start_indices, slice_sizes)
+t2 = tf.dynamic_update_slice(input_tensor, update, start_indices)
+```
+The pattern describes that there are `DynamicSlice` or `DynamicUpdateSlice` operators in the model. The `DynamicSlice` operator extracts a slice of a given size from a larger tensor at given start indices. The `DynamicUpdateSlice` operator updates a slice of a larger tensor at given start indices with a given update tensor.
+
+The optimization pass `DynamicIndexSplitter` is triggered when the start indices for these operations are not scalar values. The optimization pass will split the start indices into individual scalar values for each dimension. 
+
+The model will trigger the optimization pass if the rank of the tensor used for start indices in `DynamicSlice` or `DynamicUpdateSlice` is greater than 0. If the rank is 0, the `DynamicSlice` or `DynamicUpdateSlice` operation will be replaced with the operand or update tensor respectively.

@@ -1,0 +1,16 @@
+The model should contain the following pattern:
+
+```
+top_k = tf.nn.top_k(input_tensor, k)
+```
+
+The pattern describes that there is a `top_k` operator in the model. The `top_k` operator sorts the elements of the `input_tensor` and returns the top `k` elements. 
+
+The `top_k` operator should be used in a way that triggers the `TopkRewriter::TransformToCustomCall` function to return true. This means that the `top_k` operator should be used in a way that meets the following conditions:
+
+- The `top_k` operator should be used with a tensor that has a rank of 2 or more.
+- The sort dimension of the `top_k` operator should be the first or last dimension of the tensor.
+- The `top_k` operator should be used in a way that is profitable to convert to a custom call, as determined by the `is_profitable_to_convert_` function.
+- The `top_k` operator should be used with a tensor that has a data type of `F32` or `BF16`.
+
+If these conditions are met, the `TopkRewriter::TransformToCustomCall` function will transform the `top_k` operator into a custom call, and the function will return true.

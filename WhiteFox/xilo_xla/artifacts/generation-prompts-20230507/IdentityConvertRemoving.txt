@@ -1,0 +1,5 @@
+The model should contain the following pattern:
+```
+t1 = tf.cast(input_tensor, dtype=input_tensor.dtype)
+```
+The pattern describes that there is a `cast` operator in the model that attempts to convert a tensor `input_tensor` to the same data type as `input_tensor.dtype`. This is essentially an identity operation as it doesn't change the data type of the tensor.

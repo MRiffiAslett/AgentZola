@@ -1,0 +1,9 @@
+The model should contain the following pattern:
+```
+t1 = tf.cast(input_tensor, dtype1)
+t2 = tf.cast(t1, dtype2)
+t3 = tf.cast(t2, dtype3)
+...
+tn = tf.cast(tn-1, dtypeN)
+```
+The pattern describes that there are multiple consecutive cast operators in the model. Each `cast` operator transforms a tensor from one floating-point type to another. The `SimplifyFpConversions` optimization pass is triggered when there are at least two consecutive cast operations and the final cast operation's dtype is the same as the initial tensor's dtype.

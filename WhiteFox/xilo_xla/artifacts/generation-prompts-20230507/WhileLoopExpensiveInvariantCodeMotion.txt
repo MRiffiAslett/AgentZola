@@ -1,0 +1,25 @@
+The model should contain a while loop where some instructions inside the loop body are invariant, meaning they produce the same result in every iteration of the loop. These invariant instructions should not have side effects, should not be control predecessors or successors, and should not be the root instruction of the while loop body. 
+
+The invariant instructions should also satisfy the following conditions:
+
+1. All of their operands are also invariant.
+2. They do not cause a significant memory blow-up when hoisted out of the loop. This is checked by comparing the size of the output of the instruction with the total size of its input operands. If the output size is larger, the instruction is not hoisted individually.
+3. They are deemed "worth hoisting individually" by a provided function `worth_hoisting_individually_`.
+
+If an invariant instruction has other invariant instructions that depend on it and are not yet ready to be hoisted, the instruction is held off until all its dependents are ready.
+
+Here is an example of a TensorFlow model that could trigger this optimization:
+
+```python
+i = tf.constant(0)
+c = lambda i: tf.less(i, 10)
+
+def body(i):
+    a = tf.constant(np.arange(100), dtype=tf.float32)  # Invariant instruction
+    b = tf.math.sin(a)  # Invariant instruction
+    return [tf.add(i, 1)]
+
+r = tf.while_loop(c, body, [i])
+```
+
+In this example, the instructions to generate the constant tensor `a` and compute the sine of `a` are invariant, as they produce the same result in every iteration. Therefore, they can be hoisted out of the loop by the `WhileLoopExpensiveInvariantCodeMotion` optimization pass.

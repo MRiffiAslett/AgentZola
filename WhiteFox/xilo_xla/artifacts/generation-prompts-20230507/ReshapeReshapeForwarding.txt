@@ -1,0 +1,8 @@
+The model should contain the following pattern:
+```
+t1 = tf.reshape(input_tensor, ...)
+t2 = tf.reshape(t1, input_tensor.shape)
+```
+The pattern describes that there are two reshape operators in the model. The first `reshape` operator transforms a tensor input `input_tensor` from `input_tensor.shape` to any new shape, and the second `reshape` operator transforms the output of first `reshape` back to `input_tensor.shape`. 
+
+In other words, the model triggers the `ReshapeReshapeForwarding` optimization pass when it contains a sequence of two reshape operations where the second reshape operation undoes the shape transformation of the first reshape operation. The shape of the tensor before and after these two operations remains the same.

@@ -1,0 +1,15 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.cast(input_tensor, tf.bfloat16)
+t2 = tf.some_operation(t1)
+t3 = tf.cast(t2, tf.float32)
+```
+
+The pattern describes that there is a `tf.cast` operation that converts a tensor `input_tensor` from its original data type to `bfloat16`. This tensor is then used as an input to some operation `tf.some_operation`. The output of this operation is then cast back to `float32` using another `tf.cast` operation.
+
+The optimization pass `Bfloat16ConversionFolding` is triggered when all the users of an operation are `tf.cast` operations that convert from `float32` to `bfloat16`, and the operation itself supports low precision output. Similarly, if an operation has an operand that is a `tf.cast` operation converting from `bfloat16` to `float32`, and the operation supports low precision operand at the operand index, the optimization pass is also triggered. 
+
+The optimization pass folds the `tf.cast` operations into the operation itself if feasible, meaning that the operation will directly output `bfloat16` or accept `bfloat16` as input, eliminating the need for the `tf.cast` operations. 
+
+Note that the optimization pass will not be triggered for certain types of operations, such as those related to tuples, entry and exit of a computation, fusion, convert, side-effecting instructions, in-place operations and control flow.
