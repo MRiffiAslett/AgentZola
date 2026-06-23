@@ -145,7 +145,7 @@ def generate_requirement_prompts(
     except FileNotFoundError as e:
         raise FileNotFoundError(
             f"Cannot build few-shot exemplar for '{EXEMPLAR_OPT_NAME}': {e}\n"
-            "Ensure the source file exists in source-code-data/."
+            "Ensure the source file exists in source-code-data-20250806/."
         ) from e
 
     prompts = {}
