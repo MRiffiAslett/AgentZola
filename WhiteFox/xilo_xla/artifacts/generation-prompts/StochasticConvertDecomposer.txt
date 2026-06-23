@@ -1,9 +1,0 @@
-The model should contain a `stochastic_convert` operation with two operands. The `stochastic_convert` operation is used to convert a floating-point number to an integer stochastically. The first operand is the floating-point number to be converted, and the second operand is a random number used for the stochastic rounding.
-
-The model should have the following pattern:
-```python
-t1 = tf.stochastic_convert(input_tensor, random_tensor)
-```
-Here, `input_tensor` is a tensor of floating-point numbers to be converted to integers, and `random_tensor` is a tensor of random numbers used for the stochastic rounding. The `stochastic_convert` operation converts the `input_tensor` to integers stochastically based on the `random_tensor`.
-
-The `stochastic_convert` operation is currently only supported for converting from floating-point numbers to signed integers. The conversion to floating-point numbers is not yet supported.
