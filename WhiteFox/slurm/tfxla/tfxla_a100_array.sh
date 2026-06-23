@@ -210,7 +210,7 @@ fi
 # We use Python (not sed) to avoid accidentally matching keys in other sections.
 TMP_CONFIG="$(mktemp -t whitefox-config-XXXXXX.toml)"
 trap 'rm -f "$TMP_CONFIG"' EXIT
-poetry run python - "$PROJECT_ROOT/$BASE_CONFIG_PATH" "$TMP_CONFIG" \
+python3 - "$PROJECT_ROOT/$BASE_CONFIG_PATH" "$TMP_CONFIG" \
     "$WHITEFOX_MODEL" "$WHITEFOX_PROMPTS_DIR" <<'PATCH_PY'
 import sys, re
 
@@ -300,33 +300,45 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 # instead of bounded *peak* with monotonically-creeping baseline.
 export PYTHONMALLOC=malloc
 
-poetry --version || exit 1
+if [ ! -f "$WHITEFOX_TF_WHEEL" ]; then
+  echo "ERROR: TF wheel not found: $WHITEFOX_TF_WHEEL" >&2
+  exit 1
+fi
 
-LOCKFILE="$PROJECT_ROOT/.install.lock"
-(
-  # NFS flock needs rpc.statd/lockd; some compute nodes have it broken and
-  # return ENOLCK immediately ("flock: 200: No locks available"), which under
-  # `set -e` aborted the whole script before a single test ran (job 245837_0
-  # died here on linnet, leaving batch0 untested since be85c1c).  Make lock
-  # acquisition best-effort with a generous timeout: `poetry install` is
-  # idempotent against the committed lockfile, so racing two nodes is at
-  # worst wasteful, not corrupting.  `poetry lock` is dropped entirely to
-  # avoid concurrent lockfile rewrites across array tasks.
-  if flock -w 120 200; then
-    echo "[$(date)] [$BATCH_LABEL] Acquired install lock"
-  else
-    echo "[$(date)] [$BATCH_LABEL] WARN: flock failed/timeout on $(hostname); proceeding without lock"
-    : > "$WHITEFOX_LOGGING_DIR/.flock_skipped" 2>/dev/null || true
-  fi
-  poetry install --no-interaction
-  echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
-  if [ ! -f "$WHITEFOX_TF_WHEEL" ]; then
-    echo "ERROR: TF wheel not found: $WHITEFOX_TF_WHEEL" >&2
-    exit 1
-  fi
-  poetry run pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
-  echo "[$(date)] [$BATCH_LABEL] Install done"
-) 200>"$LOCKFILE"
+# Select venv and install command based on wheel version.
+# 20250806 → managed by poetry (.venv, cp312)
+# 20230507 → standalone pip venv (venv-cp310, cp310); run setup_venv_20230507.sh once first.
+case "$WHITEFOX_WHEEL_VERSION" in
+  20250806)
+    poetry --version || exit 1
+    LOCKFILE="$PROJECT_ROOT/.install.lock"
+    (
+      if flock -w 120 200; then
+        echo "[$(date)] [$BATCH_LABEL] Acquired install lock"
+      else
+        echo "[$(date)] [$BATCH_LABEL] WARN: flock failed/timeout on $(hostname); proceeding without lock"
+        : > "$WHITEFOX_LOGGING_DIR/.flock_skipped" 2>/dev/null || true
+      fi
+      poetry install --no-interaction
+      echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
+      poetry run pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
+      echo "[$(date)] [$BATCH_LABEL] Install done"
+    ) 200>"$LOCKFILE"
+    RUN_PYTHON="poetry run python"
+    ;;
+  20230507)
+    VENV_CP310="$PROJECT_ROOT/venv-cp310"
+    if [ ! -d "$VENV_CP310" ]; then
+      echo "ERROR: venv-cp310 not found. Run setup_venv_20230507.sh once first." >&2
+      exit 1
+    fi
+    source "$VENV_CP310/bin/activate"
+    echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
+    pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
+    echo "[$(date)] [$BATCH_LABEL] Install done"
+    RUN_PYTHON="python"
+    ;;
+esac
 
 if [ ! -f "$BASE_CONFIG_PATH" ] && [ ! -f "$PROJECT_ROOT/$BASE_CONFIG_PATH" ]; then
   echo "Base config not found: $BASE_CONFIG_PATH" >&2
@@ -402,7 +414,7 @@ echo "[$(date)] nproc limit: $(ulimit -u)"
 
 # Don't let set -e short-circuit past the postmortem when python is SIGKILL'd.
 GEN_EXIT=0
-poetry run python -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV" \
+$RUN_PYTHON -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV" \
   || GEN_EXIT=$?
 
 kill "$TRACER_PID" 2>/dev/null || true
@@ -461,7 +473,7 @@ echo "[$(date)] Local coverage dir cleaned up"
 
 # ---- Aggregate batch summaries into a single combined report ---------------
 echo "[$(date)] Aggregating batch summaries …"
-poetry run python -c "
+$RUN_PYTHON -c "
 from pathlib import Path
 from collections import defaultdict
 
