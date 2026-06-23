@@ -17,6 +17,42 @@ N_TASKS=3
 
 set -euo pipefail
 
+# =============================================================================
+# CONFIGURATION KNOBS
+# Edit the three variables below to switch model / wheel / prompts.
+# Each block lists the available options as copy-paste comments.
+# =============================================================================
+
+# --- 1. Generation model (passed to vLLM) ------------------------------------
+# Options:
+#   "bigcode/starcoder"        15B StarCoder v1  — original WhiteFox paper model
+#   "bigcode/starcoder2-15b"   15B StarCoder v2  — newer, same HF token required
+#   "bigcode/starcoder2-7b"    7B  StarCoder v2  — lower VRAM, experimental
+WHITEFOX_MODEL="bigcode/starcoder"
+
+# --- 2. TensorFlow wheel (force-reinstalled into the poetry venv) ------------
+# NOTE: switching to the 20230507 wheel also requires updating pyproject.toml
+# to point at the cp310 wheel AND recreating the venv with Python 3.10.
+# The 20250806 wheel is the safe default — it matches the current cp312 venv.
+#
+# Options:
+#   20250806 — TF 2.20.0.dev0 + OpenXLA (cp312, matches current venv) [DEFAULT]
+WHITEFOX_TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl"
+#   20230507 — TF 2.14.0, original WhiteFox paper version (cp310, backup only — see NOTE above)
+# WHITEFOX_TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl"
+
+# --- 3. Generation prompts directory (relative to project root) --------------
+# This selects which set of per-optimization requirement descriptions StarCoder
+# uses. Each directory contains one <OptName>.txt file per optimization.
+#
+# Options:
+#   "xilo_xla/artifacts/generation-prompts"           unversioned default (current fuzzer input)
+#   "xilo_xla/artifacts/generation-prompts-20250806"  2025 TF/OpenXLA source, 34/49 complete
+#   "xilo_xla/artifacts/generation-prompts-20230507"  2023 original WhiteFox paper, 49/49 complete
+WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts"
+
+# =============================================================================
+
 # Make the script robust to minimal Slurm env propagation.  Submitting
 # with `--export=WHITEFOX_OPT_OVERRIDE=...` (a workaround for the
 # "user env retrieval failed requeued held" lock-up we hit on jobs
@@ -173,7 +209,46 @@ echo "[$(date)] /data storage:"
 df -h /data 2>/dev/null || echo "  /data not available"
 echo
 
-CONFIG_PATH="${1:-xilo_xla/config/generator.toml}"
+BASE_CONFIG_PATH="${1:-xilo_xla/config/generator.toml}"
+
+# Validate that the generation prompts directory exists before wasting a slot.
+if [ ! -d "$PROJECT_ROOT/$WHITEFOX_PROMPTS_DIR" ]; then
+  echo "ERROR: WHITEFOX_PROMPTS_DIR not found: $PROJECT_ROOT/$WHITEFOX_PROMPTS_DIR" >&2
+  exit 1
+fi
+
+# Patch model name and prompts dir into a temp copy of the config so the Python
+# layer picks up the knob values without needing per-version TOML files.
+# We use Python (not sed) to avoid accidentally matching keys in other sections.
+TMP_CONFIG="$(mktemp -t whitefox-config-XXXXXX.toml)"
+trap 'rm -f "$TMP_CONFIG"' EXIT
+poetry run python - "$PROJECT_ROOT/$BASE_CONFIG_PATH" "$TMP_CONFIG" \
+    "$WHITEFOX_MODEL" "$WHITEFOX_PROMPTS_DIR" <<'PATCH_PY'
+import sys, re
+
+src, dst, model, prompts_dir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+with open(src) as f:
+    text = f.read()
+
+# Replace [model] name = "..."  — only the first occurrence of ^name = in file
+text = re.sub(r'^(name\s*=\s*)"[^"]*"', rf'\1"{model}"', text, count=1, flags=re.MULTILINE)
+# Replace [generation] optimizations_dir = "..."
+text = re.sub(r'^(optimizations_dir\s*=\s*)"[^"]*"', rf'\1"{prompts_dir}"', text, count=1, flags=re.MULTILINE)
+
+with open(dst, "w") as f:
+    f.write(text)
+
+print(f"[config patch] model={model!r}  optimizations_dir={prompts_dir!r}")
+PATCH_PY
+
+CONFIG_PATH="$TMP_CONFIG"
+
+echo "[$(date)] Model:         $WHITEFOX_MODEL"
+echo "[$(date)] Wheel:         $WHITEFOX_TF_WHEEL"
+echo "[$(date)] Prompts dir:   $WHITEFOX_PROMPTS_DIR"
+echo "[$(date)] Base config:   $BASE_CONFIG_PATH"
+echo "[$(date)] Patched config: $TMP_CONFIG"
 
 # ---- LLVM toolchain --------------------------------------------------------
 LLVM17_BIN="/vol/bitbucket/mtr25/tfbuild/llvm17/bin"
@@ -237,8 +312,6 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 # instead of bounded *peak* with monotonically-creeping baseline.
 export PYTHONMALLOC=malloc
 
-TF_WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-V2.20.0.dev0+selfbuilt-cp312-cp312-linux_x86_64.whl"
-
 poetry --version || exit 1
 
 LOCKFILE="$PROJECT_ROOT/.install.lock"
@@ -258,13 +331,17 @@ LOCKFILE="$PROJECT_ROOT/.install.lock"
     : > "$WHITEFOX_LOGGING_DIR/.flock_skipped" 2>/dev/null || true
   fi
   poetry install --no-interaction
-  echo "[$(date)] Force-reinstalling TensorFlow wheel"
-  poetry run pip install --force-reinstall --no-deps "$TF_WHEEL"
+  echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
+  if [ ! -f "$WHITEFOX_TF_WHEEL" ]; then
+    echo "ERROR: TF wheel not found: $WHITEFOX_TF_WHEEL" >&2
+    exit 1
+  fi
+  poetry run pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
   echo "[$(date)] [$BATCH_LABEL] Install done"
 ) 200>"$LOCKFILE"
 
-if [ ! -f "$CONFIG_PATH" ]; then
-  echo "Config not found: $CONFIG_PATH" >&2
+if [ ! -f "$BASE_CONFIG_PATH" ] && [ ! -f "$PROJECT_ROOT/$BASE_CONFIG_PATH" ]; then
+  echo "Base config not found: $BASE_CONFIG_PATH" >&2
   exit 1
 fi
 
