@@ -558,9 +558,9 @@ for batch_dir in batch_dirs:
         missing_json.append(batch_dir.name)
 
 if missing_json:
-    print(f"Batches without run_stats.json (absent from Tables 2-5): {missing_json}")
+    print(f"Batches without run_stats.json (absent from Tables 3-5): {missing_json}")
 
-# ---- Aggregate opt_stats (Tables 1 + 2) ------------------------------------
+# ---- Aggregate opt_stats (Tables 1, 3) -------------------------------------
 agg_opt = defaultdict(lambda: defaultdict(int))
 for _bname, stats in all_stats:
     for opt, od in stats.get("opt_stats", {}).items():
@@ -568,14 +568,14 @@ for _bname, stats in all_stats:
             if isinstance(v, int):
                 agg_opt[opt][k] += v
 
-# ---- Aggregate oracle_counts (Tables 3 + 4) --------------------------------
+# ---- Aggregate oracle_counts (Tables 4, 5) ----------------------------------
 agg_oracle = defaultdict(lambda: defaultdict(int))
 for _bname, stats in all_stats:
     for opt, oc in stats.get("oracle_counts", {}).items():
         for otype, cnt in oc.items():
             agg_oracle[opt][otype] += cnt
 
-# ---- Aggregate Thompson sampling (Table 5) ---------------------------------
+# ---- Aggregate Thompson sampling (Statistical Tests) ------------------------
 agg_thompson = defaultdict(lambda: {"n": 0, "sum_alpha": 0.0, "sum_beta": 0.0})
 for _bname, stats in all_stats:
     for opt, td in stats.get("thompson", {}).items():
@@ -606,184 +606,7 @@ QUALITY_KEYS = [
     ("timeout",              "timeout"),
 ]
 
-# ========================== WRITE COMBINED SUMMARY =========================
-with open(combined_summary, "w") as f:
-
-    # ---- Preamble ----------------------------------------------------------
-    f.write("=" * 95 + "\n")
-    f.write("WHITEFOX COMBINED RUN SUMMARY (all batches)\n")
-    f.write("=" * 95 + "\n\n")
-
-    tf_label = tf_version or "unknown"
-    if tf_version == "20250806":
-        tf_label = "20250806  (tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806, cp312)"
-    elif tf_version == "20230507":
-        tf_label = "20230507  (tensorflow_cpu-2.14.0+selfbuilt.20230507, cp310)"
-
-    f.write(f"TF Version:  {tf_label}\n")
-    f.write(f"Model:       {model_name or 'unknown'}\n")
-    f.write(f"Batches:     {len(batch_dirs)}  ({', '.join(d.name for d in batch_dirs)})\n")
-    f.write(f"Aggregated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-    # ---- Table 1: Test Generation ------------------------------------------
-    section(f, "TABLE 1 — TEST GENERATION")
-
-    mode_keys   = sorted({k for d in agg_opt.values() for k in d if k.startswith("success_")})
-    mode_labels = [k.replace("success_", "") for k in mode_keys]
-
-    t1_header = (f"{'Optimization':40s} | {'Created':>7s} | {'Valid':>7s} | "
-                 f"{'Invalid':>7s} | {'Triggered':>9s}")
-    for lbl in mode_labels:
-        t1_header += f" | {lbl.capitalize():>11s}"
-    sep_len = max(95, len(t1_header) + 5)
-    f.write(t1_header + "\n")
-    f.write("-" * sep_len + "\n\n")
-
-    grand = defaultdict(int)
-    for opt in all_opt_names:
-        d    = agg_opt[opt]
-        gen  = d.get("generated", 0)
-        valid = d.get("valid", 0)
-        inv  = d.get("invalid", 0)
-        trig = d.get("triggered", 0)
-        grand["generated"] += gen
-        grand["valid"]     += valid
-        grand["invalid"]   += inv
-        grand["triggered"] += trig
-        f.write(f"{opt:40s} | {gen:7d} | {valid:7d} | {inv:7d} | {trig:9d}")
-        for mk in mode_keys:
-            v = d.get(mk, 0)
-            grand[mk] += v
-            f.write(f" | {v:11d}")
-        f.write("\n")
-
-    f.write("-" * sep_len + "\n")
-    f.write(f"{'TOTAL':40s} | {grand['generated']:7d} | {grand['valid']:7d} | "
-            f"{grand['invalid']:7d} | {grand['triggered']:9d}")
-    for mk in mode_keys:
-        f.write(f" | {grand[mk]:11d}")
-    f.write("\n" + "=" * sep_len + "\n")
-
-    # ---- Table 2: Generation Quality Distribution --------------------------
-    section(f, "TABLE 2 — GENERATION QUALITY DISTRIBUTION (pre-oracle)")
-
-    gen_total   = sum(agg_opt[opt].get("generated", 0)     for opt in all_opt_names)
-    exec_total  = sum(agg_opt[opt].get("executed", 0)      for opt in all_opt_names)
-    wfail_total = sum(agg_opt[opt].get("worker_failed", 0) for opt in all_opt_names)
-
-    f.write(f"{'Generated test category':40s} | {'Count':>7s} | {'%':>7s}\n")
-    f.write("-" * 60 + "\n\n")
-    for key, label in QUALITY_KEYS:
-        cnt = sum(agg_opt[opt].get(key, 0) for opt in all_opt_names)
-        f.write(f"{label:40s} | {cnt:7d} | {pct(cnt, gen_total):>7s}\n")
-
-    f.write(f"\nGenerated (denominator): {gen_total}\n")
-    f.write(f"Executed:                {exec_total}\n")
-    f.write(f"Worker failures:         {wfail_total}\n")
-    f.write("=" * 60 + "\n")
-
-    f.write("\nPer optimization (% of generated tests):\n\n")
-    q_header = (f"{'Optimization':40s} | {'Gen':>5s} | "
-                f"{'Syntax':>6s} | {'Import':>6s} | {'Eager':>6s} | "
-                f"{'XLA':>6s} | {'JIT':>6s} | "
-                f"{'BadAPI':>6s} | {'Unsup':>6s} | {'T/O':>5s}")
-    f.write(q_header + "\n")
-    f.write("-" * 115 + "\n\n")
-
-    for opt in all_opt_names:
-        d   = agg_opt[opt]
-        gen = d.get("generated", 0)
-        jit = next((d[k] for k in ("success_xla","success_jit","success_compiled") if k in d), 0)
-        f.write(f"{opt:40s} | {gen:5d} | "
-                f"{pct(d.get('syntax_valid',0),gen):>6s} | "
-                f"{pct(d.get('imports_successfully',0),gen):>6s} | "
-                f"{pct(d.get('eager_executable',0),gen):>6s} | "
-                f"{pct(d.get('xla_compilable',0),gen):>6s} | "
-                f"{pct(jit,gen):>6s} | "
-                f"{d.get('invalid_tf_api',0):6d} | "
-                f"{d.get('unsupported_by_xla',0):6d} | "
-                f"{d.get('timeout',0):5d}\n")
-    f.write("=" * 115 + "\n")
-
-    # ---- Table 3: Oracle Outcomes ------------------------------------------
-    section(f, "TABLE 3 — ORACLE OUTCOMES")
-
-    col_w     = 14
-    oc_header = f"{'Optimization':40s}"
-    for ot in ORACLE_TYPES:
-        oc_header += f" | {ot:>{col_w}s}"
-    oc_header += f" | {'Total':>7s}"
-    oc_sep_len = len(oc_header) + 2
-    f.write(oc_header + "\n")
-    f.write("-" * oc_sep_len + "\n\n")
-
-    oc_grand = defaultdict(int)
-    for opt in all_opt_names:
-        counts    = agg_oracle[opt]
-        row_total = sum(counts.get(ot, 0) for ot in ORACLE_TYPES)
-        oc_grand["Total"] += row_total
-        f.write(f"{opt:40s}")
-        for ot in ORACLE_TYPES:
-            v = counts.get(ot, 0)
-            oc_grand[ot] += v
-            f.write(f" | {v:>{col_w}d}")
-        f.write(f" | {row_total:>7d}\n")
-
-    f.write("-" * oc_sep_len + "\n")
-    f.write(f"{'TOTAL':40s}")
-    for ot in ORACLE_TYPES:
-        f.write(f" | {oc_grand[ot]:>{col_w}d}")
-    f.write(f" | {oc_grand['Total']:>7d}\n")
-    f.write("=" * oc_sep_len + "\n")
-
-    # ---- Table 4: Bug Pipeline ---------------------------------------------
-    section(f, "TABLE 4 — BUG PIPELINE  (automated fields only)")
-
-    f.write("NOTE: Only 'RawFails' is tracked automatically.\n"
-            "      Filtered / Deduped / Triaged / Inspected / Likely Bugs /\n"
-            "      Reported / Accepted / Duplicates / False Positives\n"
-            "      all require manual post-processing review.\n\n")
-    f.write(f"{'Optimization':40s} | {'RawFails':>9s}\n")
-    f.write("-" * 55 + "\n\n")
-
-    bp_total = 0
-    for opt in all_opt_names:
-        counts = agg_oracle[opt]
-        raw    = sum(counts.get(bt, 0) for bt in BUG_ORACLE_TYPES)
-        bp_total += raw
-        f.write(f"{opt:40s} | {raw:9d}\n")
-
-    f.write("-" * 55 + "\n")
-    f.write(f"{'TOTAL':40s} | {bp_total:9d}\n")
-    f.write("=" * 55 + "\n")
-
-    # ---- Table 5: Thompson Sampling Stats ----------------------------------
-    section(f, "TABLE 5 — THOMPSON SAMPLING STATS")
-
-    f.write(f"{'Optimization':40s} | {'Tests':>5s} | "
-            f"{'Avg Alpha':>9s} | {'Avg Beta':>9s} | {'Avg Theta':>9s}\n")
-    f.write("-" * 85 + "\n\n")
-
-    for opt in all_opt_names:
-        td = agg_thompson.get(opt, {})
-        n  = td.get("n", 0)
-        if n == 0:
-            f.write(f"{opt:40s} |     0 |         - |         - |         -\n")
-            continue
-        avg_a     = td["sum_alpha"] / n
-        avg_b     = td["sum_beta"]  / n
-        avg_theta = avg_a / (avg_a + avg_b) if (avg_a + avg_b) > 0 else 0.0
-        f.write(f"{opt:40s} | {n:5d} | {avg_a:9.2f} | {avg_b:9.2f} | {avg_theta:9.4f}\n")
-
-    f.write("=" * 85 + "\n")
-
-    # Coverage placeholder — filled in after the llvm-profdata merge below.
-    section(f, "COVERAGE — UNION ACROSS ALL BATCHES")
-    f.write("(union result appended after llvm-profdata merge)\n")
-
-print(f"Combined run summary written: {combined_summary}")
-
-# ========================== COVERAGE UNION ==================================
+# ========================== COVERAGE UNION (computed before summary) =========
 def find_llvm_tool(name):
     if llvm_dir:
         p = os.path.join(llvm_dir, name)
@@ -854,7 +677,6 @@ if profdata_files:
                 print(f"llvm-cov report failed: {cr.stderr.strip()[:500]}")
             else:
                 report_lines = cr.stdout.splitlines()
-                # Detect which column is "Lines"
                 lines_col = 7
                 for ln in report_lines:
                     if "Filename" in ln and "Lines" in ln:
@@ -907,7 +729,7 @@ if profdata_files:
 else:
     print("No profdata files found; skipping coverage union.")
 
-# ---- Write coverage_combined.log ------------------------------------------
+# ---- Write coverage_combined.log (union first, per-batch for reference) ----
 sep60 = "=" * 60
 cov_sections = []
 if cov_union_text:
@@ -928,22 +750,188 @@ with open(combined_coverage, "w") as f:
     f.write("\n".join(cov_sections) + "\n")
 print(f"Combined coverage written:  {combined_coverage}")
 
-# ---- Append coverage result to run_summary_combined.log -------------------
-with open(combined_summary, "a") as f:
+# ========================== WRITE COMBINED SUMMARY =========================
+with open(combined_summary, "w") as f:
+
+    # ---- Preamble ----------------------------------------------------------
+    f.write("=" * 95 + "\n")
+    f.write("WHITEFOX COMBINED RUN SUMMARY (all batches)\n")
+    f.write("=" * 95 + "\n\n")
+
+    tf_label = tf_version or "unknown"
+    if tf_version == "20250806":
+        tf_label = "20250806  (tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806, cp312)"
+    elif tf_version == "20230507":
+        tf_label = "20230507  (tensorflow_cpu-2.14.0+selfbuilt.20230507, cp310)"
+
+    f.write(f"TF Version:  {tf_label}\n")
+    f.write(f"Model:       {model_name or 'unknown'}\n")
+    f.write(f"Batches:     {len(batch_dirs)}  ({', '.join(d.name for d in batch_dirs)})\n")
+    f.write(f"Aggregated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    # ---- Table 1: Test Generation ------------------------------------------
+    section(f, "TABLE 1 — TEST GENERATION")
+
+    mode_keys   = sorted({k for d in agg_opt.values() for k in d if k.startswith("success_")})
+    mode_labels = [k.replace("success_", "") for k in mode_keys]
+
+    t1_header = (f"{'Optimization':40s} | {'Created':>7s} | {'Valid':>7s} | "
+                 f"{'Invalid':>7s} | {'Triggered':>9s}")
+    for lbl in mode_labels:
+        t1_header += f" | {lbl.capitalize():>11s}"
+    sep_len = max(95, len(t1_header) + 5)
+    f.write(t1_header + "\n")
+    f.write("-" * sep_len + "\n\n")
+
+    grand = defaultdict(int)
+    for opt in all_opt_names:
+        d    = agg_opt[opt]
+        gen  = d.get("generated", 0)
+        valid = d.get("valid", 0)
+        inv  = d.get("invalid", 0)
+        trig = d.get("triggered", 0)
+        grand["generated"] += gen
+        grand["valid"]     += valid
+        grand["invalid"]   += inv
+        grand["triggered"] += trig
+        f.write(f"{opt:40s} | {gen:7d} | {valid:7d} | {inv:7d} | {trig:9d}")
+        for mk in mode_keys:
+            v = d.get(mk, 0)
+            grand[mk] += v
+            f.write(f" | {v:11d}")
+        f.write("\n")
+
+    f.write("-" * sep_len + "\n")
+    f.write(f"{'TOTAL':40s} | {grand['generated']:7d} | {grand['valid']:7d} | "
+            f"{grand['invalid']:7d} | {grand['triggered']:9d}")
+    for mk in mode_keys:
+        f.write(f" | {grand[mk]:11d}")
+    f.write("\n" + "=" * sep_len + "\n")
+
+    # ---- Table 2: Code Coverage (union) ------------------------------------
+    section(f, "TABLE 2 — CODE COVERAGE (union of all batches)")
     if cov_union_text:
-        f.write(cov_union_text)
-        f.write("\n--- Per-batch coverage (for reference) ---\n")
-        for bd in batch_dirs:
-            cov_file = bd / "coverage_report.log"
-            if not cov_file.exists():
-                continue
-            text = cov_file.read_text().strip()
-            if "UNAVAILABLE" not in text or len(text) >= 200:
-                f.write(f"\n{bd.name}:\n{text}\n")
+        f.write(cov_union_text + "\n")
+        f.write("  (See coverage_combined.log for per-batch breakdown.)\n")
     else:
-        f.write("Coverage union not available (no profdata or llvm-cov failed).\n")
-        f.write("See coverage_combined.log for per-batch results.\n")
-    f.write("\n" + "=" * 95 + "\n")
+        f.write("  Coverage union not available (no profdata files or llvm-cov failed).\n")
+        f.write("  See coverage_combined.log for per-batch results.\n")
+    f.write("=" * 95 + "\n")
+
+    # ---- Table 3: Generation Quality Distribution --------------------------
+    section(f, "TABLE 3 — GENERATION QUALITY DISTRIBUTION (pre-oracle)")
+
+    gen_total   = sum(agg_opt[opt].get("generated", 0)     for opt in all_opt_names)
+    exec_total  = sum(agg_opt[opt].get("executed", 0)      for opt in all_opt_names)
+    wfail_total = sum(agg_opt[opt].get("worker_failed", 0) for opt in all_opt_names)
+
+    f.write(f"{'Generated test category':40s} | {'Count':>7s} | {'%':>7s}\n")
+    f.write("-" * 60 + "\n\n")
+    for key, label in QUALITY_KEYS:
+        cnt = sum(agg_opt[opt].get(key, 0) for opt in all_opt_names)
+        f.write(f"{label:40s} | {cnt:7d} | {pct(cnt, gen_total):>7s}\n")
+
+    f.write(f"\nGenerated (denominator): {gen_total}\n")
+    f.write(f"Executed:                {exec_total}\n")
+    f.write(f"Worker failures:         {wfail_total}\n")
+    f.write("=" * 60 + "\n")
+
+    f.write("\nPer optimization (% of generated tests):\n\n")
+    q_header = (f"{'Optimization':40s} | {'Gen':>5s} | "
+                f"{'Syntax':>6s} | {'Import':>6s} | {'Eager':>6s} | "
+                f"{'XLA':>6s} | {'JIT':>6s} | "
+                f"{'BadAPI':>6s} | {'Unsup':>6s} | {'T/O':>5s}")
+    f.write(q_header + "\n")
+    f.write("-" * 115 + "\n\n")
+
+    for opt in all_opt_names:
+        d   = agg_opt[opt]
+        gen = d.get("generated", 0)
+        jit = next((d[k] for k in ("success_xla","success_jit","success_compiled") if k in d), 0)
+        f.write(f"{opt:40s} | {gen:5d} | "
+                f"{pct(d.get('syntax_valid',0),gen):>6s} | "
+                f"{pct(d.get('imports_successfully',0),gen):>6s} | "
+                f"{pct(d.get('eager_executable',0),gen):>6s} | "
+                f"{pct(d.get('xla_compilable',0),gen):>6s} | "
+                f"{pct(jit,gen):>6s} | "
+                f"{d.get('invalid_tf_api',0):6d} | "
+                f"{d.get('unsupported_by_xla',0):6d} | "
+                f"{d.get('timeout',0):5d}\n")
+    f.write("=" * 115 + "\n")
+
+    # ---- Table 4: Oracle Outcomes ------------------------------------------
+    section(f, "TABLE 4 — ORACLE OUTCOMES")
+
+    col_w     = 14
+    oc_header = f"{'Optimization':40s}"
+    for ot in ORACLE_TYPES:
+        oc_header += f" | {ot:>{col_w}s}"
+    oc_header += f" | {'Total':>7s}"
+    oc_sep_len = len(oc_header) + 2
+    f.write(oc_header + "\n")
+    f.write("-" * oc_sep_len + "\n\n")
+
+    oc_grand = defaultdict(int)
+    for opt in all_opt_names:
+        counts    = agg_oracle[opt]
+        row_total = sum(counts.get(ot, 0) for ot in ORACLE_TYPES)
+        oc_grand["Total"] += row_total
+        f.write(f"{opt:40s}")
+        for ot in ORACLE_TYPES:
+            v = counts.get(ot, 0)
+            oc_grand[ot] += v
+            f.write(f" | {v:>{col_w}d}")
+        f.write(f" | {row_total:>7d}\n")
+
+    f.write("-" * oc_sep_len + "\n")
+    f.write(f"{'TOTAL':40s}")
+    for ot in ORACLE_TYPES:
+        f.write(f" | {oc_grand[ot]:>{col_w}d}")
+    f.write(f" | {oc_grand['Total']:>7d}\n")
+    f.write("=" * oc_sep_len + "\n")
+
+    # ---- Table 5: Bug Pipeline ---------------------------------------------
+    section(f, "TABLE 5 — BUG PIPELINE  (automated fields only)")
+
+    f.write("NOTE: Only 'RawFails' is tracked automatically.\n"
+            "      Filtered / Deduped / Triaged / Inspected / Likely Bugs /\n"
+            "      Reported / Accepted / Duplicates / False Positives\n"
+            "      all require manual post-processing review.\n\n")
+    f.write(f"{'Optimization':40s} | {'RawFails':>9s}\n")
+    f.write("-" * 55 + "\n\n")
+
+    bp_total = 0
+    for opt in all_opt_names:
+        counts = agg_oracle[opt]
+        raw    = sum(counts.get(bt, 0) for bt in BUG_ORACLE_TYPES)
+        bp_total += raw
+        f.write(f"{opt:40s} | {raw:9d}\n")
+
+    f.write("-" * 55 + "\n")
+    f.write(f"{'TOTAL':40s} | {bp_total:9d}\n")
+    f.write("=" * 55 + "\n")
+
+    # ---- Statistical Tests: Thompson Sampling ------------------------------
+    section(f, "STATISTICAL TESTS — THOMPSON SAMPLING")
+
+    f.write(f"{'Optimization':40s} | {'Tests':>5s} | "
+            f"{'Avg Alpha':>9s} | {'Avg Beta':>9s} | {'Avg Theta':>9s}\n")
+    f.write("-" * 85 + "\n\n")
+
+    for opt in all_opt_names:
+        td = agg_thompson.get(opt, {})
+        n  = td.get("n", 0)
+        if n == 0:
+            f.write(f"{opt:40s} |     0 |         - |         - |         -\n")
+            continue
+        avg_a     = td["sum_alpha"] / n
+        avg_b     = td["sum_beta"]  / n
+        avg_theta = avg_a / (avg_a + avg_b) if (avg_a + avg_b) > 0 else 0.0
+        f.write(f"{opt:40s} | {n:5d} | {avg_a:9.2f} | {avg_b:9.2f} | {avg_theta:9.4f}\n")
+
+    f.write("=" * 85 + "\n")
+
+print(f"Combined run summary written: {combined_summary}")
 
 PYEOF
 
