@@ -26,6 +26,7 @@ set -euo pipefail
 WHITEFOX_MODEL="bigcode/starcoder"
 WHITEFOX_WHEEL_VERSION="20250806"
 WHITEFOX_PROMPTS_VERSION="20250806"
+export WHITEFOX_MODEL WHITEFOX_WHEEL_VERSION WHITEFOX_PROMPTS_VERSION
 # ===========================================================================
 
 _WHEEL_DIR="/vol/bitbucket/mtr25/tfbuild/wheels"
@@ -172,6 +173,7 @@ export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
+export PROJECT_ROOT
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
 # Archive any prior-run artifacts in this batch's logging dir before we
 # start, so leftover cgroup_mem.tsv / oom_postmortem.log rows from an
@@ -472,99 +474,481 @@ rm -rf "$LOCAL_COV_DIR" 2>/dev/null || true
 echo "[$(date)] Local coverage dir cleaned up"
 
 # ---- Aggregate batch summaries into a single combined report ---------------
+# Writes run_summary_combined.log (all Tables 1-5 + coverage union) and
+# coverage_combined.log (union + per-batch breakdown).
+#
+# Primary data source: run_stats.json sidecar written by WhiteFoxLogger.
+# Coverage union:      llvm-profdata merge across batch merged.profdata files.
 echo "[$(date)] Aggregating batch summaries …"
-$RUN_PYTHON -c "
-from pathlib import Path
+
+_AGG_SCRIPT=$(mktemp -t wf_agg_XXXXXX.py)
+# The existing trap for TMP_CONFIG is replaced below so both temps are cleaned.
+trap 'rm -f "$TMP_CONFIG" "$_AGG_SCRIPT"' EXIT
+
+cat > "$_AGG_SCRIPT" << 'PYEOF'
+import json
+import os
+import shutil
+import subprocess
+import sys
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 
-logging_root = Path('$PROJECT_ROOT') / 'logging'
-combined_summary = logging_root / 'run_summary_combined.log'
-combined_coverage = logging_root / 'coverage_combined.log'
-my_job_id = '$SLURM_ARRAY_JOB_ID'
+# ---- Configuration injected via environment variables ---------------------
+project_root = os.environ.get("PROJECT_ROOT", "")
+job_id       = os.environ.get("SLURM_ARRAY_JOB_ID", "")
+tf_version   = os.environ.get("WHITEFOX_WHEEL_VERSION", "")
+model_name   = os.environ.get("WHITEFOX_MODEL", "")
+llvm_dir     = os.environ.get("WHITEFOX_LLVM_DIR", "")
 
+logging_root      = Path(project_root) / "logging"
+combined_summary  = logging_root / "run_summary_combined.log"
+combined_coverage = logging_root / "coverage_combined.log"
+
+ORACLE_TYPES = [
+    "NaiveFail", "XLAFail", "ACFail",
+    "Naive_XLAFail", "Naive_ACFail", "XLA_ACFail",
+    "AllFail", "AllPass",
+    "AllDiff", "AllDiff_Rand", "AllDiff_LessLikely", "AllDiff_TypeMismatch",
+]
+BUG_ORACLE_TYPES = frozenset([
+    "NaiveFail", "XLAFail", "ACFail",
+    "Naive_XLAFail", "Naive_ACFail", "XLA_ACFail",
+    "AllDiff", "AllDiff_Rand", "AllDiff_LessLikely", "AllDiff_TypeMismatch",
+])
+
+# ---- Batch discovery -------------------------------------------------------
 def batch_belongs_to_current_run(batch_dir):
-    jf = batch_dir / '.job_id'
+    jf = batch_dir / ".job_id"
     if not jf.exists():
         return False
-    return jf.read_text().strip() == my_job_id
+    return jf.read_text().strip() == job_id
 
-batch_dirs = [d for d in sorted(logging_root.glob('batch*')) if d.is_dir() and batch_belongs_to_current_run(d)]
-skipped = [d.name for d in sorted(logging_root.glob('batch*')) if d.is_dir() and not batch_belongs_to_current_run(d)]
-if skipped:
-    print(f'Skipping stale batches (wrong job_id): {skipped}')
+batch_dirs = [
+    d for d in sorted(logging_root.glob("batch*"))
+    if d.is_dir() and batch_belongs_to_current_run(d)
+]
+stale = [
+    d.name for d in sorted(logging_root.glob("batch*"))
+    if d.is_dir() and not batch_belongs_to_current_run(d)
+]
+if stale:
+    print(f"Skipping stale batches (wrong job_id): {stale}")
+print(f"Aggregating {len(batch_dirs)} batches: {[d.name for d in batch_dirs]}")
 
-totals = defaultdict(lambda: defaultdict(int))
-header_line = ''
+if not batch_dirs:
+    print("No matching batch dirs found; skipping aggregation.")
+    sys.exit(0)
 
+# ---- Load run_stats.json sidecars ------------------------------------------
+all_stats = []
+missing_json = []
 for batch_dir in batch_dirs:
-    summary = batch_dir / 'run_summary_detailed.log'
-    if not summary.exists():
-        continue
-    for line in summary.read_text().splitlines():
-        if not line.strip():
-            continue
-        if line.startswith(('=', '-', 'Optimization', 'WHITEFOX')):
-            if line.startswith('Optimization'):
-                header_line = line
-            continue
-        parts = [p.strip() for p in line.split('|')]
-        if len(parts) < 3:
-            continue
-        if parts[0] == 'TOTAL':
-            continue
+    stats_file = batch_dir / "run_stats.json"
+    if stats_file.exists():
         try:
-            values = [int(v) for v in parts[1:]]
-        except ValueError:
+            all_stats.append((batch_dir.name, json.loads(stats_file.read_text())))
+        except Exception as e:
+            print(f"Warning: could not parse {stats_file}: {e}")
+            missing_json.append(batch_dir.name)
+    else:
+        print(f"Warning: run_stats.json missing in {batch_dir.name} "
+              "(batch may use an older code version)")
+        missing_json.append(batch_dir.name)
+
+if missing_json:
+    print(f"Batches without run_stats.json (absent from Tables 2-5): {missing_json}")
+
+# ---- Aggregate opt_stats (Tables 1 + 2) ------------------------------------
+agg_opt = defaultdict(lambda: defaultdict(int))
+for _bname, stats in all_stats:
+    for opt, od in stats.get("opt_stats", {}).items():
+        for k, v in od.items():
+            if isinstance(v, int):
+                agg_opt[opt][k] += v
+
+# ---- Aggregate oracle_counts (Tables 3 + 4) --------------------------------
+agg_oracle = defaultdict(lambda: defaultdict(int))
+for _bname, stats in all_stats:
+    for opt, oc in stats.get("oracle_counts", {}).items():
+        for otype, cnt in oc.items():
+            agg_oracle[opt][otype] += cnt
+
+# ---- Aggregate Thompson sampling (Table 5) ---------------------------------
+agg_thompson = defaultdict(lambda: {"n": 0, "sum_alpha": 0.0, "sum_beta": 0.0})
+for _bname, stats in all_stats:
+    for opt, td in stats.get("thompson", {}).items():
+        agg_thompson[opt]["n"]         += td.get("n", 0)
+        agg_thompson[opt]["sum_alpha"] += td.get("sum_alpha", 0.0)
+        agg_thompson[opt]["sum_beta"]  += td.get("sum_beta",  0.0)
+
+all_opt_names = sorted(set(list(agg_opt.keys()) + list(agg_oracle.keys())))
+
+# ---- Helpers ---------------------------------------------------------------
+def pct(n, total):
+    if total <= 0:
+        return "  0.0%"
+    return f"{100.0 * n / total:5.1f}%"
+
+def section(f, title):
+    f.write("\n" + "=" * 95 + "\n")
+    f.write(f"{title}\n")
+    f.write("=" * 95 + "\n\n")
+
+QUALITY_KEYS = [
+    ("syntax_valid",         "syntactically valid Python"),
+    ("imports_successfully", "imports successfully"),
+    ("eager_executable",     "eager executable"),
+    ("xla_compilable",       "XLA compilable"),
+    ("invalid_tf_api",       "invalid TensorFlow API usage"),
+    ("unsupported_by_xla",   "unsupported by XLA"),
+    ("timeout",              "timeout"),
+]
+
+# ========================== WRITE COMBINED SUMMARY =========================
+with open(combined_summary, "w") as f:
+
+    # ---- Preamble ----------------------------------------------------------
+    f.write("=" * 95 + "\n")
+    f.write("WHITEFOX COMBINED RUN SUMMARY (all batches)\n")
+    f.write("=" * 95 + "\n\n")
+
+    tf_label = tf_version or "unknown"
+    if tf_version == "20250806":
+        tf_label = "20250806  (tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806, cp312)"
+    elif tf_version == "20230507":
+        tf_label = "20230507  (tensorflow_cpu-2.14.0+selfbuilt.20230507, cp310)"
+
+    f.write(f"TF Version:  {tf_label}\n")
+    f.write(f"Model:       {model_name or 'unknown'}\n")
+    f.write(f"Batches:     {len(batch_dirs)}  ({', '.join(d.name for d in batch_dirs)})\n")
+    f.write(f"Aggregated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    # ---- Table 1: Test Generation ------------------------------------------
+    section(f, "TABLE 1 — TEST GENERATION")
+
+    mode_keys   = sorted({k for d in agg_opt.values() for k in d if k.startswith("success_")})
+    mode_labels = [k.replace("success_", "") for k in mode_keys]
+
+    t1_header = (f"{'Optimization':40s} | {'Created':>7s} | {'Valid':>7s} | "
+                 f"{'Invalid':>7s} | {'Triggered':>9s}")
+    for lbl in mode_labels:
+        t1_header += f" | {lbl.capitalize():>11s}"
+    sep_len = max(95, len(t1_header) + 5)
+    f.write(t1_header + "\n")
+    f.write("-" * sep_len + "\n\n")
+
+    grand = defaultdict(int)
+    for opt in all_opt_names:
+        d    = agg_opt[opt]
+        gen  = d.get("generated", 0)
+        valid = d.get("valid", 0)
+        inv  = d.get("invalid", 0)
+        trig = d.get("triggered", 0)
+        grand["generated"] += gen
+        grand["valid"]     += valid
+        grand["invalid"]   += inv
+        grand["triggered"] += trig
+        f.write(f"{opt:40s} | {gen:7d} | {valid:7d} | {inv:7d} | {trig:9d}")
+        for mk in mode_keys:
+            v = d.get(mk, 0)
+            grand[mk] += v
+            f.write(f" | {v:11d}")
+        f.write("\n")
+
+    f.write("-" * sep_len + "\n")
+    f.write(f"{'TOTAL':40s} | {grand['generated']:7d} | {grand['valid']:7d} | "
+            f"{grand['invalid']:7d} | {grand['triggered']:9d}")
+    for mk in mode_keys:
+        f.write(f" | {grand[mk]:11d}")
+    f.write("\n" + "=" * sep_len + "\n")
+
+    # ---- Table 2: Generation Quality Distribution --------------------------
+    section(f, "TABLE 2 — GENERATION QUALITY DISTRIBUTION (pre-oracle)")
+
+    gen_total   = sum(agg_opt[opt].get("generated", 0)     for opt in all_opt_names)
+    exec_total  = sum(agg_opt[opt].get("executed", 0)      for opt in all_opt_names)
+    wfail_total = sum(agg_opt[opt].get("worker_failed", 0) for opt in all_opt_names)
+
+    f.write(f"{'Generated test category':40s} | {'Count':>7s} | {'%':>7s}\n")
+    f.write("-" * 60 + "\n\n")
+    for key, label in QUALITY_KEYS:
+        cnt = sum(agg_opt[opt].get(key, 0) for opt in all_opt_names)
+        f.write(f"{label:40s} | {cnt:7d} | {pct(cnt, gen_total):>7s}\n")
+
+    f.write(f"\nGenerated (denominator): {gen_total}\n")
+    f.write(f"Executed:                {exec_total}\n")
+    f.write(f"Worker failures:         {wfail_total}\n")
+    f.write("=" * 60 + "\n")
+
+    f.write("\nPer optimization (% of generated tests):\n\n")
+    q_header = (f"{'Optimization':40s} | {'Gen':>5s} | "
+                f"{'Syntax':>6s} | {'Import':>6s} | {'Eager':>6s} | "
+                f"{'XLA':>6s} | {'JIT':>6s} | "
+                f"{'BadAPI':>6s} | {'Unsup':>6s} | {'T/O':>5s}")
+    f.write(q_header + "\n")
+    f.write("-" * 115 + "\n\n")
+
+    for opt in all_opt_names:
+        d   = agg_opt[opt]
+        gen = d.get("generated", 0)
+        jit = next((d[k] for k in ("success_xla","success_jit","success_compiled") if k in d), 0)
+        f.write(f"{opt:40s} | {gen:5d} | "
+                f"{pct(d.get('syntax_valid',0),gen):>6s} | "
+                f"{pct(d.get('imports_successfully',0),gen):>6s} | "
+                f"{pct(d.get('eager_executable',0),gen):>6s} | "
+                f"{pct(d.get('xla_compilable',0),gen):>6s} | "
+                f"{pct(jit,gen):>6s} | "
+                f"{d.get('invalid_tf_api',0):6d} | "
+                f"{d.get('unsupported_by_xla',0):6d} | "
+                f"{d.get('timeout',0):5d}\n")
+    f.write("=" * 115 + "\n")
+
+    # ---- Table 3: Oracle Outcomes ------------------------------------------
+    section(f, "TABLE 3 — ORACLE OUTCOMES")
+
+    col_w     = 14
+    oc_header = f"{'Optimization':40s}"
+    for ot in ORACLE_TYPES:
+        oc_header += f" | {ot:>{col_w}s}"
+    oc_header += f" | {'Total':>7s}"
+    oc_sep_len = len(oc_header) + 2
+    f.write(oc_header + "\n")
+    f.write("-" * oc_sep_len + "\n\n")
+
+    oc_grand = defaultdict(int)
+    for opt in all_opt_names:
+        counts    = agg_oracle[opt]
+        row_total = sum(counts.get(ot, 0) for ot in ORACLE_TYPES)
+        oc_grand["Total"] += row_total
+        f.write(f"{opt:40s}")
+        for ot in ORACLE_TYPES:
+            v = counts.get(ot, 0)
+            oc_grand[ot] += v
+            f.write(f" | {v:>{col_w}d}")
+        f.write(f" | {row_total:>7d}\n")
+
+    f.write("-" * oc_sep_len + "\n")
+    f.write(f"{'TOTAL':40s}")
+    for ot in ORACLE_TYPES:
+        f.write(f" | {oc_grand[ot]:>{col_w}d}")
+    f.write(f" | {oc_grand['Total']:>7d}\n")
+    f.write("=" * oc_sep_len + "\n")
+
+    # ---- Table 4: Bug Pipeline ---------------------------------------------
+    section(f, "TABLE 4 — BUG PIPELINE  (automated fields only)")
+
+    f.write("NOTE: Only 'RawFails' is tracked automatically.\n"
+            "      Filtered / Deduped / Triaged / Inspected / Likely Bugs /\n"
+            "      Reported / Accepted / Duplicates / False Positives\n"
+            "      all require manual post-processing review.\n\n")
+    f.write(f"{'Optimization':40s} | {'RawFails':>9s}\n")
+    f.write("-" * 55 + "\n\n")
+
+    bp_total = 0
+    for opt in all_opt_names:
+        counts = agg_oracle[opt]
+        raw    = sum(counts.get(bt, 0) for bt in BUG_ORACLE_TYPES)
+        bp_total += raw
+        f.write(f"{opt:40s} | {raw:9d}\n")
+
+    f.write("-" * 55 + "\n")
+    f.write(f"{'TOTAL':40s} | {bp_total:9d}\n")
+    f.write("=" * 55 + "\n")
+
+    # ---- Table 5: Thompson Sampling Stats ----------------------------------
+    section(f, "TABLE 5 — THOMPSON SAMPLING STATS")
+
+    f.write(f"{'Optimization':40s} | {'Tests':>5s} | "
+            f"{'Avg Alpha':>9s} | {'Avg Beta':>9s} | {'Avg Theta':>9s}\n")
+    f.write("-" * 85 + "\n\n")
+
+    for opt in all_opt_names:
+        td = agg_thompson.get(opt, {})
+        n  = td.get("n", 0)
+        if n == 0:
+            f.write(f"{opt:40s} |     0 |         - |         - |         -\n")
             continue
-        for i, v in enumerate(values):
-            totals[parts[0]][i] += v
+        avg_a     = td["sum_alpha"] / n
+        avg_b     = td["sum_beta"]  / n
+        avg_theta = avg_a / (avg_a + avg_b) if (avg_a + avg_b) > 0 else 0.0
+        f.write(f"{opt:40s} | {n:5d} | {avg_a:9.2f} | {avg_b:9.2f} | {avg_theta:9.4f}\n")
 
-if totals:
-    with open(combined_summary, 'w') as f:
-        sep = '=' * 95
-        dash = '-' * 95
-        f.write(f'{sep}\nWHITEFOX COMBINED RUN SUMMARY (all batches)\n{sep}\n\n')
-        if header_line:
-            f.write(header_line + '\n')
-        f.write(dash + '\n\n')
-        grand = defaultdict(int)
-        ncols = max(len(v) for v in totals.values())
-        for opt_name in sorted(totals):
-            vals = totals[opt_name]
-            f.write(f'{opt_name:40s}')
-            for i in range(ncols):
-                v = vals.get(i, 0)
-                grand[i] += v
-                f.write(f' | {v:7d}')
-            f.write('\n')
-        f.write(dash + '\n')
-        f.write(f'{\"TOTAL\":40s}')
-        for i in range(len(grand)):
-            f.write(f' | {grand[i]:7d}')
-        f.write('\n' + sep + '\n')
-    print(f'Combined run summary: {combined_summary}')
+    f.write("=" * 85 + "\n")
+
+    # Coverage placeholder — filled in after the llvm-profdata merge below.
+    section(f, "COVERAGE — UNION ACROSS ALL BATCHES")
+    f.write("(union result appended after llvm-profdata merge)\n")
+
+print(f"Combined run summary written: {combined_summary}")
+
+# ========================== COVERAGE UNION ==================================
+def find_llvm_tool(name):
+    if llvm_dir:
+        p = os.path.join(llvm_dir, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    found = shutil.which(name)
+    return found if found else name
+
+def find_tf_so_files():
+    env = os.environ.copy()
+    env["LLVM_PROFILE_FILE"] = "/dev/null"
+    r = subprocess.run(
+        [sys.executable, "-c", "import tensorflow as tf; print(tf.__file__)"],
+        capture_output=True, text=True, env=env,
+    )
+    if r.returncode != 0:
+        print(f"Warning: cannot locate TensorFlow: {r.stderr.strip()[:200]}")
+        return []
+    tf_dir = Path(r.stdout.strip()).parent
+    so_files = sorted(str(p) for p in tf_dir.rglob("*.so"))
+    print(f"Found {len(so_files)} TF .so files under {tf_dir}")
+    return so_files
+
+profdata_files = []
+for bd in batch_dirs:
+    pf = bd / "coverage" / "merged.profdata"
+    if pf.exists() and pf.stat().st_size > 0:
+        profdata_files.append(pf)
+    else:
+        print(f"  {bd.name}: no merged.profdata")
+
+cov_union_text = ""
+union_profdata = logging_root / "coverage_union.profdata"
+
+if profdata_files:
+    profdata_tool = find_llvm_tool("llvm-profdata")
+    cov_tool      = find_llvm_tool("llvm-cov")
+    tmp_pd        = union_profdata.with_suffix(".profdata.tmp")
+
+    print(f"Merging {len(profdata_files)} profdata files …")
+    merge_cmd = [
+        profdata_tool, "merge", "-sparse", "--failure-mode=all",
+        "-o", str(tmp_pd),
+    ] + [str(p) for p in profdata_files]
+
+    mr = subprocess.run(merge_cmd, capture_output=True, text=True)
+    if mr.returncode != 0:
+        print(f"llvm-profdata merge failed: {mr.stderr.strip()[:500]}")
+    else:
+        tmp_pd.replace(union_profdata)
+        print(f"Union profdata: {union_profdata}  "
+              f"({union_profdata.stat().st_size // 1024} KB)")
+
+        so_files = find_tf_so_files()
+        if so_files:
+            XLA_MARKERS = (
+                "/xla/", "xla/",
+                "/tensorflow/compiler/xla/", "tensorflow/compiler/xla/",
+                "/third_party/xla/", "third_party/xla/",
+            )
+            cov_cmd = [cov_tool, "report", so_files[0],
+                       f"-instr-profile={union_profdata}"]
+            for so in so_files[1:]:
+                cov_cmd += ["-object", so]
+
+            cr = subprocess.run(cov_cmd, capture_output=True, text=True)
+            if cr.returncode != 0:
+                print(f"llvm-cov report failed: {cr.stderr.strip()[:500]}")
+            else:
+                report_lines = cr.stdout.splitlines()
+                # Detect which column is "Lines"
+                lines_col = 7
+                for ln in report_lines:
+                    if "Filename" in ln and "Lines" in ln:
+                        for i, tok in enumerate(ln.split()):
+                            if tok.lower().rstrip(":").startswith("lines"):
+                                lines_col = i
+                                break
+                        break
+
+                xla_total = xla_missed = all_total = all_missed = 0
+                xla_files = total_files = 0
+                for line in report_lines:
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    fn   = parts[0]
+                    ints = [int(t.replace(",","")) for t in parts[1:]
+                            if t.replace(",","").isdigit()]
+                    if len(ints) < 2:
+                        continue
+                    total, missed = ints[-2], ints[-1]
+                    if fn.startswith("TOTAL"):
+                        all_total  = total
+                        all_missed = missed
+                        continue
+                    total_files += 1
+                    if any(m in fn for m in XLA_MARKERS):
+                        xla_files  += 1
+                        xla_total  += total
+                        xla_missed += missed
+
+                xla_hit = xla_total - xla_missed
+                all_hit = all_total - all_missed
+                xla_pct = (xla_hit / xla_total * 100) if xla_total else 0.0
+                cov_union_text = (
+                    f"Union of {len(profdata_files)} batch profdata files "
+                    f"({', '.join(d.name for d in batch_dirs)}):\n\n"
+                    f"  XLA lines hit:     {xla_hit:>10,}\n"
+                    f"  XLA lines total:   {xla_total:>10,}\n"
+                    f"  XLA coverage:      {xla_pct:>9.2f}%\n"
+                    f"  XLA source files:  {xla_files:>10,}\n"
+                    f"\n"
+                    f"  All TF lines hit:  {all_hit:>10,}\n"
+                    f"  All TF lines total:{all_total:>10,}\n"
+                    f"  All TF files:      {total_files:>10,}\n"
+                )
+                print(f"Union XLA coverage: {xla_hit:,} / {xla_total:,} lines ({xla_pct:.2f}%)")
+        else:
+            print("No TF .so files; skipping llvm-cov union report.")
 else:
-    print('No batch summaries found to aggregate.')
+    print("No profdata files found; skipping coverage union.")
 
-cov_lines = []
-for batch_dir in batch_dirs:
-    cov_file = batch_dir / 'coverage_report.log'
+# ---- Write coverage_combined.log ------------------------------------------
+sep60 = "=" * 60
+cov_sections = []
+if cov_union_text:
+    cov_sections.append(f"{sep60}\nCOVERAGE UNION (all batches merged)\n{sep60}\n\n"
+                        + cov_union_text + "\n")
+cov_sections.append(f"{sep60}\nPER-BATCH COVERAGE (for reference)\n{sep60}\n")
+for bd in batch_dirs:
+    cov_file = bd / "coverage_report.log"
     if not cov_file.exists():
+        cov_sections.append(f"--- {bd.name}: no coverage_report.log ---\n")
         continue
     text = cov_file.read_text().strip()
-    if 'UNAVAILABLE' in text and len(text) < 200:
-        cov_lines.append(f'--- {batch_dir.name}: coverage unavailable ---')
-    else:
-        cov_lines.append(f'--- {batch_dir.name} ---')
-        cov_lines.append(text)
-    cov_lines.append('')
+    label = f"--- {bd.name}: coverage unavailable ---" if (
+        "UNAVAILABLE" in text and len(text) < 200) else f"--- {bd.name} ---"
+    cov_sections.append(f"{label}\n{text}\n")
 
-if cov_lines:
-    sep = '=' * 60
-    with open(combined_coverage, 'w') as f:
-        f.write(f'{sep}\nCOMBINED COVERAGE REPORT (all batches)\n{sep}\n\n')
-        f.write('\n'.join(cov_lines) + '\n')
-    print(f'Combined coverage: {combined_coverage}')
-" 2>&1 || echo "[$(date)] Aggregation failed (non-fatal)"
+with open(combined_coverage, "w") as f:
+    f.write("\n".join(cov_sections) + "\n")
+print(f"Combined coverage written:  {combined_coverage}")
+
+# ---- Append coverage result to run_summary_combined.log -------------------
+with open(combined_summary, "a") as f:
+    if cov_union_text:
+        f.write(cov_union_text)
+        f.write("\n--- Per-batch coverage (for reference) ---\n")
+        for bd in batch_dirs:
+            cov_file = bd / "coverage_report.log"
+            if not cov_file.exists():
+                continue
+            text = cov_file.read_text().strip()
+            if "UNAVAILABLE" not in text or len(text) >= 200:
+                f.write(f"\n{bd.name}:\n{text}\n")
+    else:
+        f.write("Coverage union not available (no profdata or llvm-cov failed).\n")
+        f.write("See coverage_combined.log for per-batch results.\n")
+    f.write("\n" + "=" * 95 + "\n")
+
+PYEOF
+
+export PROJECT_ROOT SLURM_ARRAY_JOB_ID WHITEFOX_WHEEL_VERSION WHITEFOX_MODEL WHITEFOX_LLVM_DIR
+$RUN_PYTHON "$_AGG_SCRIPT" 2>&1 || echo "[$(date)] Aggregation failed (non-fatal)"
+rm -f "$_AGG_SCRIPT"
 
 exit $GEN_EXIT

@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import tomllib
 from domain.bandit import (
@@ -158,6 +158,25 @@ def _log_llm_call_post(
         opt_name, iteration, cgroup_gb_before, cgroup_gb_after, delta,
         out_token_counts[:5],
     )
+
+
+def _determine_oracle_outcome(result: Any, bug_reports: list) -> Optional[str]:
+    """Map an oracle result to one of the ORACLE_OUTCOME_TYPES strings.
+
+    Returns None for edge cases (allowed errors, test-code errors) that
+    the oracle silently filters — these are not counted in Table 4.
+    """
+    if bug_reports:
+        return bug_reports[0].oracle_type
+    if not result or not result.modes:
+        return None
+    modes = result.modes
+    if all(not result.get_mode(m).runtime_success for m in modes):
+        return "AllFail"
+    if not any(not result.get_mode(m).runtime_success for m in modes):
+        return "AllPass"
+    # Partial failures that were filtered (allowed errors / test-code errors).
+    return None
 
 
 def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
@@ -734,6 +753,10 @@ class StarCoderGenerator:
                         allowed_errors=self.config.oracles.allowed_errors,
                     )
 
+                    oracle_type = _determine_oracle_outcome(result, bug_reports)
+                    if oracle_type is not None:
+                        whitefox_logger.log_oracle_outcome(opt_name, oracle_type)
+
                     for bug_report in bug_reports:
                         whitefox_logger.log_bug_report(bug_report)
                         self.logger.warning(
@@ -933,7 +956,16 @@ class StarCoderGenerator:
             shutil.rmtree(output_root)
         output_root.mkdir(parents=True, exist_ok=True)
 
-        whitefox_logger = WhiteFoxLogger(self.logging_dir, self.logger)
+        whitefox_logger = WhiteFoxLogger(
+            self.logging_dir,
+            self.logger,
+            tf_version=os.environ.get("WHITEFOX_WHEEL_VERSION", ""),
+            model_name=(
+                self.config.model.name
+                if self.config and self.config.model
+                else os.environ.get("WHITEFOX_MODEL", "")
+            ),
+        )
         whitefox_logger.clear_old_logs()
 
         opt_states_to_process = [
