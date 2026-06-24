@@ -22,6 +22,8 @@ set -euo pipefail
 : "${HOME:=/tmp}"
 export HOME USER
 
+export PATH="$HOME/.local/bin:$PATH"
+
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 _WHEEL_DIR="/vol/bitbucket/mtr25/tfbuild/wheels"
 
