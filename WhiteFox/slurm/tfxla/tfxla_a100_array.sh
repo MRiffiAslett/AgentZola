@@ -321,6 +321,7 @@ case "$WHITEFOX_WHEEL_VERSION" in
         echo "[$(date)] [$BATCH_LABEL] WARN: flock failed/timeout on $(hostname); proceeding without lock"
         : > "$WHITEFOX_LOGGING_DIR/.flock_skipped" 2>/dev/null || true
       fi
+      poetry lock --check 2>/dev/null || poetry lock
       poetry install --no-interaction
       echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
       poetry run pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
