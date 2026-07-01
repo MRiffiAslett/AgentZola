@@ -1,4 +1,4 @@
-# AgentZola
+# WhiteFox Reproduction Study
 
 ## Paths on cluster
 
