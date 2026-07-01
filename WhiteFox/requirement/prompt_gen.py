@@ -116,19 +116,12 @@ def generate_requirement_prompts(
     template_path: str,
     outdir: str,
     use_mini: bool = False,
-    fallback_dir: str = None,
     exemplar_description_path: str = None,
-) -> tuple[Dict[str, str], set]:
+) -> Dict[str, str]:
     outdir_path = Path(outdir)
     outdir_path.mkdir(exist_ok=True, parents=True)
 
     template = Path(template_path).read_text()
-
-    if fallback_dir is None:
-        optpath_parent = Path(optpath).parent
-        fallback_dir = str(optpath_parent / "whitefox_original" / "req")
-
-    fallback_path = Path(fallback_dir) if fallback_dir else None
 
     if exemplar_description_path is None:
         exemplar_description_path = str(
@@ -149,24 +142,16 @@ def generate_requirement_prompts(
         ) from e
 
     prompts = {}
-    used_fallback = []
 
     for opt in optim.get_opts():
-        try:
-            target_block = optim.get_prompt(template, opt, use_mini=use_mini)
+        target_block = optim.get_prompt(template, opt, use_mini=use_mini)
 
-            stacked_prompt = exemplar_block + "\n\n" + target_block
+        stacked_prompt = exemplar_block + "\n\n" + target_block
 
-            prompts[opt] = stacked_prompt
+        prompts[opt] = stacked_prompt
 
-            output_file = outdir_path / f"{opt}.txt"
-            output_file.write_text(stacked_prompt)
-            print(f"Generated prompt for {opt} -> {output_file}")
-        except FileNotFoundError:
-            prompts[opt] = "[FALLBACK - No prompt needed]"
-            print(
-                f"[FALLBACK] {opt} -> Will use pre-existing description (skip prompt & GPT)"
-            )
-            used_fallback.append(opt)
+        output_file = outdir_path / f"{opt}.txt"
+        output_file.write_text(stacked_prompt)
+        print(f"Generated prompt for {opt} -> {output_file}")
 
-    return prompts, set(used_fallback)
+    return prompts

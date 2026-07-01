@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict
 
 
 class RequirementGenerator(ABC):
@@ -20,6 +20,5 @@ class RequirementGenerator(ABC):
         template_path: str,
         outdir: str,
         use_mini: bool = False,
-        fallback_dir: str = None,
-    ) -> Tuple[Dict[str, str], set]:
+    ) -> Dict[str, str]:
         ...
