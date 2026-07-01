@@ -40,20 +40,7 @@ except Exception:
 
 
 def _release_freed_memory() -> None:
-    """Return the parent's freed heap to the OS at each iteration boundary.
-
-    The parent generator deserialises every worker's per-test output into
-    transient Python objects each iteration, then drops them.  With
-    PYTHONMALLOC=malloc set (see tfxla_a100_array.sh) glibc keeps those
-    freed blocks on its per-arena free-lists and does not return them, so
-    the parent's anonymous RSS ratchets monotonically upward until the
-    cgroup OOM-kills it — job 244274_0 died with a single python process
-    at 187 GB and memory.stat anon=189 GB / file=181 MB / shmem=180 MB,
-    i.e. pure freed-but-retained arenas (inactive_anon=141 GB), not tmpfs
-    or page cache.  malloc_trim(0) releases the freed top-of-arena pages
-    back to the kernel; pymalloc has no equivalent, which is why glibc
-    malloc is the chosen allocator.  No-op on a non-glibc libc.
-    """
+    """Return freed glibc arenas to the OS via malloc_trim to prevent monotonic RSS growth."""
     import gc
 
     gc.collect()
@@ -208,27 +195,9 @@ def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
 
 def _pool_worker_init() -> None:
-    """Initialise ProcessPoolExecutor worker processes.
-
-    We intentionally do NOT set RLIMIT_AS on the workers here.
-
-    The original rationale was to bound TF/XLA memory in workers, but pool
-    workers are forked from the parent process and therefore inherit its full
-    virtual address space (VSZ), which includes vLLM's model weights (~20-30 GB).
-    Setting RLIMIT_AS = 6*3 = 18 GB after the fork means the inherited VSZ
-    already exceeds the limit, so every subsequent memory allocation in the
-    worker — including bytearray.extend() in _BoundedTail drain threads — raises
-    MemoryError immediately.  This caused the job to hang indefinitely at
-    AllReduceCombiner it11: all four drain threads died with MemoryError, the
-    subprocess pipes filled, proc.wait() blocked, and as_completed() in the
-    parent never returned (job 246803_0, ~26 h hung at mem=93G).
-
-    Protection against runaway memory is already applied at the right level:
-      - _child_preexec sets RLIMIT_AS before exec()ing the grandchild
-      - the wrapper script tightens it further after exec()
-      - the in-wrapper RSS watchdog kills grandchildren that grow beyond the limit
-    Pool workers themselves just coordinate Popen + pipe reads and do not run TF.
-    """
+    """No-op. RLIMIT_AS is not set here: pool workers fork from the parent and inherit
+    vLLM's full VSZ, so any address-space limit fires immediately. Memory limits are
+    applied per test subprocess via _child_preexec and the in-wrapper RSS watchdog."""
     pass
 
 
@@ -243,23 +212,8 @@ _PARSER = {
     "tflite": "generation.code_processing.tflite.TensorFlowLiteCodeParser",
 }
 
-# ---------------------------------------------------------------------------
-# Model registry
-#
-# Maps HuggingFace model IDs to:
-#   vllm_kwargs   – kwargs that override the TOML [model] section at init
-#                   time (dtype, max_model_len, etc.).  Only the keys listed
-#                   here are overridden; everything else comes from the TOML.
-#   extra_stop    – additional stop tokens merged with [stopping] eof_strings.
-#   display_name  – short human-readable label used in SLURM logs and the
-#                   run summary header.
-#
-# Switching models end-to-end:
-#   1. Set WHITEFOX_MODEL in the SLURM run-config block.
-#   2. The config-patch script updates [model] name in the TOML.
-#   3. _get_model_registry_entry() picks up the matching entry here and
-#      applies the right vLLM params without any other TOML edits.
-# ---------------------------------------------------------------------------
+# Model registry: maps HF model IDs → vLLM init overrides, extra stop tokens,
+# and a display name. Switch models by setting WHITEFOX_MODEL in the SLURM script.
 _MODEL_REGISTRY: Dict[str, Dict] = {
     "bigcode/starcoder": {
         "vllm_kwargs": {},
@@ -267,15 +221,11 @@ _MODEL_REGISTRY: Dict[str, Dict] = {
         "display_name": "StarCoder (7B)",
     },
     "Qwen/Qwen2.5-Coder-14B": {
-        # bfloat16 is the native dtype for Qwen2.5; float16 degrades quality.
-        # 32 768 context fits the longest XLA-focused prompts with headroom.
-        # Slightly higher gpu_memory_utilization is safe on A100-80 GB.
         "vllm_kwargs": {
             "dtype": "bfloat16",
             "max_model_len": 32768,
             "gpu_memory_utilization": 0.90,
         },
-        # FIM tokens must be stops so the model doesn't loop after code ends.
         "extra_stop": [
             "<|fim_pad|>",
             "<|fim_prefix|>",
@@ -291,7 +241,6 @@ _MODEL_REGISTRY: Dict[str, Dict] = {
             "max_model_len": 32768,
             "gpu_memory_utilization": 0.90,
         },
-        # Chat-turn boundaries must stop generation in instruct mode.
         "extra_stop": ["<|im_end|>", "<|im_start|>"],
         "display_name": "Qwen2.5-Coder-14B-Instruct",
     },
@@ -303,13 +252,7 @@ _REGISTRY_VLLM_SCALAR_KEYS = frozenset(
 
 
 def _get_model_registry_entry(model_name: str) -> Dict:
-    """Return the registry entry for *model_name*.
-
-    Looks up by exact match first, then by case-insensitive substring so that
-    a short alias like ``"starcoder"`` still resolves.  Returns a safe default
-    entry (no overrides, no extra stops) for unknown models so callers never
-    need to guard against None.
-    """
+    """Return the registry entry for model_name; falls back to a no-op default for unknown models."""
     if model_name in _MODEL_REGISTRY:
         return _MODEL_REGISTRY[model_name]
     lname = model_name.lower()
@@ -410,14 +353,7 @@ class StarCoderGenerator:
         self.logger = logging.getLogger(__name__)
 
     def _initialize_llm(self) -> LLM:
-        """Initialise the vLLM engine.
-
-        Parameter priority (highest → lowest):
-          1. Model registry  — model-specific overrides (e.g. bfloat16 for Qwen)
-          2. TOML [model]    — base config written for StarCoder
-        This means switching WHITEFOX_MODEL is sufficient; the registry
-        automatically applies the correct dtype/context/memory settings.
-        """
+        """Initialise vLLM; registry overrides take precedence over TOML model config."""
         registry = _get_model_registry_entry(self.config.model.name)
         reg_kwargs = registry["vllm_kwargs"]
 
@@ -427,8 +363,6 @@ class StarCoderGenerator:
             or os.environ.get("HF_HOME", "~/.cache/huggingface")
         )
 
-        # Build the final vLLM kwargs: TOML provides the baseline, registry
-        # overrides model-specific scalar params (dtype, context window, etc.).
         vllm_kwargs: Dict[str, Any] = {
             "model": self.config.model.name,
             "dtype": reg_kwargs.get("dtype", self.config.model.dtype),
@@ -459,7 +393,6 @@ class StarCoderGenerator:
     def _create_sampling_params(self, num_samples: int) -> SamplingParams:
         """Build SamplingParams, merging TOML stop tokens with model-specific ones."""
         registry = _get_model_registry_entry(self.config.model.name)
-        # Start from the TOML list so the operator can always add stops there.
         stop_tokens: List[str] = list(self.config.stopping.eof_strings)
         for tok in registry.get("extra_stop", []):
             if tok not in stop_tokens:
@@ -915,12 +848,7 @@ class StarCoderGenerator:
                 example_tests,
             )
 
-            # Release this iteration's transient deserialised payloads back
-            # to the OS before the next iteration allocates more.  Without
-            # this the parent's glibc arenas grow monotonically across
-            # iterations and OOM the cgroup (see _release_freed_memory;
-            # job 244274_0 OOM).  In a try/finally so a late raise in the
-            # bandit/logging calls above can't skip the reclaim.
+            # Release iteration data before the next allocation cycle.
             try:
                 del execution_results
             except NameError:
@@ -928,10 +856,7 @@ class StarCoderGenerator:
             finally:
                 _release_freed_memory()
 
-            # Checkpoint the run summary every 10 iterations so a mid-opt
-            # SIGKILL (cgroup OOM) loses at most 10 iterations of stats
-            # instead of the full optimization.  Cost: one ~20 KB file write
-            # every 10 iterations — negligible vs. I/O already happening.
+            # Checkpoint periodically so a mid-opt SIGKILL loses minimal stats.
             if (iteration + 1) % 10 == 0:
                 with self._state_lock:
                     whitefox_logger.generate_run_summary(
@@ -1135,14 +1060,7 @@ class StarCoderGenerator:
                         opt_state.spec.internal_name
                     )
                     whitefox_logger.flush_and_clear()
-                    # Between-optimization deep clean: release all freed arenas
-                    # back to the OS before forking workers for the next opt.
-                    # The per-iteration _release_freed_memory() handles intra-opt
-                    # drift, but by the time an opt with 100 iterations finishes
-                    # (e.g. HloConstantFolding at it82 in batch1 job 247525), the
-                    # parent's glibc arenas have grown substantially.  This call
-                    # flushes that accumulated slack between opts so the cgroup
-                    # pressure resets rather than compounding across the full run.
+                    # Deep-clean between opts: flush accumulated glibc arenas before forking next workers.
                     _log_parent_rss(
                         self.logger,
                         f"after {opt_state.spec.internal_name}",
@@ -1152,12 +1070,7 @@ class StarCoderGenerator:
                         self.logger,
                         f"after malloc_trim post-{opt_state.spec.internal_name}",
                     )
-                    # Purge XLA dump dir between optimizations: TF subprocesses
-                    # write HLO files there and they accumulate unboundedly across
-                    # opts.  On nodes where /tmp is a tmpfs the dump files count
-                    # toward the cgroup memory limit; moving the dump to /data
-                    # avoids this, but purging between opts keeps the dir bounded
-                    # regardless of backing filesystem.
+                    # Purge XLA dump dir to prevent unbounded HLO file accumulation.
                     _xla_flags = os.environ.get("XLA_FLAGS", "")
                     _m = None
                     try:
