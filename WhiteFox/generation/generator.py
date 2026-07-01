@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import tomllib
 from domain.bandit import (
@@ -243,6 +243,81 @@ _PARSER = {
     "tflite": "generation.code_processing.tflite.TensorFlowLiteCodeParser",
 }
 
+# ---------------------------------------------------------------------------
+# Model registry
+#
+# Maps HuggingFace model IDs to:
+#   vllm_kwargs   – kwargs that override the TOML [model] section at init
+#                   time (dtype, max_model_len, etc.).  Only the keys listed
+#                   here are overridden; everything else comes from the TOML.
+#   extra_stop    – additional stop tokens merged with [stopping] eof_strings.
+#   display_name  – short human-readable label used in SLURM logs and the
+#                   run summary header.
+#
+# Switching models end-to-end:
+#   1. Set WHITEFOX_MODEL in the SLURM run-config block.
+#   2. The config-patch script updates [model] name in the TOML.
+#   3. _get_model_registry_entry() picks up the matching entry here and
+#      applies the right vLLM params without any other TOML edits.
+# ---------------------------------------------------------------------------
+_MODEL_REGISTRY: Dict[str, Dict] = {
+    "bigcode/starcoder": {
+        "vllm_kwargs": {},
+        "extra_stop": [],
+        "display_name": "StarCoder (7B)",
+    },
+    "Qwen/Qwen2.5-Coder-14B": {
+        # bfloat16 is the native dtype for Qwen2.5; float16 degrades quality.
+        # 32 768 context fits the longest XLA-focused prompts with headroom.
+        # Slightly higher gpu_memory_utilization is safe on A100-80 GB.
+        "vllm_kwargs": {
+            "dtype": "bfloat16",
+            "max_model_len": 32768,
+            "gpu_memory_utilization": 0.90,
+        },
+        # FIM tokens must be stops so the model doesn't loop after code ends.
+        "extra_stop": [
+            "<|fim_pad|>",
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+            "<|repo_name|>",
+        ],
+        "display_name": "Qwen2.5-Coder-14B",
+    },
+    "Qwen/Qwen2.5-Coder-14B-Instruct": {
+        "vllm_kwargs": {
+            "dtype": "bfloat16",
+            "max_model_len": 32768,
+            "gpu_memory_utilization": 0.90,
+        },
+        # Chat-turn boundaries must stop generation in instruct mode.
+        "extra_stop": ["<|im_end|>", "<|im_start|>"],
+        "display_name": "Qwen2.5-Coder-14B-Instruct",
+    },
+}
+
+_REGISTRY_VLLM_SCALAR_KEYS = frozenset(
+    {"dtype", "max_model_len", "gpu_memory_utilization", "swap_space"}
+)
+
+
+def _get_model_registry_entry(model_name: str) -> Dict:
+    """Return the registry entry for *model_name*.
+
+    Looks up by exact match first, then by case-insensitive substring so that
+    a short alias like ``"starcoder"`` still resolves.  Returns a safe default
+    entry (no overrides, no extra stops) for unknown models so callers never
+    need to guard against None.
+    """
+    if model_name in _MODEL_REGISTRY:
+        return _MODEL_REGISTRY[model_name]
+    lname = model_name.lower()
+    for key, entry in _MODEL_REGISTRY.items():
+        if lname in key.lower() or key.lower() in lname:
+            return entry
+    return {"vllm_kwargs": {}, "extra_stop": [], "display_name": model_name}
+
 
 def _import_class(dotted: str):
     from importlib import import_module
@@ -335,28 +410,67 @@ class StarCoderGenerator:
         self.logger = logging.getLogger(__name__)
 
     def _initialize_llm(self) -> LLM:
+        """Initialise the vLLM engine.
+
+        Parameter priority (highest → lowest):
+          1. Model registry  — model-specific overrides (e.g. bfloat16 for Qwen)
+          2. TOML [model]    — base config written for StarCoder
+        This means switching WHITEFOX_MODEL is sufficient; the registry
+        automatically applies the correct dtype/context/memory settings.
+        """
+        registry = _get_model_registry_entry(self.config.model.name)
+        reg_kwargs = registry["vllm_kwargs"]
+
         hf_cache_dir = (
             self.config.paths.hf_cache
             or os.environ.get("HF_CACHE")
             or os.environ.get("HF_HOME", "~/.cache/huggingface")
         )
 
-        return LLM(
-            model=self.config.model.name,
-            dtype=self.config.model.dtype,
-            download_dir=hf_cache_dir,
-            max_model_len=self.config.model.max_model_len,
-            gpu_memory_utilization=self.config.model.gpu_memory_utilization,
-            swap_space=self.config.model.swap_space,
+        # Build the final vLLM kwargs: TOML provides the baseline, registry
+        # overrides model-specific scalar params (dtype, context window, etc.).
+        vllm_kwargs: Dict[str, Any] = {
+            "model": self.config.model.name,
+            "dtype": reg_kwargs.get("dtype", self.config.model.dtype),
+            "download_dir": hf_cache_dir,
+            "max_model_len": reg_kwargs.get("max_model_len", self.config.model.max_model_len),
+            "gpu_memory_utilization": reg_kwargs.get(
+                "gpu_memory_utilization", self.config.model.gpu_memory_utilization
+            ),
+            "swap_space": reg_kwargs.get("swap_space", self.config.model.swap_space),
+        }
+        # Forward any registry-only kwargs (e.g. trust_remote_code for future models).
+        for k, v in reg_kwargs.items():
+            if k not in _REGISTRY_VLLM_SCALAR_KEYS:
+                vllm_kwargs[k] = v
+
+        self.logger.info(
+            "LLM init: model=%s (%s)  dtype=%s  max_model_len=%d  gpu_mem=%.2f  swap=%dGB",
+            self.config.model.name,
+            registry.get("display_name", self.config.model.name),
+            vllm_kwargs["dtype"],
+            vllm_kwargs["max_model_len"],
+            vllm_kwargs["gpu_memory_utilization"],
+            vllm_kwargs["swap_space"],
         )
 
+        return LLM(**vllm_kwargs)
+
     def _create_sampling_params(self, num_samples: int) -> SamplingParams:
+        """Build SamplingParams, merging TOML stop tokens with model-specific ones."""
+        registry = _get_model_registry_entry(self.config.model.name)
+        # Start from the TOML list so the operator can always add stops there.
+        stop_tokens: List[str] = list(self.config.stopping.eof_strings)
+        for tok in registry.get("extra_stop", []):
+            if tok not in stop_tokens:
+                stop_tokens.append(tok)
+
         return SamplingParams(
             n=num_samples,
             temperature=self.config.generation.temperature,
             top_p=self.config.generation.top_p,
             max_tokens=self.config.generation.max_tokens,
-            stop=self.config.stopping.eof_strings,
+            stop=stop_tokens,
             seed=random.randint(0, 10000),
         )
 
