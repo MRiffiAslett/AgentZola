@@ -18,10 +18,20 @@ N_TASKS=3
 set -euo pipefail
 
 # ===========================================================================
-# RUN CONFIGURATION  
-# MODEL:   starcoder |
-# WHEEL:   20250806  | 20230507
-# PROMPTS: 20250806  | 20230507
+# RUN CONFIGURATION — edit the three variables below to switch experiments.
+#
+#   MODEL:   bigcode/starcoder              (7 B,  float16,  8 192-token ctx)
+#            Qwen/Qwen2.5-Coder-14B         (14 B, bfloat16, 32 768-token ctx)
+#            Qwen/Qwen2.5-Coder-14B-Instruct(14 B, bfloat16, 32 768-token ctx)
+#
+#   WHEEL:   20250806 → tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806
+#            20230507 → tensorflow_cpu-2.14.0+selfbuilt.20230507
+#
+#   PROMPTS: 20250806 | 20230507
+#
+# Model-specific vLLM params (dtype, max_model_len, stop tokens, …) are
+# resolved automatically from the _MODEL_REGISTRY in generation/generator.py —
+# no other file needs editing when you switch MODEL here.
 # ===========================================================================
 WHITEFOX_MODEL="bigcode/starcoder"
 WHITEFOX_WHEEL_VERSION="20250806"
@@ -41,6 +51,18 @@ case "$WHITEFOX_PROMPTS_VERSION" in
   20230507) WHITEFOX_PROMPTS_DIR="xilo_xla/artifacts/generation-prompts-20230507" ;;
   *) echo "ERROR: unknown WHITEFOX_PROMPTS_VERSION=$WHITEFOX_PROMPTS_VERSION" >&2; exit 1 ;;
 esac
+
+# Human-readable model label used in log headers and the run summary.
+# vLLM params (dtype, max_model_len, extra stop tokens, …) are applied
+# automatically by _get_model_registry_entry() in generation/generator.py
+# — no other changes are needed here when you switch WHITEFOX_MODEL above.
+case "$WHITEFOX_MODEL" in
+  bigcode/starcoder)                  WHITEFOX_MODEL_DISPLAY="StarCoder (7B)"              ;;
+  Qwen/Qwen2.5-Coder-14B)            WHITEFOX_MODEL_DISPLAY="Qwen2.5-Coder-14B"           ;;
+  Qwen/Qwen2.5-Coder-14B-Instruct)  WHITEFOX_MODEL_DISPLAY="Qwen2.5-Coder-14B-Instruct"  ;;
+  *)                                  WHITEFOX_MODEL_DISPLAY="$WHITEFOX_MODEL"             ;;
+esac
+export WHITEFOX_MODEL_DISPLAY
 
 # Make the script robust to minimal Slurm env propagation.  Submitting
 # with `--export=WHITEFOX_OPT_OVERRIDE=...` (a workaround for the
@@ -251,7 +273,7 @@ PATCH_PY
 
 CONFIG_PATH="$TMP_CONFIG"
 
-echo "[$(date)] Model:         $WHITEFOX_MODEL"
+echo "[$(date)] Model:         $WHITEFOX_MODEL_DISPLAY  [$WHITEFOX_MODEL]"
 echo "[$(date)] Wheel:         $WHITEFOX_TF_WHEEL"
 echo "[$(date)] Prompts dir:   $WHITEFOX_PROMPTS_DIR"
 echo "[$(date)] Base config:   $BASE_CONFIG_PATH"
@@ -514,11 +536,12 @@ from datetime import datetime
 from pathlib import Path
 
 # ---- Configuration injected via environment variables ---------------------
-project_root = os.environ.get("PROJECT_ROOT", "")
-job_id       = os.environ.get("SLURM_ARRAY_JOB_ID", "")
-tf_version   = os.environ.get("WHITEFOX_WHEEL_VERSION", "")
-model_name   = os.environ.get("WHITEFOX_MODEL", "")
-llvm_dir     = os.environ.get("WHITEFOX_LLVM_DIR", "")
+project_root   = os.environ.get("PROJECT_ROOT", "")
+job_id         = os.environ.get("SLURM_ARRAY_JOB_ID", "")
+tf_version     = os.environ.get("WHITEFOX_WHEEL_VERSION", "")
+model_name     = os.environ.get("WHITEFOX_MODEL", "")
+model_display  = os.environ.get("WHITEFOX_MODEL_DISPLAY", model_name)
+llvm_dir       = os.environ.get("WHITEFOX_LLVM_DIR", "")
 
 logging_root      = Path(project_root) / "logging"
 combined_summary  = logging_root / "run_summary_combined.log"
@@ -783,7 +806,10 @@ with open(combined_summary, "w") as f:
         tf_label = "20230507  (tensorflow_cpu-2.14.0+selfbuilt.20230507, cp310)"
 
     f.write(f"TF Version:  {tf_label}\n")
-    f.write(f"Model:       {model_name or 'unknown'}\n")
+    model_label = model_display if model_display else (model_name or "unknown")
+    if model_name and model_name != model_display:
+        model_label = f"{model_display}  [{model_name}]"
+    f.write(f"Model:       {model_label}\n")
     f.write(f"Batches:     {len(batch_dirs)}  ({', '.join(d.name for d in batch_dirs)})\n")
     f.write(f"Aggregated:  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
@@ -953,7 +979,7 @@ print(f"Combined run summary written: {combined_summary}")
 
 PYEOF
 
-export PROJECT_ROOT SLURM_ARRAY_JOB_ID WHITEFOX_WHEEL_VERSION WHITEFOX_MODEL WHITEFOX_LLVM_DIR
+export PROJECT_ROOT SLURM_ARRAY_JOB_ID WHITEFOX_WHEEL_VERSION WHITEFOX_MODEL WHITEFOX_MODEL_DISPLAY WHITEFOX_LLVM_DIR
 $RUN_PYTHON "$_AGG_SCRIPT" 2>&1 || echo "[$(date)] Aggregation failed (non-fatal)"
 rm -f "$_AGG_SCRIPT"
 
