@@ -98,13 +98,7 @@ class GPTModel:
         output_dir: Path,
         n_samples: int = 1,
         skip_existing: bool = True,
-        fallback_optimizations: set = None,
-        fallback_dir: str = None,
     ) -> Dict[str, Dict]:
-        if fallback_optimizations is None:
-            fallback_optimizations = set()
-
-        fallback_path = Path(fallback_dir) if fallback_dir else None
         output_dir.mkdir(exist_ok=True, parents=True)
         results = {}
 
@@ -117,23 +111,6 @@ class GPTModel:
             output_file = output_dir / f"{opt_name}.txt"
 
             if skip_existing and output_file.exists():
-                continue
-
-            if opt_name in fallback_optimizations:
-                fallback_file = fallback_path / f"{opt_name}.txt"
-                description = fallback_file.read_text().strip()
-
-                with open(output_file, "w") as f:
-                    f.write(description)
-
-                results[opt_name] = {
-                    "status": "success",
-                    "descriptions": [description],
-                    "metadata": {
-                        "source": "fallback",
-                        "fallback_file": str(fallback_file),
-                    },
-                }
                 continue
 
             descriptions, metadata = self.generate_requirement(

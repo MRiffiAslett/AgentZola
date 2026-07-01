@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict
 
 from requirement.base.base import RequirementGenerator
 
@@ -21,8 +21,7 @@ class InductorRequirementGenerator(RequirementGenerator):
         template_path: str,
         outdir: str,
         use_mini: bool = False,
-        fallback_dir: str = None,
-    ) -> Tuple[Dict[str, str], set]:
+    ) -> Dict[str, str]:
         raise NotImplementedError(
             "PyTorch Inductor requirement generation is not yet implemented."
         )

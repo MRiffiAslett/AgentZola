@@ -24,11 +24,10 @@ def main():
     parser.add_argument(
         "--source-version",
         type=str,
-        default=None,
+        required=True,
         help="Source code version tag (e.g. 20230507 or 20250806). "
              "Selects optimization_specification_{sut}-{version}.json and "
-             "writes to requirement-prompts-{version}/ and generation-prompts-{version}/. "
-             "Omit to use the default (unversioned) spec and output dirs.",
+             "writes to requirement-prompts-{version}/ and generation-prompts-{version}/.",
     )
     args = parser.parse_args()
 
@@ -48,18 +47,15 @@ def main():
     gpt_config = config.get("gpt", {})
     use_mini = gpt_config.get("use_mini", False)
 
-    spec_suffix = f"-{source_version}" if source_version else ""
-    dir_suffix = f"-{source_version}" if source_version else ""
-
     opt_spec_path = (
-        base_dir / sut_dir_name / "artifacts" / f"optimization_specification_{sut}{spec_suffix}.json"
+        base_dir / sut_dir_name / "artifacts" / f"optimization_specification_{sut}-{source_version}.json"
     )
     template_path = base_dir / sut_dir_name / "artifacts" / "prompt_template.txt"
     exemplar_desc_path = base_dir / sut_dir_name / "artifacts" / "exemplar_description.txt"
-    prompts_dir = base_dir / sut_dir_name / "artifacts" / f"requirement-prompts{dir_suffix}"
-    gpt_output_dir = base_dir / sut_dir_name / "artifacts" / f"generation-prompts{dir_suffix}"
+    prompts_dir = base_dir / sut_dir_name / "artifacts" / f"requirement-prompts-{source_version}"
+    gpt_output_dir = base_dir / sut_dir_name / "artifacts" / f"generation-prompts-{source_version}"
 
-    prompts, fallback_optimizations = generate_requirement_prompts(
+    prompts = generate_requirement_prompts(
         optpath=str(opt_spec_path),
         template_path=str(template_path),
         outdir=str(prompts_dir),
@@ -92,17 +88,11 @@ def main():
             system_message=system_message,
         )
 
-        fallback_dir = (
-            base_dir / sut_dir_name / "artifacts" / "whitefox_original" / "req"
-        )
-
         results = gpt.batch_generate_requirements(
             prompts=prompts,
             output_dir=gpt_output_dir,
             n_samples=n_samples,
             skip_existing=skip_existing,
-            fallback_optimizations=fallback_optimizations,
-            fallback_dir=str(fallback_dir),
         )
 
     except Exception as e:

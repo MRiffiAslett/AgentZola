@@ -82,13 +82,7 @@ class GPTClient:
         ),
         n_samples: int = 1,
         skip_existing: bool = True,
-        fallback_optimizations: set = None,
-        fallback_dir: str = None,
     ) -> Dict[str, Dict]:
-        if fallback_optimizations is None:
-            fallback_optimizations = set()
-
-        fallback_path = Path(fallback_dir) if fallback_dir else None
         output_dir.mkdir(exist_ok=True, parents=True)
         results = {}
 
@@ -104,25 +98,6 @@ class GPTClient:
                 continue
 
             instruction = instruction_template.format(opt_name=opt_name)
-
-            if opt_name in fallback_optimizations:
-                fallback_file = fallback_path / f"{opt_name}.txt"
-                description = fallback_file.read_text()
-
-                full_prompt = instruction + description
-
-                with open(output_file, "w") as f:
-                    f.write(full_prompt)
-
-                results[opt_name] = {
-                    "status": "success",
-                    "descriptions": [full_prompt],
-                    "metadata": {
-                        "source": "fallback",
-                        "fallback_file": str(fallback_file),
-                    },
-                }
-                continue
 
             descriptions, metadata = self.generate_requirement(
                 prompt=prompt, n_samples=n_samples

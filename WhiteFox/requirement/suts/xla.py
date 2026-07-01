@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict
 
 from requirement.base.base import RequirementGenerator
 from requirement.prompt_gen import generate_requirement_prompts
@@ -23,12 +23,10 @@ class XLARequirementGenerator(RequirementGenerator):
         template_path: str,
         outdir: str,
         use_mini: bool = False,
-        fallback_dir: str = None,
-    ) -> Tuple[Dict[str, str], set]:
+    ) -> Dict[str, str]:
         return generate_requirement_prompts(
             optpath=opt_spec_path,
             template_path=template_path,
             outdir=outdir,
             use_mini=use_mini,
-            fallback_dir=fallback_dir,
         )
