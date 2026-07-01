@@ -1,14 +1,5 @@
 # AgentZola
 
-## Cluster
-
-Imperial College DoC cluster. Login node: `cloud-vm-40-244.doc.ic.ac.uk`.  
-SSH key auth — key must be registered both on the cluster and on GitHub.
-
-```bash
-ssh <user>@cloud-vm-40-244.doc.ic.ac.uk
-```
-
 ## Paths on cluster
 
 ```
