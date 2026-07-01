@@ -15,26 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class _BoundedTail:
-    """Drain a subprocess pipe in a background thread and retain only the
-    last `cap` bytes.
-
-    Background:
-        subprocess.run(capture_output=True) reads each pipe fully into a
-        Python str/bytes object with no upper bound.  For tests where the
-        wrapper emits megabytes of fd-2 output (TF FATAL stack traces,
-        --xla_dump_hlo_pass_re=.* HLO dumps under collective opts, or a
-        --xla_dump_to write that hit stderr) that buffer can reach
-        gigabytes inside a single ProcessPoolExecutor worker — and 4
-        workers holding several GB each, then pickling the contents back
-        to the parent at iter boundary, pushed the parent past the cgroup
-        limit and OOM-killed job 244274_0 mid-AllReduceCombiner.
-
-        This reader keeps only the *tail* of each pipe in RAM, dropping
-        older bytes on the fly, so worker RSS attributable to subprocess
-        captures stays at most `cap` per stream regardless of how much
-        the wrapper writes.  We keep the tail rather than the head because
-        the parser looks for WHITEFOX_RESULT_START/END markers and the
-        JSON payload, which the wrapper prints last.
+    """Drain a subprocess pipe in a background thread, retaining only the last `cap` bytes.
+    Keeps the tail (not the head) since WHITEFOX_RESULT markers appear at the end.
     """
 
     def __init__(self, stream, cap: int = 1024 * 1024) -> None:
@@ -159,11 +141,7 @@ class TestHarness(ABC):
                 optimization_name, test_file.name, timeout,
             )
 
-            # Use Popen + bounded-tail readers instead of subprocess.run
-            # so worker RSS attributable to captured stdout/stderr is
-            # bounded by _PIPE_CAP per stream regardless of how much the
-            # wrapper writes.  See the _BoundedTail docstring for the
-            # full rationale (job 244274_0 OOM).
+            # Bounded readers cap per-worker RSS regardless of wrapper output size.
             _PIPE_CAP = int(
                 os.environ.get("WHITEFOX_PIPE_CAP_BYTES", str(1024 * 1024))
             )
@@ -181,8 +159,6 @@ class TestHarness(ABC):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-                # Surface this through the same path as the original code
-                # by re-raising — the outer except handles it identically.
                 raise
 
             stdout_text = out_reader.text()
@@ -253,19 +229,7 @@ class TestHarness(ABC):
                     for line in process.stderr.strip().splitlines()[-3:]:
                         logger.warning("  stderr: %s", line)
 
-            # Always cap log_text.  Previously the "log_text_from_json
-            # truthy" branch fell through to `result.log_text = output`
-            # whenever the wrapper's StringIO was empty (i.e. the test
-            # produced no Python-level stdout/stderr).  After f7a6d57 that
-            # is the *common* case, because TF's C++ logging — most
-            # importantly the per-XLA-pass dump notifications emitted under
-            # `--xla_dump_hlo_pass_re=.*` for collective opts like
-            # AllReduceCombiner — writes directly to fd 2 via write(2,…)
-            # and bypasses Python's sys.stderr entirely.  Those C++ writes
-            # still land in the parent's `process.stderr` (and therefore in
-            # `output`), and at 10s of MB per test × 4 parallel workers
-            # they drove the parent's RSS from 1.4 GB → 188 GB in ~30 min
-            # in job 242824_0 even with the TeeOutput leak plugged.
+            # Prefer JSON log_text; fall back to raw output tail, capped to _MAX_LOG_CHARS.
             _MAX_LOG_CHARS = 8192
             chosen_log = log_text_from_json if log_text_from_json else output
             result.log_text = (
@@ -273,32 +237,10 @@ class TestHarness(ABC):
                 if len(chosen_log) > _MAX_LOG_CHARS
                 else chosen_log
             )
-            # chosen_log aliases `output` in the empty-JSON branch — release
-            # the alias before we hit the regex pass below or `del output`
-            # at the end leaves the original 100 MB string alive via this
-            # local reference.
-            del chosen_log
+            del chosen_log  # release alias before del output below
 
-            # Always scan the raw subprocess output (C++ fd 2) for
-            # WHITEFOX_PASS_START markers and merge with whatever the wrapper
-            # extracted from its Python-level streams.
-            #
-            # History: the wrapper redirects sys.stderr to a StringIO so
-            # Python-level output is captured, but TF/XLA's C++ runtime writes
-            # pass notifications directly to fd 2 via write(2,...), bypassing
-            # the Python redirect.  Those markers land in process.stderr (and
-            # therefore in `output`) but NOT in the wrapper's StringIO, so
-            # result["triggered_passes"] in the JSON is always [].
-            #
-            # Previously we fell back to scanning `output` only when
-            # passes_from_json was None (subprocess crashed without markers).
-            # After removing RLIMIT_AS from pool workers (f892797) tests
-            # complete normally, passes_from_json is always [] (not None),
-            # and the fallback never fired — Triggered=0 for all passes.
-            #
-            # The fix: always merge both sources.  `output` is already in
-            # memory here and is del'd three lines below, so the regex scan
-            # costs nothing extra in terms of peak RSS.
+            # Merge pass markers from JSON and raw output; TF/XLA writes markers to fd 2
+            # directly, bypassing the Python-level StringIO captured in the wrapper.
             passes_set = set(passes_from_json) if passes_from_json is not None else set()
             passes_set |= self.extract_triggered_passes(output)
             result.triggered_passes = passes_set
@@ -310,14 +252,7 @@ class TestHarness(ABC):
                     sorted(result.triggered_passes),
                 )
 
-            # Explicitly release the (potentially 10s-of-MB) captured
-            # stdout/stderr buffers before this worker picks up its next
-            # test.  Without this, with 4 parallel workers each holding a
-            # ~50 MB CompletedProcess + concatenated `output` while
-            # waiting on the next subprocess.run, the parent's transient
-            # working set grows monotonically and CPython's allocator
-            # does not return the freed pages between iterations fast
-            # enough to keep up with cgroup pressure.
+            # Release captured buffers promptly to avoid large strings persisting between tests.
             del output
             process.stdout = ""
             process.stderr = ""

@@ -31,10 +31,7 @@ from pathlib import Path
 _mem_limit_gb = int(os.environ.get('WHITEFOX_TEST_MEM_LIMIT_GB', '8'))
 _mem_limit_bytes = _mem_limit_gb * 1024 ** 3
 
-# 1. RLIMIT_AS: cap virtual address space.  Add 4 GB headroom for TF/XLA
-#    shared libraries (~5-6 GB of mmap'd .so files) so TF can load while
-#    still blocking pathological allocations (e.g. 40 GB tensor).
-#    preexec_fn sets a coarser outer limit; this tightens it after exec.
+# RLIMIT_AS: +4 GB headroom for TF/XLA shared libraries; tightens the coarser preexec_fn limit.
 _rlimit_as_bytes = (_mem_limit_gb + 4) * 1024 ** 3
 try:
     resource.setrlimit(resource.RLIMIT_AS, (_rlimit_as_bytes, _rlimit_as_bytes))
@@ -52,10 +49,7 @@ try:
 except (ValueError, resource.error):
     pass
 
-# 2. oom_score_adj: make the OOM killer target this subprocess first,
-#    protecting the parent generator (vLLM + state).  Also set in
-#    preexec_fn, but repeat here in case the wrapper was launched
-#    without preexec_fn.
+# Maximise OOM-kill priority so the kernel kills this subprocess before the parent.
 try:
     with open('/proc/self/oom_score_adj', 'w') as _f:
         _f.write('1000')
@@ -82,10 +76,7 @@ def _rss_mb():
 _RSS_LIMIT_MB = _mem_limit_gb * 1024
 _VSZ_LIMIT_MB = _mem_limit_gb * 3 * 1024
 
-# 3. Memory watchdog: polls RSS/VmSize every 0.1s and hard-kills if over limit.
-#    RLIMIT_AS blocks new virtual mappings but existing ones (TF runtime
-#    buffers, XLA temp arenas) can still dirty pages and grow RSS.  The
-#    watchdog catches RSS growth that RLIMIT_AS cannot prevent.
+# RSS watchdog: RLIMIT_AS blocks new mappings but existing pages can still grow RSS.
 _watchdog_stop = threading.Event()
 
 def _mem_watchdog():
@@ -108,8 +99,7 @@ def _mem_watchdog():
 _watchdog_thread = threading.Thread(target=_mem_watchdog, daemon=True)
 _watchdog_thread.start()
 
-# 4. Static tensor-size pre-check: estimate total bytes from array/tensor
-#    creation calls in the generated code and reject before exec().
+# Static pre-check: estimate tensor allocation size and reject before exec.
 _DTYPE_BYTES = {{
     'float64': 8, 'float32': 4, 'float16': 2, 'bfloat16': 2,
     'int64': 8, 'int32': 4, 'int16': 2, 'int8': 1, 'uint8': 1,
@@ -179,19 +169,7 @@ class TeeOutput:
 
 original_stdout = sys.stdout
 original_stderr = sys.stderr
-# Do NOT tee Python-level stdout/stderr to the real fd 1 / fd 2.  Tests can
-# easily print megabyte-scale tracebacks (e.g. TF's OOM error includes the
-# full failing HLO) or even whole tensors; teeing them to original_stdout
-# means the parent's subprocess.run(capture_output=True) absorbs all of it
-# into RAM as a Python string, and CPython's allocator does not return
-# those arenas to the OS — job 241012_0 grew the parent's RSS 1.3 GB ->
-# 197 GB at a steady ~10 MB/s during AllReduceCombiner iter 12 and OOMed.
-# Sending writes only to the in-process StringIO keeps the leak bounded
-# inside the wrapper subprocess (which has RLIMIT_AS=10 GB) and the
-# 8 KB log_text truncation in the finally block keeps the parent payload
-# small.  The fd 1 / fd 2 streams are still used for the WHITEFOX_RESULT
-# markers + JSON, which are printed after the finally block restores
-# sys.stdout / sys.stderr to their originals.
+# Redirect to StringIO; fd 1/2 are used only for WHITEFOX_RESULT markers after the finally block.
 sys.stdout = stdout_capture
 sys.stderr = stderr_capture
 
@@ -216,22 +194,7 @@ result = {{
 
 def _serialize_output(output):
     import tensorflow as tf
-    # IPC payload cap.  Job 244274_0 died because the previous
-    # implementation only recursed one level: a test returning
-    # `[tensor.numpy().tolist()]` (a list containing an already-flattened
-    # nested-Python-list rather than a tf.Tensor) sailed past the per-tensor
-    # elem cap and shipped the full nested structure to the parent.  With
-    # 10 such results held in `_execute_tests_parallel.results` at iter
-    # boundary × 3 modes the parent's RSS jumped 2 GB → 175 GB in one iter
-    # of AllReduceCombiner and OOMed at 190 GB.
-    #
-    # The new policy: enforce a *total leaf-element budget* per call.  The
-    # recursion descends through tf.Tensor, numpy.ndarray, list, tuple and
-    # dict, decrementing a shared budget as it emits scalars.  Anything
-    # past the budget is replaced with a "<truncated_at_N>" marker so the
-    # diff oracle still sees a structurally-comparable value, but the
-    # cross-process JSON cannot exceed ~(budget × ~15 bytes/float) ≈ a few
-    # MB per mode regardless of how the test code wraps its output.
+    # Enforce a total leaf-element budget; anything beyond is replaced with a truncation marker.
     _MAX_TOTAL_ELEMS = int(os.environ.get("WHITEFOX_MAX_OUTPUT_ELEMS", "10000"))
     _budget = [_MAX_TOTAL_ELEMS]
 
@@ -345,18 +308,7 @@ if '--xla_dump_hlo_pass_re=' not in old_xla_flags_env:
     xla_flags_parts.append('--xla_dump_hlo_pass_re=.*')
 os.environ['XLA_FLAGS'] = ' '.join(xla_flags_parts) if xla_flags_parts else ''
 
-# Force absl/glog to write to fd 2 (the captured pipe) as well as its log
-# file.  Without this, absl::InitializeLog() redirects LOG() messages to a
-# /tmp/*.INFO file; WHITEFOX_PASS_START/END markers (logged via LOG(INFO) in
-# the custom TF build) then only reach the parent when absl's SIGSEGV crash
-# handler flushed the buffer — i.e. only for crashed tests (exit_code=-11).
-# Normally-completing tests had triggered_passes={{}} even though XLA ran all
-# passes, because the markers were in the log file, not in process.stderr.
-# Setting GLOG_logtostderr=1 makes absl always mirror output to fd 2 so
-# base.py's extract_triggered_passes(output) can find the markers regardless
-# of exit code.  The _BoundedTail cap (default 1 MB) keeps worker RSS
-# bounded; target passes run in the later XLA pipeline stages and reliably
-# fall within the tail.
+# Mirror absl/glog to fd 2 so WHITEFOX_PASS_START markers reach the parent process.
 os.environ.setdefault('GLOG_logtostderr', '1')
 
 try:
@@ -369,13 +321,7 @@ try:
     tf.random.set_seed({RANDOM_SEED})
     
     test_code = {test_code_repr}
-    # Strip any user-supplied @tf.function(...) decorator immediately above
-    # `def call` so all three modes (naive, xla, autocluster) start from the
-    # same baseline.  Otherwise add_decorator_inline stacks a second decorator
-    # on top of the user's, giving each mode an asymmetric ConcreteFunction
-    # wrapper — for some models (e.g. tf.while_loop with overflow) this makes
-    # naive return shape (0,) and xla return shape (4,), causing a false
-    # "Length mismatch: 0 vs 4" AllDiff oracle report.
+    # Strip any @tf.function decorator above `def call` so all three modes start from the same baseline.
     import re as _re
     test_code = _re.sub(
         r'^[ \\t]*@tf\\.function(?:\\([^)]*\\))?[ \\t]*\\n(?=[ \\t]*def call\\b)',
@@ -527,13 +473,7 @@ finally:
     _watchdog_stop.set()
     sys.stdout.flush()
     sys.stderr.flush()
-    # With --xla_dump_hlo_pass_re=.* every test floods stderr with HLO-pass
-    # markers (≥1 MB/test on opts like StochasticConvertDecomposer).  The
-    # parent only ever uses log_text to regex out the pass-name set, so
-    # extract that set here and send the parent the (≤~80-string) result;
-    # ship back only a short tail of the raw log for debugging.  Without
-    # this the parent's PyMalloc arena retained ~10s of MB per test and
-    # anon RSS climbed to 190 GiB in job 240645_2 even after ca48f23.
+    # Extract pass-name set and a short tail; avoids shipping large HLO logs to the parent.
     _log_combined = stdout_capture.getvalue() + stderr_capture.getvalue()
     result["triggered_passes"] = sorted(set(
         re.findall(r'WHITEFOX_PASS_START[^\\n]*\\bpass=([^\\s]+)', _log_combined)
@@ -544,17 +484,7 @@ finally:
     result["log_text"] = _log_combined
     del _log_combined
 
-    # Bulletproof IPC payload size: cap *every* string field in `result`,
-    # not just log_text.  For collective opts like AllReduceCombiner, TF's
-    # ResourceExhaustedError / UnimplementedError exception messages embed
-    # the full failing HLO module — easily 10+ MB per error.  Without this
-    # cap, three modes worth of `compile_error_<mode>` get JSON-serialized
-    # at full size, sent to the parent, deserialized onto `mr.compile_error`,
-    # and held on the result object for the iter's lifetime.  At 4 parallel
-    # workers × 10 samples × 3 modes that's ~1 GB / iter held just in
-    # error strings.  The wrapper-side cap means the parent never sees
-    # more than ~80 KB of IPC payload per test regardless of what TF
-    # decides to dump into an exception message.
+    # Cap every string field; TF error messages can embed full HLO modules.
     _MAX_FIELD_CHARS = int(os.environ.get("WHITEFOX_MAX_FIELD_CHARS",
                                           str(_MAX_LOG_CHARS)))
     for _k, _v in list(result.items()):
