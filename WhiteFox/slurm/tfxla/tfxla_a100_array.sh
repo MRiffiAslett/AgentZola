@@ -219,15 +219,32 @@ import sys, re
 src, dst, model, prompts_dir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
 with open(src) as f:
-    text = f.read()
+    lines = f.readlines()
 
-# Replace [model] name = "..."  — only the first occurrence of ^name = in file
-text = re.sub(r'^(name\s*=\s*)"[^"]*"', rf'\1"{model}"', text, count=1, flags=re.MULTILINE)
-# Replace [generation] optimizations_dir = "..."
-text = re.sub(r'^(optimizations_dir\s*=\s*)"[^"]*"', rf'\1"{prompts_dir}"', text, count=1, flags=re.MULTILINE)
+# Patch section-aware: track which [section] we are in so we only replace
+# name = "..." inside [model] and optimizations_dir = "..." inside [generation].
+# A plain count=1 regex on the full file hits [sut] name = "xla" first, which
+# overwrites the SUT name with the model string and causes a KeyError at startup.
+current_section = None
+model_done = False
+prompts_done = False
+out = []
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith('[') and not stripped.startswith('[['):
+        current_section = re.match(r'^\[(\w+)\]', stripped)
+        current_section = current_section.group(1) if current_section else None
+
+    if current_section == 'model' and not model_done and re.match(r'^name\s*=\s*"', stripped):
+        line = re.sub(r'^(name\s*=\s*)"[^"]*"', rf'\1"{model}"', line)
+        model_done = True
+    elif current_section == 'generation' and not prompts_done and re.match(r'^optimizations_dir\s*=\s*"', stripped):
+        line = re.sub(r'^(optimizations_dir\s*=\s*)"[^"]*"', rf'\1"{prompts_dir}"', line)
+        prompts_done = True
+    out.append(line)
 
 with open(dst, "w") as f:
-    f.write(text)
+    f.writelines(out)
 
 print(f"[config patch] model={model!r}  optimizations_dir={prompts_dir!r}")
 PATCH_PY
