@@ -286,6 +286,13 @@ class StarCoderGenerator:
 
         self._setup_environment()
         self._setup_logging()
+
+        # Verify coverage instrumentation before loading the LLM so the TF
+        # subprocess runs in a clean process without GPU memory pressure.
+        self.coverage = CoverageCollector(self.logging_dir)
+        os.environ.update(self.coverage.env_vars())
+        self.coverage.verify()
+
         self.llm = self._initialize_llm()
 
         self._prompt_style = config.prompts.prompt_style if config.prompts else "paper"
@@ -953,10 +960,6 @@ class StarCoderGenerator:
 
     def generate_whitefox(self, only_optimizations: Optional[List[str]] = None) -> None:
         project_root = self._project_root()
-
-        self.coverage = CoverageCollector(self.logging_dir)
-        os.environ.update(self.coverage.env_vars())
-        self.coverage.verify()
 
         config_dict = {
             "generation": {
