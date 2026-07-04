@@ -9,9 +9,6 @@
 #SBATCH --mail-user=${USER}
 #SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/tfxla/out/whitefox_%A_%a.out
 
-# ---- Array: 3 tasks, ~17 opts each.  With early-stop disabled every opt runs
-# the full 100 iterations (1000 tests); 17 opts × ~90 min ≈ 25.5 h per task,
-# within the 72 h wall-time limit.
 #SBATCH --array=0-2
 N_TASKS=3
 
@@ -52,10 +49,7 @@ case "$WHITEFOX_PROMPTS_VERSION" in
   *) echo "ERROR: unknown WHITEFOX_PROMPTS_VERSION=$WHITEFOX_PROMPTS_VERSION" >&2; exit 1 ;;
 esac
 
-# Human-readable model label used in log headers and the run summary.
-# vLLM params (dtype, max_model_len, extra stop tokens, …) are applied
-# automatically by _get_model_registry_entry() in generation/generator.py
-# — no other changes are needed here when you switch WHITEFOX_MODEL above.
+
 case "$WHITEFOX_MODEL" in
   bigcode/starcoder)                  WHITEFOX_MODEL_DISPLAY="StarCoder (7B)"              ;;
   Qwen/Qwen2.5-Coder-14B)            WHITEFOX_MODEL_DISPLAY="Qwen2.5-Coder-14B"           ;;
@@ -64,14 +58,6 @@ case "$WHITEFOX_MODEL" in
 esac
 export WHITEFOX_MODEL_DISPLAY
 
-# Make the script robust to minimal Slurm env propagation.  Submitting
-# with `--export=WHITEFOX_OPT_OVERRIDE=...` (a workaround for the
-# "user env retrieval failed requeued held" lock-up we hit on jobs
-# 243717 and 244274) drops $HOME and $USER, so any `$HOME`/`$USER`
-# reference under `set -u` aborts the script before a single test
-# runs (job 244874_0 died at line 152 in 2 s).  Resolve them from
-# /etc/passwd via getent so the script doesn't depend on which
-# `--export` flavour the submitter used.
 : "${USER:=$(id -un)}"
 : "${HOME:=$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)}"
 : "${HOME:=/tmp}"
@@ -144,23 +130,6 @@ MY_BATCH=("${ALL_OPTS[@]:$START:$COUNT}")
 OPT_CSV=$(IFS=,; echo "${MY_BATCH[*]}")
 BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}"
 
-# Smoke-test escape hatch: when WHITEFOX_OPT_OVERRIDE is set in the
-# environment the array task runs only that comma-separated subset and
-# writes its outputs to a sibling logging dir, so we can validate a fix
-# on a small subset of opts in ~1-3 h instead of waiting 25 h per task
-# for the full array to finish.
-#
-# IMPORTANT: `sbatch --export` parses commas as variable separators, NOT
-# value separators.  Submitting with
-#   --export=ALL,WHITEFOX_OPT_OVERRIDE=opt_a,opt_b,opt_c
-# silently truncates the override to `opt_a` and creates empty env vars
-# named `opt_b` and `opt_c` — job 245233_0 ran only AllGatherBroadcastReorder
-# instead of the 4-opt sequence we wanted because of this.
-# Always pass the value in the calling shell and let sbatch pull it in
-# by *name*:
-#   export WHITEFOX_OPT_OVERRIDE=opt_a,opt_b,opt_c
-#   sbatch --export=WHITEFOX_OPT_OVERRIDE \
-#          WhiteFox/slurm/tfxla/tfxla_a100_array.sh
 if [ -n "${WHITEFOX_OPT_OVERRIDE:-}" ]; then
     OPT_CSV="$WHITEFOX_OPT_OVERRIDE"
     BATCH_LABEL="batch${SLURM_ARRAY_TASK_ID}_smoke"
@@ -168,28 +137,28 @@ if [ -n "${WHITEFOX_OPT_OVERRIDE:-}" ]; then
     echo "[$(date)] Logging to $BATCH_LABEL (separate from regular batch dir)"
 fi
 
-# ---- Coverage: %Nm merge pool on node-local /data --------------------------
-# Instead of one 950 MB profraw per subprocess on NFS (the old bottleneck),
-# LLVM's %Nm merge pool keeps N shared files on local ext4.  Subprocesses
-# lock → merge counters → unlock in-place.  After 1000 tests, only N files
-# need merging instead of 1000.  ~500x less merge I/O.
+
 LOCAL_COV_DIR="/data/whitefox_cov_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID:-0}"
 mkdir -p "$LOCAL_COV_DIR"
 export WHITEFOX_PROFRAW_DIR="$LOCAL_COV_DIR"
 export WHITEFOX_PROFRAW_POOL_SIZE="${WHITEFOX_PROFRAW_POOL_SIZE:-8}"
 
-# With pool mode, intermediate merges are cheap (8 files, local disk).
-# Merge every 100 iterations = once per optimization boundary.
+# Model weights on local SSD — avoids 40-min NFS load per job.
+# First run downloads to /data/hf_cache; subsequent runs reuse it.
+export HF_HOME=/data/hf_cache
+mkdir -p "$HF_HOME"
+
+# Keep vLLM telemetry and compile cache off /homes (disk quota).
+export VLLM_NO_USAGE_STATS=1
+export VLLM_CACHE_ROOT=/data/vllm_cache
+mkdir -p "$VLLM_CACHE_ROOT"
+
+
 export WHITEFOX_COVERAGE_MERGE_EVERY_ITERS="${WHITEFOX_COVERAGE_MERGE_EVERY_ITERS:-100}"
 export WHITEFOX_LLVM_PROFDATA_JOBS="${WHITEFOX_LLVM_PROFDATA_JOBS:-0}"
 export WHITEFOX_MERGE_BATCH_SIZE="${WHITEFOX_MERGE_BATCH_SIZE:-8}"
 
-# ---- Test execution --------------------------------------------------------
-# 18 CPUs available.  vLLM uses ~2-3 CPU threads; leave the rest for workers.
-# With early-stop disabled every opt runs 1000 tests; longer runs accumulate
-# more memory (TF/XLA subprocesses, profraw, caches).  8 workers caused OOM
-# at ~iteration 59 under 190 GB.  4 workers × 10 GB RLIMIT_AS = 40 GB virtual,
-# leaving ample headroom for vLLM + coverage merge.
+
 export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
@@ -197,11 +166,7 @@ export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export PROJECT_ROOT
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
-# Archive any prior-run artifacts in this batch's logging dir before we
-# start, so leftover cgroup_mem.tsv / oom_postmortem.log rows from an
-# earlier job cannot contaminate this run's diagnostics.  This is the root
-# cause of the "190 GB peak" misread: job 245837_0's batch0 dir still held
-# job 244274's rows, and a naive `awk max` reported the old cliff as fresh.
+
 if [ -d "$WHITEFOX_LOGGING_DIR" ]; then
   _archive="${WHITEFOX_LOGGING_DIR}.$(date +%s)"
   if mv "$WHITEFOX_LOGGING_DIR" "$_archive" 2>/dev/null; then
@@ -223,15 +188,12 @@ echo
 
 BASE_CONFIG_PATH="${1:-xilo_xla/config/generator.toml}"
 
-# Validate that the generation prompts directory exists before wasting a slot.
 if [ ! -d "$PROJECT_ROOT/$WHITEFOX_PROMPTS_DIR" ]; then
   echo "ERROR: WHITEFOX_PROMPTS_DIR not found: $PROJECT_ROOT/$WHITEFOX_PROMPTS_DIR" >&2
   exit 1
 fi
 
-# Patch model name and prompts dir into a temp copy of the config so the Python
-# layer picks up the knob values without needing per-version TOML files.
-# We use Python (not sed) to avoid accidentally matching keys in other sections.
+
 TMP_CONFIG="$(mktemp -t whitefox-config-XXXXXX.toml)"
 trap 'rm -f "$TMP_CONFIG"' EXIT
 python3 - "$PROJECT_ROOT/$BASE_CONFIG_PATH" "$TMP_CONFIG" \
@@ -315,30 +277,12 @@ mkdir -p "$XLA_DUMP_DIR"
 export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
 export TOKENIZERS_PARALLELISM=false
-# expandable_segments:True caused rapid CPU RSS growth in job 249955 (PID 1153851
-# grew ~1 GB/2 sec) by lazily cuMemMap-ing new GPU segments into CPU address space
-# on every generate() call.  :False defers that mapping to first-use instead of
-# startup, which slows the ramp but does not eliminate the ultimate plateau — the
-# entire GPU memory pool (model + KV cache, ~80 GB) still page-faults into CPU
-# address space as inference proceeds.  The actual OOM trigger in job 250154 was
-# KV-cache overflow: with n=10 samples × max_tokens=4096 the worst-case call needed
-# ~2648 blocks vs the 2530-block pre-allocated pool, forcing an emergency cudaMalloc
-# that added +130 GB of CPU RSS in ~3 minutes.  That is now fixed by max_tokens=2048
-# (worst case 1367 blocks << 2530).  Keep :False so the plateau stays gradual
-# (first-use page faults spread over hours) rather than a hard spike at startup.
+
+
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
-# Switch the parent (generation.main) from CPython's pymalloc to glibc
-# malloc.  pymalloc keeps small-object arenas in-process forever and
-# only returns very large single allocations to the OS, which is why
-# job 244274_0's OOM postmortem showed `inactive_anon=141 GB` —
-# Python had freed those objects but the arenas were still held by the
-# process.  glibc malloc maps large blocks via mmap and releases them
-# back to the kernel on free, so the parent's RSS actually decreases
-# when objects go out of scope.  This converts the bounded-per-iter
-# IPC caps from be85c1c into a bounded *steady-state* footprint
-# instead of bounded *peak* with monotonically-creeping baseline.
+
 export PYTHONMALLOC=malloc
 
 if [ ! -f "$WHITEFOX_TF_WHEEL" ]; then
@@ -346,9 +290,6 @@ if [ ! -f "$WHITEFOX_TF_WHEEL" ]; then
   exit 1
 fi
 
-# Select venv and install command based on wheel version.
-# 20250806 → managed by poetry (.venv, cp312)
-# 20230507 → standalone pip venv (venv-cp310, cp310); run setup_venv_20230507.sh once first.
 case "$WHITEFOX_WHEEL_VERSION" in
   20250806)
     poetry --version || exit 1
@@ -387,19 +328,13 @@ if [ ! -f "$BASE_CONFIG_PATH" ] && [ ! -f "$PROJECT_ROOT/$BASE_CONFIG_PATH" ]; t
   exit 1
 fi
 
-# ---- Background cgroup memory tracer ---------------------------------------
-# psutil-based profiler only sees the parent process; the cgroup OOM is driven
-# by children + tmpfs + page cache that the parent never sees. Sample the
-# cgroup's own counters every 2 s into cgroup_mem.tsv so we can see the cliff.
+
 CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
 CG_DIR="/sys/fs/cgroup${CG_REL}"
 TRACE_FILE="$WHITEFOX_LOGGING_DIR/cgroup_mem.tsv"
 XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
 (
-  # Loosen strict-mode in the tracer: a single failing `du` (e.g. before the
-  # XLA dump dir exists) must not kill the monitor. Bash inherits set -e and
-  # pipefail into subshells; that bug caused cgroup_mem.tsv to stay empty in
-  # the previous run.
+
   set +e
   set +o pipefail
   printf 'ts\tmem_current\tmem_peak\tswap_current\toom\toom_kill\ttmp_kb\ttop5_pid_rss_cmd\n' > "$TRACE_FILE"
@@ -420,11 +355,7 @@ XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
 ) &
 TRACER_PID=$!
 
-# ---- Background GPU memory tracer ------------------------------------------
-# Runs nvidia-smi in a loop, writing per-GPU used/free/total memory every 5 s.
-# Lets us correlate CPU cgroup spikes with GPU-side allocation changes so we
-# can distinguish: KV-cache swap spill to CPU, CUDA pinned-memory growth,
-# pytorch expandable_segments growth, or something else entirely.
+
 GPU_TRACE_FILE="$WHITEFOX_LOGGING_DIR/gpu_mem.tsv"
 (
   set +e; set +o pipefail
@@ -445,16 +376,10 @@ echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
 echo "[$(date)] cgroup trace: $TRACE_FILE (PID=$TRACER_PID)"
 echo "[$(date)] GPU trace:    $GPU_TRACE_FILE (PID=$GPU_TRACER_PID)"
 
-# Raise the process/thread limit to the hard cap before launching Python.
-# TF/XLA's LLVM codegen spawns one thread per CPU during JIT compilation;
-# when the Slurm node's soft nproc limit is lower than the hard limit the
-# first thread that can't be created kills the process with SIGABRT
-# (pthread_create errno=11/EAGAIN → exit 134, as seen in job 250154 batch1).
-# Setting soft=hard is always safe for unprivileged users and costs nothing.
+
 ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
 echo "[$(date)] nproc limit: $(ulimit -u)"
 
-# Don't let set -e short-circuit past the postmortem when python is SIGKILL'd.
 GEN_EXIT=0
 $RUN_PYTHON -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV" \
   || GEN_EXIT=$?
@@ -463,11 +388,7 @@ kill "$TRACER_PID" 2>/dev/null || true
 kill "$GPU_TRACER_PID" 2>/dev/null || true
 echo "[$(date)] Finished $BATCH_LABEL (exit $GEN_EXIT)"
 
-# ---- OOM postmortem: capture cgroup memory state on non-zero exit ----------
-# We don't yet know what's actually consuming memory before the OOM kill.
-# On any non-zero exit, dump cgroup memory.{current,peak,events,stat} plus
-# recent kernel oom-kill lines to logging/oom_postmortem.log so the next
-# failure is debuggable without needing to re-attach a live srun.
+
 if [ "$GEN_EXIT" != "0" ]; then
   OOM_LOG="$WHITEFOX_LOGGING_DIR/oom_postmortem.log"
   CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
@@ -504,25 +425,17 @@ if [ "$GEN_EXIT" != "0" ]; then
   echo "[$(date)] OOM postmortem written to $OOM_LOG"
 fi
 
-# ---- Copy coverage artifacts from local /data to NFS -----------------------
 echo "[$(date)] Copying coverage artifacts to NFS …"
 if [ -f "$WHITEFOX_LOGGING_DIR/coverage/merged.profdata" ]; then
   echo "[$(date)] merged.profdata: $(du -h "$WHITEFOX_LOGGING_DIR/coverage/merged.profdata" | cut -f1)"
 fi
-# Clean up node-local coverage scratch.
 rm -rf "$LOCAL_COV_DIR" 2>/dev/null || true
 echo "[$(date)] Local coverage dir cleaned up"
 
-# ---- Aggregate batch summaries into a single combined report ---------------
-# Writes run_summary_combined.log (all Tables 1-5 + coverage union) and
-# coverage_combined.log (union + per-batch breakdown).
-#
-# Primary data source: run_stats.json sidecar written by WhiteFoxLogger.
-# Coverage union:      llvm-profdata merge across batch merged.profdata files.
+
 echo "[$(date)] Aggregating batch summaries …"
 
 _AGG_SCRIPT=$(mktemp -t wf_agg_XXXXXX.py)
-# The existing trap for TMP_CONFIG is replaced below so both temps are cleaned.
 trap 'rm -f "$TMP_CONFIG" "$_AGG_SCRIPT"' EXIT
 
 cat > "$_AGG_SCRIPT" << 'PYEOF'

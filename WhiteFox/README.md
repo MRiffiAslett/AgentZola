@@ -27,14 +27,9 @@ The SLURM script sets `WHITEFOX_LLVM_DIR` to that path automatically if it exist
 
 ## HuggingFace cache
 
-Not set globally. The TOML config has `hf_home = "hf_cache"` which resolves relative to the project root.  
-To avoid re-downloading weights on every node, pin it to a shared volume:
-
-```bash
-export HF_HOME=/vol/bitbucket/mtr25/hf_cache
-```
-
-or update `hf_home` in `xilo_xla/config/generator.toml`.
+The SLURM script sets `HF_HOME=/data/hf_cache` (local node SSD) to avoid 40-min NFS loads.  
+First run for a given node downloads weights; subsequent runs reuse the cache.  
+`/data` is not shared — if switching nodes, weights will re-download once.
 
 ## Key environment variables
 
