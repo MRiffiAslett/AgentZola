@@ -30,6 +30,15 @@ num_samples = 1
 # pages into CPU address space, triggering the sudden +130 GB CPU RSS spike
 # observed in job 250154 batch0/batch2 at ts≈1781653982 after 23 h of stability.
 # Generated test functions rarely exceed 1000 tokens in practice; 2048 is 2×.
+#
+# RSS budget with --gres=gpu:1 (current setting):
+#   vLLM baseline (1×80 GB A100 BAR + Python): ~85 GB
+#   4 pool workers (TF-loaded test subprocesses, up to 4 concurrent each): ~30 GB
+#   Safety headroom: ~35 GB
+#   Slurm --mem=150G ← comfortably covers the above.
+# WARNING: requesting --gres=gpu:3 causes CUDA to map 3×80 GB=240 GB of BAR
+# into the process address space (kernel counts BAR VMAs as RSS with ResizableBAR),
+# inflating baseline RSS to ~245 GB and hitting the 250 GB cgroup limit immediately.
 max_tokens = 2048
 temperature = 1.0    
 top_p = 1.0        
