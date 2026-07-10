@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=wf_tfxla
 #SBATCH --partition=a100
-#SBATCH --gres=gpu:3
-#SBATCH --cpus-per-gpu=6
-#SBATCH --mem=250G
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-gpu=12
+#SBATCH --mem=150G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -280,6 +280,12 @@ export TOKENIZERS_PARALLELISM=false
 
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+# Restrict CUDA to the single GPU allocated by Slurm.  Without this, the CUDA
+# runtime enumerates and opens a context on every visible GPU, mapping each
+# 80 GB A100 BAR window into the process address space (~80 GB RSS per GPU).
+# With --gres=gpu:1 Slurm already sets CUDA_VISIBLE_DEVICES; this line is a
+# belt-and-suspenders guard in case the binding is absent.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
 
