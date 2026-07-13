@@ -273,6 +273,11 @@ XLA_DUMP_DIR="$LOCAL_COV_DIR/xla_dump"
 rm -rf "$XLA_DUMP_DIR" 2>/dev/null || true
 rm -rf /tmp/wf_profraw_* 2>/dev/null || true
 mkdir -p "$XLA_DUMP_DIR"
+# Clear the node-local vLLM torch.compile cache.  Stale mmap'd compiled kernels
+# left by a previous job on this node can cause SIGBUS when replayed on a new
+# CUDA context.  The cache is rebuilt in ~17 s and costs much less than a
+# crashed run.
+rm -rf /data/vllm_cache/torch_compile_cache 2>/dev/null || true
 
 export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
 export TF_XLA_FLAGS="--tf_xla_auto_jit=2"
@@ -311,6 +316,20 @@ case "$WHITEFOX_WHEEL_VERSION" in
       poetry install --no-interaction
       echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
       poetry run pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
+      # NFS write-back can leave newly written package files invisible for a few
+      # seconds after pip returns.  transformers imports TF at module-load time
+      # (image_transforms.py), so we verify here and retry if needed.
+      for _tf_attempt in 1 2 3; do
+        if poetry run python -c "import tensorflow; print('[$(date)] TF import OK:', tensorflow.__version__)" 2>&1; then
+          break
+        fi
+        echo "[$(date)] WARN: TF import failed (attempt $_tf_attempt/3); sleeping 15 s for NFS sync..."
+        sleep 15
+        if [ "$_tf_attempt" -eq 3 ]; then
+          echo "[$(date)] ERROR: TF import failed after 3 attempts, aborting" >&2
+          exit 1
+        fi
+      done
       echo "[$(date)] [$BATCH_LABEL] Install done"
     ) 200>"$LOCKFILE"
     RUN_PYTHON="poetry run python"
