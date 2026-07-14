@@ -203,13 +203,9 @@ def _pool_worker_init() -> None:
 
 _HARNESS = {
     "xla": "generation.harness.xla.TensorFlowXLAHarness",
-    "inductor": "generation.harness.inductor.PyTorchInductorHarness",
-    "tflite": "generation.harness.tflite.TensorFlowLiteHarness",
 }
 _PARSER = {
     "xla": "generation.code_processing.tensorflow.TensorFlowCodeParser",
-    "inductor": "generation.code_processing.pytorch.PyTorchCodeParser",
-    "tflite": "generation.code_processing.tflite.TensorFlowLiteCodeParser",
 }
 
 # Model registry: maps HF model IDs → vLLM init overrides, extra stop tokens,
@@ -462,7 +458,6 @@ class StarCoderGenerator:
 
         processed_code = refine_generated_code(
             generated_text,
-            framework=self.config.sut.framework,
             parser=self.parser,
         )
 

@@ -21,8 +21,6 @@ def parse_generated_code(generated_text: str) -> str:
             "Here's the code:",
             "Here is a TensorFlow model:",
             "Here's a TensorFlow model:",
-            "Here is a PyTorch model:",
-            "Here's a PyTorch model:",
         ]
 
         for prefix in prefixes_to_remove:
@@ -60,38 +58,20 @@ def parse_generated_code(generated_text: str) -> str:
     return "\n".join(filtered_lines)
 
 
-def ensure_imports(code: str, framework: str = "TensorFlow") -> str:
+def ensure_imports(code: str) -> str:
     lines = code.split("\n")
-    _fw = framework.lower()
 
-    if _fw == "pytorch":
-        uses_torch = bool(re.search(r"\btorch[\.\s]", code))
-        uses_nn = bool(re.search(r"\bnn[\.\s]", code))
-        uses_np = bool(re.search(r"\bnp[\.\s]", code))
+    uses_tf = bool(re.search(r"\btf[\.\s]", code))
+    uses_np = bool(re.search(r"\bnp[\.\s]", code))
 
-        has_torch_import = re.search(r"import\s+torch\b", code, re.IGNORECASE)
-        has_nn_import = re.search(r"import\s+torch\.nn\s+as\s+nn", code, re.IGNORECASE)
-        has_np_import = re.search(r"import\s+numpy\s+as\s+np", code, re.IGNORECASE)
+    has_tf_import = re.search(r"import\s+tensorflow\s+as\s+tf", code, re.IGNORECASE)
+    has_np_import = re.search(r"import\s+numpy\s+as\s+np", code, re.IGNORECASE)
 
-        imports_to_add = []
-        if uses_torch and not has_torch_import:
-            imports_to_add.append("import torch")
-        if uses_nn and not has_nn_import:
-            imports_to_add.append("import torch.nn as nn")
-        if uses_np and not has_np_import:
-            imports_to_add.append("import numpy as np")
-    else:
-        uses_tf = bool(re.search(r"\btf[\.\s]", code))
-        uses_np = bool(re.search(r"\bnp[\.\s]", code))
-
-        has_tf_import = re.search(r"import\s+tensorflow\s+as\s+tf", code, re.IGNORECASE)
-        has_np_import = re.search(r"import\s+numpy\s+as\s+np", code, re.IGNORECASE)
-
-        imports_to_add = []
-        if uses_tf and not has_tf_import:
-            imports_to_add.append("import tensorflow as tf")
-        if uses_np and not has_np_import:
-            imports_to_add.append("import numpy as np")
+    imports_to_add = []
+    if uses_tf and not has_tf_import:
+        imports_to_add.append("import tensorflow as tf")
+    if uses_np and not has_np_import:
+        imports_to_add.append("import numpy as np")
 
     if imports_to_add:
         insert_idx = 0
@@ -111,12 +91,11 @@ def ensure_imports(code: str, framework: str = "TensorFlow") -> str:
 
 def refine_generated_code(
     generated_text: str,
-    framework: str = "TensorFlow",
     parser: Optional[CodeParser] = None,
 ) -> str:
     parsed_code = parse_generated_code(generated_text)
 
-    code_with_imports = ensure_imports(parsed_code, framework=framework)
+    code_with_imports = ensure_imports(parsed_code)
 
     p = parser or _default_parser
     processed_code = p.process_code(code_with_imports)

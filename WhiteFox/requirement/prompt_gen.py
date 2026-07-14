@@ -25,7 +25,15 @@ def strip_cpp_boilerplate(code: str) -> str:
     return "\n".join(remaining)
 
 
-class Optim:
+class Src2NLTFXLA:
+    PLACEHOLDER_TFXLA_OPTIMIZATION_NAME = "PLACEHOLDER_TFXLA_OPTIMIZATION_NAME"
+    PLACEHOLDER_SRC_CODE = "PLACEHOLDER_SRC_CODE"
+    PLACEHOLDER_TARGET_LINE = "PLACEHOLDER_TARGET_LINE"
+    PLACEHOLDER_FUNC_NAME = "PLACEHOLDER_FUNC_NAME"
+
+    def __init__(self, file_path: str):
+        self.opts = json.loads(Path(file_path).read_text())
+
     def get_opts(self):
         return self.opts.keys()
 
@@ -34,43 +42,12 @@ class Optim:
         for code_path in code_paths:
             if use_mini:
                 code_path = code_path.replace("-full", "-mini")
-
-            file_path = Path(code_path)
-
-            raw = file_path.read_text()
+            raw = Path(code_path).read_text()
             code += strip_cpp_boilerplate(raw) + "\n"
         return code
 
-
-class Src2TestTFLite(Optim):
-    def __init__(self, file_path: str):
-        super().__init__()
-        self.opts = json.loads(Path(file_path).read_text())
-
     def _get_hint_code(self, hint: Dict, use_mini: bool = False) -> str:
         return self._src_code(hint["codes"], use_mini)
-
-
-class Src2NLTFLite(Src2TestTFLite):
-    PLACEHOLDER_TFLITE_OPTIMIZATION_NAME = "PLACEHOLDER_TFLITE_OPTIMIZATION_NAME"
-    PLACEHOLDER_SRC_CODE = "PLACEHOLDER_SRC_CODE"
-
-    def get_prompt(self, template: str, opt: str, use_mini: bool = False) -> str:
-        opt_info = self.opts[opt]
-        code = ""
-        for hint in opt_info["hints"]:
-            code += self._get_hint_code(hint, use_mini)
-
-        code_formatted = f"```cpp\n{code.strip()}\n```"
-        prompt = template.replace(self.PLACEHOLDER_TFLITE_OPTIMIZATION_NAME, opt)
-        prompt = prompt.replace(self.PLACEHOLDER_SRC_CODE, code_formatted)
-        return prompt
-
-
-class Src2NLTFXLA(Src2NLTFLite):
-    PLACEHOLDER_TFLITE_OPTIMIZATION_NAME = "PLACEHOLDER_TFXLA_OPTIMIZATION_NAME"
-    PLACEHOLDER_TARGET_LINE = "PLACEHOLDER_TARGET_LINE"
-    PLACEHOLDER_FUNC_NAME = "PLACEHOLDER_FUNC_NAME"
 
     def format_source_code(self, code: str) -> str:
         return f"```cpp\n{code.strip()}\n```"
@@ -91,7 +68,7 @@ class Src2NLTFXLA(Src2NLTFLite):
                 f"[WARNING] {opt} target line '{target_line}' does not exist in code."
             )
 
-        prompt = template.replace(self.PLACEHOLDER_TFLITE_OPTIMIZATION_NAME, opt)
+        prompt = template.replace(self.PLACEHOLDER_TFXLA_OPTIMIZATION_NAME, opt)
         prompt = prompt.replace(
             self.PLACEHOLDER_SRC_CODE, self.format_source_code(code)
         )
