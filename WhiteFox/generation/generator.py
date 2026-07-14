@@ -365,7 +365,8 @@ class StarCoderGenerator:
         reg_kwargs = registry["vllm_kwargs"]
 
         hf_cache_dir = (
-            self.config.paths.hf_cache
+            os.environ.get("WHITEFOX_HF_CACHE")
+            or self.config.paths.hf_cache
             or os.environ.get("HF_CACHE")
             or os.environ.get("HF_HOME", "~/.cache/huggingface")
         )

@@ -263,11 +263,36 @@ if [ -f "$HOME/.hf_token" ]; then
   export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
 fi
 
-HF_CACHE_DIR="$PROJECT_ROOT/hf_cache"
-mkdir -p "$HF_CACHE_DIR"
-export HF_HOME="$HF_CACHE_DIR"
-export HUGGINGFACE_HUB_CACHE="$HF_CACHE_DIR"
-export VLLM_CACHE_DIR="$HF_CACHE_DIR"
+# ---------------------------------------------------------------------------
+# Model-cache pre-seed: copy from NFS to node-local SSD on first use.
+# safetensors mmap()s the shard files; if they live on NFS the mapping can
+# go stale after the 16-18 min cold load (server evicts cached pages), and
+# the first GPU forward pass triggers SIGBUS.  Loading from /data (SSD)
+# eliminates both the mmap-over-NFS hazard and the 18-min load penalty.
+# ---------------------------------------------------------------------------
+_HF_SSD_CACHE=/data/hf_cache
+mkdir -p "$_HF_SSD_CACHE"
+# HF Hub cache directories are named  models--{org}--{repo}  (/ → --)
+_HF_MODEL_SLUG="models--$(echo "$WHITEFOX_MODEL" | sed 's|/|--|g')"
+_HF_NFS_SRC="$PROJECT_ROOT/hf_cache/$_HF_MODEL_SLUG"
+_HF_SSD_DST="$_HF_SSD_CACHE/$_HF_MODEL_SLUG"
+if [ -d "$_HF_NFS_SRC" ] && [ ! -d "$_HF_SSD_DST" ]; then
+  echo "[$(date)] [$BATCH_LABEL] Pre-seeding model cache from NFS to SSD (~30 GB, ~60 s)…"
+  # flock guards against two array tasks racing on the same node
+  (
+    flock -x 200
+    if [ ! -d "$_HF_SSD_DST" ]; then
+      cp -a "$_HF_NFS_SRC" "${_HF_SSD_DST}.tmp" && \
+        mv "${_HF_SSD_DST}.tmp" "$_HF_SSD_DST"
+    fi
+  ) 200>/tmp/wf_hf_preseed_"${_HF_MODEL_SLUG}".lock
+  echo "[$(date)] [$BATCH_LABEL] Model cache pre-seed done"
+else
+  echo "[$(date)] [$BATCH_LABEL] Model cache already on SSD: $_HF_SSD_DST"
+fi
+export HF_HOME="$_HF_SSD_CACHE"
+export HUGGINGFACE_HUB_CACHE="$_HF_SSD_CACHE"
+export WHITEFOX_HF_CACHE="$_HF_SSD_CACHE"
 
 XLA_DUMP_DIR="$LOCAL_COV_DIR/xla_dump"
 rm -rf "$XLA_DUMP_DIR" 2>/dev/null || true
