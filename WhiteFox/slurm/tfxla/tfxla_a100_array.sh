@@ -3,7 +3,7 @@
 #SBATCH --partition=a100
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-gpu=12
-#SBATCH --mem=150G
+#SBATCH --mem=200G
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -357,7 +357,46 @@ case "$WHITEFOX_WHEEL_VERSION" in
       done
       echo "[$(date)] [$BATCH_LABEL] Install done"
     ) 200>"$LOCKFILE"
-    RUN_PYTHON="poetry run python"
+
+    # ---------------------------------------------------------------------------
+    # Venv-to-SSD copy: eliminates NFS mmap SIGBUS for Python .so extension modules.
+    #
+    # The model-weight fix (Bug 3 / commit 259c4b7) moved the safetensors mmaps
+    # from NFS to SSD.  The same hazard exists for the .venv: TF, vLLM, and torch
+    # each mmap() dozens of .so files via dlopen().  These mappings live for the
+    # entire process lifetime.  After ~1 h the NFS server evicts its page cache
+    # for those files; the next code-path that touches a reclaimed page delivers
+    # SIGBUS to the main Python process (batch0 at it71, batch1 at it44).
+    #
+    # Fix: identical pattern to the model pre-seed — flock-guarded cp to /data.
+    # Subsequent jobs on the same node skip the copy (marker file present).
+    # ---------------------------------------------------------------------------
+    _VENV_NFS=$(cd "$PROJECT_ROOT" && poetry env info --path 2>/dev/null || true)
+    _VENV_SSD="/data/whitefox_venv"
+    _VENV_MARKER="$_VENV_SSD/.wf_installed"
+    _VENV_EXPECTED="${WHITEFOX_WHEEL_VERSION}"
+    if [ -n "$_VENV_NFS" ] && [ -d "$_VENV_NFS" ]; then
+      (
+        flock -x 203
+        if [ ! -f "$_VENV_MARKER" ] || \
+           [ "$(cat "$_VENV_MARKER" 2>/dev/null)" != "$_VENV_EXPECTED" ]; then
+          echo "[$(date)] [$BATCH_LABEL] Pre-seeding venv from NFS to SSD (~30-90 s)…"
+          rm -rf "${_VENV_SSD}.tmp" 2>/dev/null || true
+          cp -a "$_VENV_NFS" "${_VENV_SSD}.tmp"
+          echo "$_VENV_EXPECTED" > "${_VENV_SSD}.tmp/.wf_installed"
+          rm -rf "$_VENV_SSD" 2>/dev/null || true
+          mv "${_VENV_SSD}.tmp" "$_VENV_SSD"
+          echo "[$(date)] [$BATCH_LABEL] Venv SSD pre-seed done"
+        else
+          echo "[$(date)] [$BATCH_LABEL] Venv already on SSD: $_VENV_SSD"
+        fi
+      ) 203>/tmp/wf_venv_preseed.lock
+      export VIRTUAL_ENV="$_VENV_SSD"
+      RUN_PYTHON="$_VENV_SSD/bin/python"
+    else
+      echo "[$(date)] WARN: poetry env path not found; falling back to 'poetry run python'"
+      RUN_PYTHON="poetry run python"
+    fi
     ;;
   20230507)
     VENV_CP310="$PROJECT_ROOT/venv-cp310"
@@ -369,6 +408,26 @@ case "$WHITEFOX_WHEEL_VERSION" in
     echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
     pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
     echo "[$(date)] [$BATCH_LABEL] Install done"
+    # Same venv-to-SSD pattern as the 20250806 case.
+    _VENV_SSD_310="/data/whitefox_venv_cp310"
+    _VENV_MARKER_310="$_VENV_SSD_310/.wf_installed"
+    (
+      flock -x 204
+      if [ ! -f "$_VENV_MARKER_310" ] || \
+         [ "$(cat "$_VENV_MARKER_310" 2>/dev/null)" != "${WHITEFOX_WHEEL_VERSION}" ]; then
+        echo "[$(date)] [$BATCH_LABEL] Pre-seeding venv-cp310 from NFS to SSD…"
+        rm -rf "${_VENV_SSD_310}.tmp" 2>/dev/null || true
+        cp -a "$VENV_CP310" "${_VENV_SSD_310}.tmp"
+        echo "${WHITEFOX_WHEEL_VERSION}" > "${_VENV_SSD_310}.tmp/.wf_installed"
+        rm -rf "$_VENV_SSD_310" 2>/dev/null || true
+        mv "${_VENV_SSD_310}.tmp" "$_VENV_SSD_310"
+        echo "[$(date)] [$BATCH_LABEL] venv-cp310 SSD pre-seed done"
+      else
+        echo "[$(date)] [$BATCH_LABEL] venv-cp310 already on SSD: $_VENV_SSD_310"
+      fi
+    ) 204>/tmp/wf_venv_cp310_preseed.lock
+    deactivate 2>/dev/null || true
+    source "$_VENV_SSD_310/bin/activate"
     RUN_PYTHON="python"
     ;;
 esac

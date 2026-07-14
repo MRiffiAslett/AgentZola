@@ -34,9 +34,13 @@ try:
 
     _libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
     _HAS_MALLOC_TRIM = hasattr(_libc, "malloc_trim")
+    _HAS_FADVISE = hasattr(_libc, "posix_fadvise")
 except Exception:
     _libc = None
     _HAS_MALLOC_TRIM = False
+    _HAS_FADVISE = False
+
+_POSIX_FADV_DONTNEED = 4  # Linux constant — release page cache for a file range
 
 
 def _release_freed_memory() -> None:
@@ -49,6 +53,43 @@ def _release_freed_memory() -> None:
             _libc.malloc_trim(0)
         except Exception:
             pass
+
+
+def _drop_dir_page_cache(dump_dir: str) -> None:
+    """Release kernel page cache for XLA HLO dump files, then delete them.
+
+    XLA test subprocesses write HLO dump files to /data via write().  After the
+    subprocess exits the kernel retains those pages as orphaned page cache
+    (still charged to the cgroup) until evicted under memory pressure.  Calling
+    posix_fadvise(POSIX_FADV_DONTNEED) on each file before deletion signals the
+    kernel to release the pages immediately — without requiring root — so the
+    cgroup memory.current drops before the next allocation wave hits.
+    """
+    import shutil
+
+    if not os.path.isdir(dump_dir):
+        return
+    if _HAS_FADVISE and _libc is not None:
+        try:
+            for entry in os.scandir(dump_dir):
+                if not entry.is_file():
+                    continue
+                try:
+                    fd = os.open(entry.path, os.O_RDONLY)
+                    try:
+                        size = os.fstat(fd).st_size
+                        _libc.posix_fadvise(fd, 0, size, _POSIX_FADV_DONTNEED)
+                    finally:
+                        os.close(fd)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    try:
+        shutil.rmtree(dump_dir)
+        os.makedirs(dump_dir, exist_ok=True)
+    except Exception:
+        pass
 
 
 def _log_parent_rss(logger: logging.Logger, label: str) -> None:
@@ -866,6 +907,24 @@ class StarCoderGenerator:
                         sorted(self.whitefox_state.optimizations.keys()),
                         opt_states=self.whitefox_state.optimizations,
                     )
+                # Purge XLA HLO dump files every 10 iterations so that orphaned
+                # page cache (write()-backed, not mmap) doesn't accumulate in the
+                # cgroup.  Without this, --xla_dump_hlo_pass_re=.* generates
+                # hundreds of files per test; 1000 tests × ~30 MB = 30+ GB of
+                # page cache charged to the cgroup, causing OOM long before RSS
+                # itself hits the limit.
+                _xla_flags_str = os.environ.get("XLA_FLAGS", "")
+                try:
+                    import re as _re_dump
+                    _dm = _re_dump.search(r"--xla_dump_to=(\S+)", _xla_flags_str)
+                    if _dm:
+                        _drop_dir_page_cache(_dm.group(1))
+                        self.logger.info(
+                            "  Periodic XLA dump purge (it%d): %s",
+                            iteration, _dm.group(1),
+                        )
+                except Exception:
+                    pass
 
             if (
                 early_stop_iters > 0
@@ -1080,13 +1139,11 @@ class StarCoderGenerator:
                     if _m:
                         _xla_dump_dir = _m.group(1)
                         try:
-                            import shutil as _shutil
-                            if os.path.isdir(_xla_dump_dir):
-                                _shutil.rmtree(_xla_dump_dir)
-                                os.makedirs(_xla_dump_dir, exist_ok=True)
-                                self.logger.info(
-                                    "  Purged XLA dump dir: %s", _xla_dump_dir
-                                )
+                            _drop_dir_page_cache(_xla_dump_dir)
+                            self.logger.info(
+                                "  Purged XLA dump dir (with fadvise): %s",
+                                _xla_dump_dir,
+                            )
                         except Exception as _xe:
                             self.logger.warning(
                                 "  XLA dump purge failed (non-fatal): %s", _xe
