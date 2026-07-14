@@ -6,8 +6,6 @@ from prompt_gen import generate_requirement_prompts
 
 _SUT_DIR_MAP = {
     "xla": "xilo_xla",
-    "inductor": "xilo_inductor",
-    "tflite": "xilo_tflite",
 }
 
 
@@ -18,7 +16,7 @@ def main():
     parser.add_argument(
         "--sut",
         type=str,
-        choices=["xla", "inductor", "tflite"],
+        choices=["xla"],
         default="xla",
     )
     parser.add_argument(

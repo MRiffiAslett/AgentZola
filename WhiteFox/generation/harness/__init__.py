@@ -3,8 +3,6 @@ from typing import Optional
 
 from domain.harness import ExecutionResult
 from generation.harness.base import TestHarness
-from generation.harness.inductor import PyTorchInductorHarness
-from generation.harness.tflite import TensorFlowLiteHarness
 from generation.harness.xla import TensorFlowXLAHarness
 
 _default_harness = TensorFlowXLAHarness()
@@ -33,7 +31,5 @@ def execute_test_in_subprocess(
 __all__ = [
     "TestHarness",
     "TensorFlowXLAHarness",
-    "PyTorchInductorHarness",
-    "TensorFlowLiteHarness",
     "execute_test_in_subprocess",
 ]

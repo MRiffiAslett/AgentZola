@@ -12,8 +12,6 @@ from generation.generator import StarCoderGenerator
 # Default config paths per SUT (relative to project root)
 _DEFAULT_CONFIG = {
     "xla": "xilo_xla/config/generator.toml",
-    "inductor": "xilo_inductor/config/generator.toml",
-    "tflite": "xilo_tflite/config/generator.toml",
 }
 
 
