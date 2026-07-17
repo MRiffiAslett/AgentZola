@@ -1,0 +1,8 @@
+The model should contain the following pattern:
+```
+t1 = tf.concat([A1, A2, ..., An, ...], axis=concat_dim)
+t2 = tf.slice(t1, [n], [n+1])
+```
+The pattern describes that there is a `concat` operator followed by a `slice` operator in the model. The `concat` operator concatenates a list of tensors `[A1, A2, ..., An, ...]` along a certain dimension `concat_dim`. The `slice` operator then takes a slice of size 1 from the concatenated tensor at the position `n`.
+
+The slice must be of size 1 and the stride must be 1. The slice must start at the beginning of one of the concatenated tensors and end at the end of the same tensor. The slice cannot span multiple concatenated tensors.

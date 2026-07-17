@@ -1,0 +1,25 @@
+The model should contain the following pattern:
+
+```
+t1 = tf.all_reduce(input_tensor1, ...)
+t2 = tf.all_reduce(input_tensor2, ...)
+t3 = tf.some_binary_operation(t1, t2)
+```
+
+The pattern describes that there are two `all_reduce` operators in the model. The first `all_reduce` operator performs a reduction operation on `input_tensor1` and the second `all_reduce` operator performs a reduction operation on `input_tensor2`. The output of these two `all_reduce` operations are then used as inputs to a binary operation.
+
+The `AllReduceReassociate` optimization pass is triggered when the following conditions are met:
+
+1. The binary operation is a reduction operation (e.g., addition, multiplication, maximum, minimum).
+2. The two `all_reduce` operations are compatible, meaning they have the same reduction operation, the same set of replica groups, and the same channel id. If the `all_reduce` operations are followed by a `convert` operation, the `convert` operations should also be compatible, meaning they are casting from a narrower type to a wider type.
+3. The reassociation of `all_reduce` operations is profitable, meaning the total number of elements in the original `all_reduce` operations is not less than the number of elements in the reassociated `all_reduce` operation.
+4. The module does not contain any `all_reduce` with constrained layouts.
+
+If these conditions are met, the optimization pass will transform the original pattern into the following pattern:
+
+```
+t4 = tf.some_binary_operation(input_tensor1, input_tensor2)
+t5 = tf.all_reduce(t4, ...)
+```
+
+This transformation allows the binary operation to be performed before the `all_reduce` operation, potentially reducing the amount of data that needs to be communicated across devices.

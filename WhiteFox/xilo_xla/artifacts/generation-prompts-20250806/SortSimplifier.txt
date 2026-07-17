@@ -1,0 +1,14 @@
+The model should contain a `tf.sort` operation where the output is a tuple, but not all elements of the tuple are used in subsequent computations. 
+
+The `SortSimplifier` optimization pass is triggered when there are unused output values in the sort instruction. This is determined by checking the users of the sort instruction. If all users are `get-tuple-element` instructions and not all indices of the tuple are used, the optimization pass is triggered.
+
+Here is an example of a model that would trigger this optimization:
+
+```python
+# Assume `input_tensor` is a 2D tensor
+sorted_tensor, indices = tf.sort(input_tensor, axis=-1, direction='ASCENDING', name=None)
+# Only use sorted_tensor in subsequent computations, indices is not used
+output = tf.reduce_sum(sorted_tensor, axis=-1)
+```
+
+In this example, the `tf.sort` operation returns a tuple (sorted_tensor, indices), but the `indices` tensor is not used in any subsequent computations. This would trigger the `SortSimplifier` optimization pass.

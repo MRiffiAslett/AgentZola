@@ -1,0 +1,16 @@
+The model should contain multiple AllReduce operations that can be combined into a single AllReduce operation. The AllReduce operations must have exactly one operand and the same reduction operation. 
+
+The pattern in the model would look something like this:
+
+```python
+t1 = tf.reduce_sum(input_tensor1)
+t2 = tf.reduce_sum(input_tensor2)
+...
+tn = tf.reduce_sum(input_tensorn)
+```
+
+In this pattern, `input_tensor1`, `input_tensor2`, ..., `input_tensorn` are the operands of the AllReduce operations. The reduction operation is `tf.reduce_sum` in this case, but it could be any other reduction operation as long as it is the same for all AllReduce operations.
+
+The AllReduce operations are combined into a single AllReduce operation if the total size of the operands is above a certain threshold (`combine_threshold_in_bytes_`) and the number of AllReduce operations is above a certain threshold (`combine_threshold_count_`). 
+
+The combined AllReduce operation produces a tuple, where each element of the tuple corresponds to the result of one of the original AllReduce operations. The original AllReduce operations are then replaced with operations that extract the corresponding element from the tuple.
