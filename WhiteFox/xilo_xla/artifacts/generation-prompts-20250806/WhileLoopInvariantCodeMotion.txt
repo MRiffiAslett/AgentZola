@@ -1,0 +1,35 @@
+The TensorFlow model triggers the optimization pass `WhileLoopInvariantCodeMotion` in TensorFlow XLA when it contains a while loop where some instructions inside the loop body are invariant, meaning they produce the same result in every iteration of the loop. These invariant instructions can be hoisted out of the loop, which can improve the performance of the model.
+
+The model should contain a while loop with the following characteristics:
+
+1. The while loop should have a tuple shape. This means the while loop should operate on a tuple of tensors, not a single tensor.
+
+2. The while loop should not contain any domain instructions or host offloading annotations. These instructions should stay in their original position.
+
+3. The while loop should not contain any instructions with side effects, control predecessors, or control successors.
+
+4. The while loop should contain instructions that are invariant. These instructions produce the same result in every iteration of the loop. Invariant instructions can be constants, reshapes, or other instructions that are not worth hoisting individually but can be hoisted if they let us hoist some instruction using them.
+
+Here is an example of a TensorFlow model that can trigger the `WhileLoopInvariantCodeMotion` optimization:
+
+```python
+import tensorflow as tf
+
+# Define a tensor
+x = tf.constant([1, 2, 3, 4, 5])
+
+# Define a condition for the while loop
+def condition(x):
+    return tf.reduce_sum(x) < 100
+
+# Define the body of the while loop
+def body(x):
+    # This reshape operation is invariant and can be hoisted out of the loop
+    x_reshaped = tf.reshape(x, shape=(-1, 1))
+    return x_reshaped + 1
+
+# Create a while loop
+result = tf.while_loop(condition, body, [x])
+```
+
+In this example, the `tf.reshape` operation inside the while loop body is invariant because it produces the same result in every iteration of the loop. Therefore, it can be hoisted out of the loop by the `WhileLoopInvariantCodeMotion` optimization pass.

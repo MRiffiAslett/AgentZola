@@ -1,0 +1,21 @@
+The model should contain collective operations such as `AllReduce`, `AllGather`, `CollectiveBroadcast`, `CollectivePermute`, `AllToAll`, `ReduceScatter`, or `RaggedAllToAll`. These operations should meet certain conditions defined by the `config_` object in the `AsyncCollectiveCreator` class. For example, for `AllReduce` and `AllGather`, the size of the shape of the operation should be greater than or equal to the minimum threshold defined in `config_`.
+
+Here is an example of a model that could trigger this optimization:
+
+```python
+import tensorflow as tf
+
+# Assume that we have a distributed strategy context
+strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+
+with strategy.scope():
+    # Input tensors
+    tensor1 = tf.constant([1.0, 2.0, 3.0, 4.0])
+    tensor2 = tf.constant([1.0, 2.0, 3.0, 4.0])
+
+    # Collective operations
+    result1 = tf.raw_ops.AllReduce(input=tensor1, reduction_op='Add', num_devices=2)
+    result2 = tf.raw_ops.AllGather(input=tensor2, num_devices=2)
+```
+
+In this example, the `AllReduce` and `AllGather` operations could be replaced by their asynchronous versions if the size of their shapes is greater than or equal to the minimum threshold defined in `config_`.

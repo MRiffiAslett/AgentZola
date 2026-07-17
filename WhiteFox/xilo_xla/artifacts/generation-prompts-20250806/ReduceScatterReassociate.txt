@@ -1,0 +1,11 @@
+The model should contain the following pattern:
+```
+t1 = tf.raw_ops.ReduceScatter(input_tensor1, ...)
+t2 = tf.raw_ops.ReduceScatter(input_tensor2, ...)
+t3 = tf.some_reduction_op(t1, t2)
+```
+The pattern describes that there are two `ReduceScatter` operations in the model, each taking a different input tensor (`input_tensor1` and `input_tensor2`). The output of these two `ReduceScatter` operations are then used as inputs to a reduction operation (`some_reduction_op`).
+
+The `ReduceScatter` operations must be compatible with each other, meaning they belong to the same domain, have the same reduction kind, and have the same scatter dimension. 
+
+Additionally, each `ReduceScatter` operation should only have one user, and if they have scheduling annotations, the annotations should be the same. If these conditions are not met, the optimization pass will not be triggered.

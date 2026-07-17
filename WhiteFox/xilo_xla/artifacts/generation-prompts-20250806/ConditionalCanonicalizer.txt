@@ -1,0 +1,18 @@
+The model should contain a `tf.cond` operation where the inputs and/or outputs of the conditional branches are not tuples. 
+
+The `tf.cond` operation in TensorFlow is represented as a `kConditional` operation in XLA. The `ConditionalCanonicalizer` optimization pass is triggered when the inputs or outputs of the conditional branches of a `kConditional` operation are not tuples. 
+
+Here is an example of a TensorFlow model that would trigger this optimization pass:
+
+```python
+def true_fn(x):
+    return x * 2
+
+def false_fn(x):
+    return x + 2
+
+x = tf.constant(5)
+y = tf.cond(tf.constant(True), lambda: true_fn(x), lambda: false_fn(x))
+```
+
+In this example, the `true_fn` and `false_fn` functions both take a single scalar input and return a single scalar output. This would trigger the `ConditionalCanonicalizer` optimization pass because the inputs and outputs of the conditional branches are not tuples.
