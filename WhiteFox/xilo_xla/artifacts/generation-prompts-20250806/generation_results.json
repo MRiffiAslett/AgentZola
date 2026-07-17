@@ -1,0 +1,62 @@
+{
+  "WhileLoopInvariantCodeMotion": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "ReduceScatterReassociate": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "ConditionalCanonicalizer": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "DynamicIndexSplitter": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "SortSimplifier": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "AsyncCollectiveCreator": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "ConvertAsyncCollectivesToSync": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "AllReduceReassociate": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "AllReduceCombiner": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "SliceConcatForwarding": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "IdentityReshapeRemoving": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "ReshapeReshapeForwarding": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "ReshapeBroadcastForwarding": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "IdentityConvertRemoving": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  },
+  "ConcatForwarding": {
+    "status": "failed",
+    "error": "Failed to generate requirement after 3 attempts"
+  }
+}
