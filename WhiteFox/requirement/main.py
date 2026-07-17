@@ -71,10 +71,12 @@ def main():
         skip_existing = gpt_config.get("skip_existing")
         system_message = gpt_config.get("system_message")
 
-        if gpt_output_dir.exists():
-            import shutil
-
-            shutil.rmtree(gpt_output_dir)
+        # NOTE: deliberately NOT rmtree'd. A prior run may have completed only a
+        # prefix of the optimizations (e.g. an OpenAI rate-limit/timeout wall hit
+        # partway through, orphaning every optimization after it — see the 34/49
+        # split discovered in generation-prompts-20250806).  Preserving the
+        # directory lets skip_existing (below) resume instead of re-spending API
+        # calls/cost on optimizations that already succeeded.
         gpt_output_dir.mkdir(exist_ok=True, parents=True)
 
         gpt = GPTModel(

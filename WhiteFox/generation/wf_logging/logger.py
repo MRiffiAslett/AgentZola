@@ -561,6 +561,26 @@ class WhiteFoxLogger:
         coverage_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Write a machine-readable sidecar used by the SLURM aggregator."""
+        stats_file = self.log_dir / "run_stats.json"
+
+        # If a crash mid-batch caused the SLURM wrapper to re-invoke this
+        # process with a shrunk --only-opt (see completed_opts/ resume logic),
+        # this fresh WhiteFoxLogger's in-memory opt_stats/oracle_counts only
+        # covers optimizations touched *this* attempt. Fall back to whatever
+        # a prior attempt already wrote for everything else, so the sidecar
+        # never regresses to zero counts for already-completed optimizations.
+        prior_opt_stats: Dict[str, Any] = {}
+        prior_oracle_counts: Dict[str, Any] = {}
+        prior_thompson: Dict[str, Any] = {}
+        if stats_file.exists():
+            try:
+                prior = json.loads(stats_file.read_text())
+                prior_opt_stats = prior.get("opt_stats", {})
+                prior_oracle_counts = prior.get("oracle_counts", {})
+                prior_thompson = prior.get("thompson", {})
+            except Exception:
+                pass
+
         stats: Dict[str, Any] = {
             "metadata": {
                 "tf_version": self.tf_version,
@@ -568,12 +588,19 @@ class WhiteFoxLogger:
                 "timestamp": datetime.now().isoformat(),
             },
             "opt_stats": {
-                name: {k: v for k, v in self.opt_stats.get(name, {}).items()
-                       if isinstance(v, int)}
+                name: (
+                    {k: v for k, v in self.opt_stats[name].items() if isinstance(v, int)}
+                    if name in self.opt_stats
+                    else prior_opt_stats.get(name, {})
+                )
                 for name in opt_names
             },
             "oracle_counts": {
-                name: dict(self.oracle_counts.get(name, {}))
+                name: (
+                    dict(self.oracle_counts[name])
+                    if name in self.oracle_counts
+                    else prior_oracle_counts.get(name, {})
+                )
                 for name in opt_names
             },
             "coverage": coverage_data or {},
@@ -591,11 +618,11 @@ class WhiteFoxLogger:
                         "sum_alpha": sum(t.alpha for t in tests),
                         "sum_beta": sum(t.beta for t in tests),
                     }
+                elif name in prior_thompson:
+                    thompson[name] = prior_thompson[name]
                 else:
                     thompson[name] = {"n": 0, "sum_alpha": 0.0, "sum_beta": 0.0}
             stats["thompson"] = thompson
-
-        stats_file = self.log_dir / "run_stats.json"
         try:
             with open(stats_file, "w") as f:
                 json.dump(stats, f, indent=2)

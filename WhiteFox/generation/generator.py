@@ -1088,6 +1088,9 @@ class StarCoderGenerator:
         if only_optimizations:
             self.logger.info("  Filtering to: %s", only_optimizations)
 
+        completed_dir = self.logging_dir / "completed_opts"
+        completed_dir.mkdir(parents=True, exist_ok=True)
+
         if parallel_optimizations <= 1:
             self.logger.info("Running optimizations sequentially")
             for opt_state in opt_states_to_process:
@@ -1095,6 +1098,13 @@ class StarCoderGenerator:
                     self._run_single_optimization(
                         opt_state, output_root, whitefox_logger, only_optimizations
                     )
+                    # Marker for the SLURM wrapper's OOM/SIGBUS resume logic:
+                    # a hard kill (SIGKILL/SIGBUS) never reaches this line, so
+                    # only optimizations that *actually* finished are marked —
+                    # the wrapper re-invokes with --only-opt reduced to
+                    # whatever has no marker yet, instead of losing every
+                    # remaining optimization in the batch to one crash.
+                    (completed_dir / f"{opt_state.spec.internal_name}.done").touch()
                 except Exception as e:
                     whitefox_logger.log_error(
                         opt_state.spec.internal_name,

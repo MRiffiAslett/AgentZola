@@ -100,7 +100,16 @@ class GPTModel:
         skip_existing: bool = True,
     ) -> Dict[str, Dict]:
         output_dir.mkdir(exist_ok=True, parents=True)
-        results = {}
+        results_file = output_dir / "generation_results.json"
+
+        # Resume from a prior partial run's results (e.g. if this process itself
+        # was killed/restarted) so failed/succeeded status isn't lost between runs.
+        results: Dict[str, Dict] = {}
+        if results_file.exists():
+            try:
+                results = json.loads(results_file.read_text())
+            except Exception:
+                results = {}
 
         total = len(prompts)
         for idx, (opt_name, prompt) in enumerate(prompts.items(), 1):
@@ -113,9 +122,22 @@ class GPTModel:
             if skip_existing and output_file.exists():
                 continue
 
-            descriptions, metadata = self.generate_requirement(
-                prompt=prompt, n_samples=n_samples
-            )
+            # A single optimization exhausting all retries (rate limit, timeout,
+            # content policy, etc.) must not abort the whole batch — that is
+            # exactly how generation-prompts-20250806 ended up with only 34/49
+            # optimizations: an uncaught exception here silently orphaned every
+            # optimization after the failing one, with no results.json written
+            # to even reveal it happened.
+            try:
+                descriptions, metadata = self.generate_requirement(
+                    prompt=prompt, n_samples=n_samples
+                )
+            except Exception as e:
+                print(f"  ✗ FAILED: {opt_name}: {e}")
+                results[opt_name] = {"status": "failed", "error": str(e)}
+                with open(results_file, "w") as f:
+                    json.dump(results, f, indent=2)
+                continue
 
             description = descriptions[0] if descriptions else ""
 
@@ -127,13 +149,19 @@ class GPTModel:
                 "descriptions": [description],
                 "metadata": metadata,
             }
+            # Write incrementally (not just at the end) so a hard crash/kill
+            # mid-batch still leaves an accurate results.json for everything
+            # completed so far.
+            with open(results_file, "w") as f:
+                json.dump(results, f, indent=2)
 
             print(
                 f"  ✓ Generated {len(descriptions)} description(s) in {metadata['generation_time']:.2f}s"
             )
 
-        results_file = output_dir / "generation_results.json"
-        with open(results_file, "w") as f:
-            json.dump(results, f, indent=2)
+        failed = [k for k, v in results.items() if v.get("status") == "failed"]
+        if failed:
+            print(f"\n[SUMMARY] {len(failed)} optimization(s) failed: {failed}")
+            print("Re-run this command to retry only the failed/missing ones.")
 
         return results
