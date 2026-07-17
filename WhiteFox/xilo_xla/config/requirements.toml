@@ -7,6 +7,6 @@ timeout = 300
 n_samples = 1                         
 max_retries = 3                     
 retry_delay = 10                      
-skip_existing = false
+skip_existing = true
 use_mini = false
 system_message = "You are a source code analyzer for TensorFlow XLA."

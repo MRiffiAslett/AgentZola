@@ -51,10 +51,22 @@ def load_optimization_specs(
         raise FileNotFoundError(f"Requirement directory not found: {req_dir}")
 
     if optimizations is not None:
+        missing = []
         for name in optimizations:
             txt = req_dir / f"{name}.txt"
-
+            if not txt.exists():
+                # Don't crash the whole array job (all --only-opt targets in this
+                # batch) over one optimization whose generation prompt hasn't been
+                # produced yet (e.g. requirement/main.py's GPT step is still
+                # backfilling it).  Skip with a loud warning instead.
+                missing.append(name)
+                continue
             specs[name] = _make_spec(name, txt, aliases)
+        if missing:
+            logger.warning(
+                "Skipping %d optimization(s) with no generation prompt in %s: %s",
+                len(missing), req_dir, missing,
+            )
     else:
         for txt in sorted(req_dir.glob("*.txt")):
             specs[txt.stem] = _make_spec(txt.stem, txt, aliases)

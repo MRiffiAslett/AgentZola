@@ -489,9 +489,58 @@ echo "[$(date)] GPU trace:    $GPU_TRACE_FILE (PID=$GPU_TRACER_PID)"
 ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
 echo "[$(date)] nproc limit: $(ulimit -u)"
 
+# ---------------------------------------------------------------------------
+# Auto-resume on crash: an OOM (137) or SIGBUS (135) kills the whole process,
+# silently orphaning every optimization after the one in progress at kill
+# time — this is what happened to batches 1 and 2 in job 260703, each losing
+# 20+ optimizations to a single memory spike partway through a ~24h run.
+#
+# generator.py touches "$WHITEFOX_LOGGING_DIR/completed_opts/<name>.done" the
+# instant an optimization finishes (before the next one starts allocating).
+# On a nonzero exit we recompute --only-opt from whatever has no marker yet
+# and retry, so one crash costs at most the in-progress optimization's
+# progress — not the rest of the batch.
+# ---------------------------------------------------------------------------
+COMPLETED_DIR="$WHITEFOX_LOGGING_DIR/completed_opts"
+MAX_RESUME_ATTEMPTS="${WHITEFOX_MAX_RESUME_ATTEMPTS:-5}"
+REMAINING_OPTS="$OPT_CSV"
 GEN_EXIT=0
-$RUN_PYTHON -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$OPT_CSV" \
-  || GEN_EXIT=$?
+
+for ATTEMPT in $(seq 1 "$MAX_RESUME_ATTEMPTS"); do
+  echo "[$(date)] $BATCH_LABEL attempt $ATTEMPT/$MAX_RESUME_ATTEMPTS: --only-opt $REMAINING_OPTS"
+  GEN_EXIT=0
+  $RUN_PYTHON -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$REMAINING_OPTS" \
+    || GEN_EXIT=$?
+
+  if [ "$GEN_EXIT" = "0" ]; then
+    break
+  fi
+
+  echo "[$(date)] $BATCH_LABEL attempt $ATTEMPT failed (exit $GEN_EXIT)"
+
+  # Recompute what's left to do from completion markers.
+  IFS=',' read -ra _ALL_ATTEMPT_OPTS <<< "$OPT_CSV"
+  _STILL_TODO=()
+  for _o in "${_ALL_ATTEMPT_OPTS[@]}"; do
+    if [ ! -f "$COMPLETED_DIR/${_o}.done" ]; then
+      _STILL_TODO+=("$_o")
+    fi
+  done
+
+  if [ "${#_STILL_TODO[@]}" -eq 0 ]; then
+    echo "[$(date)] $BATCH_LABEL: all optimizations have completion markers despite nonzero exit; not retrying."
+    GEN_EXIT=0
+    break
+  fi
+  if [ "$ATTEMPT" -eq "$MAX_RESUME_ATTEMPTS" ]; then
+    echo "[$(date)] $BATCH_LABEL: exhausted $MAX_RESUME_ATTEMPTS attempts; ${#_STILL_TODO[@]} optimization(s) never completed: ${_STILL_TODO[*]}"
+    break
+  fi
+
+  REMAINING_OPTS=$(IFS=,; echo "${_STILL_TODO[*]}")
+  echo "[$(date)] $BATCH_LABEL: ${#_STILL_TODO[@]} optimization(s) remaining, retrying: $REMAINING_OPTS"
+  sleep 10
+done
 
 kill "$TRACER_PID" 2>/dev/null || true
 kill "$GPU_TRACER_PID" 2>/dev/null || true

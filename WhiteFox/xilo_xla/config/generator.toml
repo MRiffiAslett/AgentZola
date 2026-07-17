@@ -57,32 +57,59 @@ test_timeout = 30
 parallel_test_workers = 4
 # Keep 1 on a single GPU: vLLM is shared under a lock; higher values mostly add contention without throughput wins.
 parallel_optimizations = 1
+# Full 49-optimization spec (optimization_specification_xla-20250806.json).
+# 15 of these (AllReduceCombiner, AllReduceReassociate, AsyncCollectiveCreator,
+# ConcatForwarding, ConditionalCanonicalizer, ConvertAsyncCollectivesToSync,
+# DynamicIndexSplitter, IdentityConvertRemoving, IdentityReshapeRemoving,
+# ReduceScatterReassociate, ReshapeBroadcastForwarding, ReshapeReshapeForwarding,
+# SliceConcatForwarding, SortSimplifier, WhileLoopInvariantCodeMotion) are
+# missing their generation-prompts-20250806/*.txt file — the GPT requirement
+# pipeline (requirement/main.py) crashed partway through and orphaned them.
+# This is now safe to list regardless: generation/prompts.py skips any
+# optimization with no prompt file (logs a warning) instead of crashing the
+# whole job.  Re-run `python requirement/main.py --sut xla --source-version
+# 20250806` (resumable — see requirement/prompt_exec.py) to backfill the 15
+# and get full coverage.
 optimizations = [
     "AllGatherBroadcastReorder",
     "AllGatherCombiner",
     "AllGatherDecomposer",
+    "AllReduceCombiner",
     "AllReduceFolder",
+    "AllReduceReassociate",
     "AllReduceSimplifier",
+    "AsyncCollectiveCreator",
     "BatchDotSimplification",
     "Bfloat16ConversionFolding",
     "BroadcastCanonicalizer",
     "ChangeOpDataType",
     "CollectivesScheduleLinearizer",
+    "ConcatForwarding",
+    "ConditionalCanonicalizer",
+    "ConvertAsyncCollectivesToSync",
     "ConvertMover",
     "Defuser",
     "DotDecomposer",
     "DotMerger",
+    "DynamicIndexSplitter",
     "HloConstantFolding",
     "HloCse",
     "HloDce",
     "HloElementTypeConverter",
+    "IdentityConvertRemoving",
+    "IdentityReshapeRemoving",
     "LoopScheduleLinearizer",
     "MapInliner",
     "ReduceScatterCombiner",
     "ReduceScatterDecomposer",
+    "ReduceScatterReassociate",
+    "ReshapeBroadcastForwarding",
+    "ReshapeReshapeForwarding",
     "ShardingRemover",
     "SimplifyFpConversions",
+    "SliceConcatForwarding",
     "SliceSinker",
+    "SortSimplifier",
     "StochasticConvertDecomposer",
     "TopkRewriter",
     "TransposeFolding",
@@ -90,6 +117,7 @@ optimizations = [
     "TupleSimplifier",
     "WhileLoopConstantSinking",
     "WhileLoopExpensiveInvariantCodeMotion",
+    "WhileLoopInvariantCodeMotion",
     "WhileLoopTripCountAnnotator",
     "ZeroSizedHloElimination",
 ]
