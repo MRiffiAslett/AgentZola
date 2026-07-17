@@ -163,6 +163,13 @@ export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
+# Surface vLLM's internal scheduler/preemption events (KV-cache swap/overflow
+# decisions) so a future OOM postmortem has something to correlate against.
+# The default offline LLM API doesn't emit periodic scheduler stats the way
+# the online server does, so this is the next-best free source of visibility
+# into the batch1/batch2 job-260703 memory-spike investigation.
+export VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL:-DEBUG}"
+
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
 export PROJECT_ROOT
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
