@@ -849,6 +849,14 @@ class StarCoderGenerator:
                         whitefox_logger.log_oracle_outcome(opt_name, oracle_type)
 
                     for bug_report in bug_reports:
+                        # bug_report.logs_file (oracle.py) points at test_file
+                        # with a .log suffix on the assumption a raw log gets
+                        # written there; nothing else in the pipeline does, so
+                        # without this write it's a permanently dangling path.
+                        try:
+                            bug_report.logs_file.write_text(result.log_text)
+                        except Exception:
+                            pass
                         whitefox_logger.log_bug_report(bug_report)
                         self.logger.warning(
                             f"Bug detected: {bug_report.oracle_type} in {test_file}"
@@ -901,11 +909,32 @@ class StarCoderGenerator:
                 _release_freed_memory()
 
             # Checkpoint periodically so a mid-opt SIGKILL loses minimal stats.
+            # flush_and_clear() must run alongside generate_run_summary(), not
+            # on its own separate per-optimization cadence: run_stats.json's
+            # opt_stats/oracle_counts are only ever incremented in memory, so
+            # without a matching flush a crash between checkpoints leaves
+            # run_stats.json reporting counts (e.g. "37 AllDiff") that have no
+            # corresponding row in execution_results.jsonl/bug_reports.json to
+            # back them up (observed job 262025 batch2, WhileLoopInvariantCodeMotion).
             if (iteration + 1) % 10 == 0:
+                whitefox_logger.flush_and_clear()
                 with self._state_lock:
                     whitefox_logger.generate_run_summary(
                         sorted(self.whitefox_state.optimizations.keys()),
                         opt_states=self.whitefox_state.optimizations,
+                    )
+                # Coverage snapshot on the same cadence: appends one row to
+                # coverage/coverage_history.jsonl with both the XLA-subset
+                # and full-TF-tree line coverage, so growth over the run can
+                # be charted per optimization. Costs a full llvm-cov report
+                # pass (tens of seconds) each time it fires — do not lower
+                # the interval without accounting for that.
+                try:
+                    self.coverage.record_snapshot(opt_name, iteration + 1)
+                except Exception as _cov_exc:
+                    self.logger.warning(
+                        "  Coverage snapshot failed (non-fatal) at it%d: %s",
+                        iteration, _cov_exc,
                     )
                 # Purge XLA HLO dump files every 10 iterations so that orphaned
                 # page cache (write()-backed, not mmap) doesn't accumulate in the

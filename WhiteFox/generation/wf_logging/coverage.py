@@ -1,6 +1,7 @@
 
 
 import glob
+import json
 import logging
 import os
 import re
@@ -11,8 +12,9 @@ import sys
 import tempfile
 import threading
 import multiprocessing
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +484,17 @@ class CoverageCollector:
 
         return total_merged
 
-    def report(self) -> Optional[Dict[str, int]]:
+    def _compute_coverage(self) -> Optional[Dict[str, int]]:
+        """Run llvm-cov report over the current merged.profdata and return
+        both the XLA-subset and full-TF line hit/total counts.
+
+        Pure computation, no file writes — shared by ``report()`` (which
+        also writes the human-readable ``coverage_report.log``) and
+        ``record_snapshot()`` (which appends a JSONL row instead). Costs
+        one full ``llvm-cov report`` pass over every instrumented TF .so
+        file each call (tens of seconds on the full TF build), so callers
+        should not invoke this on every iteration.
+        """
         if not self.profdata_file.exists():
             logger.warning("No merged profdata; skipping report")
             return None
@@ -573,14 +585,26 @@ class CoverageCollector:
 
         xla_lines_hit = xla_lines_total - xla_lines_missed
         all_lines_hit = all_lines_total - all_lines_missed
-        xla_pct = (xla_lines_hit / xla_lines_total * 100) if xla_lines_total else 0
 
-        result = {
+        return {
             "xla_lines_hit": xla_lines_hit,
             "xla_lines_total": xla_lines_total,
             "all_lines_hit": all_lines_hit,
             "all_lines_total": all_lines_total,
+            "xla_files": xla_files,
+            "total_files": total_files,
         }
+
+    def report(self) -> Optional[Dict[str, int]]:
+        result = self._compute_coverage()
+        if result is None:
+            return None
+
+        xla_lines_hit = result["xla_lines_hit"]
+        xla_lines_total = result["xla_lines_total"]
+        all_lines_hit = result["all_lines_hit"]
+        all_lines_total = result["all_lines_total"]
+        xla_pct = (xla_lines_hit / xla_lines_total * 100) if xla_lines_total else 0
 
         with open(self.report_file, "w") as f:
             f.write("=" * 60 + "\n")
@@ -589,19 +613,62 @@ class CoverageCollector:
             f.write(f"XLA lines hit:    {xla_lines_hit:>8,}\n")
             f.write(f"XLA lines total:  {xla_lines_total:>8,}\n")
             f.write(f"XLA coverage:     {xla_pct:>7.2f}%\n")
-            f.write(f"XLA source files: {xla_files:>8,}\n")
+            f.write(f"XLA source files: {result['xla_files']:>8,}\n")
             f.write("\n--- for reference ---\n")
             f.write(f"All TF lines hit:   {all_lines_hit:>8,}\n")
             f.write(f"All TF lines total: {all_lines_total:>8,}\n")
-            f.write(f"All TF files:       {total_files:>8,}\n")
+            f.write(f"All TF files:       {result['total_files']:>8,}\n")
             f.write(f"\nXLA path filters: {_XLA_PATH_MARKERS}\n")
             f.write("=" * 60 + "\n")
 
         logger.info(
             "XLA coverage: %d / %d lines hit (%.2f%%) across %d XLA files",
-            xla_lines_hit, xla_lines_total, xla_pct, xla_files,
+            xla_lines_hit, xla_lines_total, xla_pct, result["xla_files"],
         )
-        return result
+        return {k: v for k, v in result.items() if k not in ("xla_files", "total_files")}
+
+    def record_snapshot(
+        self, optimization: str, iteration: int
+    ) -> Optional[Dict[str, Any]]:
+        """Merge pending profraw and append one coverage data point.
+
+        Writes one JSON line to ``coverage/coverage_history.jsonl`` per
+        call, with both the XLA-subset and full-TF-tree coverage so callers
+        don't have to choose between them — reports both explicitly. Meant
+        to be called periodically (e.g. every 10 iterations, alongside the
+        existing run_stats.json checkpoint) rather than every iteration:
+        each call runs a full ``llvm-cov report`` over the whole merged
+        profile, which costs real wall-clock time (tens of seconds on the
+        full TF build) independent of how much coverage actually changed.
+        """
+        with self._lock:
+            self.merge_pending()
+            result = self._compute_coverage()
+        if result is None:
+            return None
+
+        xla_hit, xla_total = result["xla_lines_hit"], result["xla_lines_total"]
+        all_hit, all_total = result["all_lines_hit"], result["all_lines_total"]
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "optimization": optimization,
+            "iteration": iteration,
+            "xla_lines_hit": xla_hit,
+            "xla_lines_total": xla_total,
+            "xla_coverage_pct": round((xla_hit / xla_total * 100) if xla_total else 0.0, 4),
+            "all_lines_hit": all_hit,
+            "all_lines_total": all_total,
+            "all_coverage_pct": round((all_hit / all_total * 100) if all_total else 0.0, 4),
+        }
+
+        history_file = self.cov_dir / "coverage_history.jsonl"
+        try:
+            with open(history_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except OSError as exc:
+            logger.warning("Could not append coverage_history.jsonl: %s", exc)
+
+        return entry
 
     def _write_coverage_unavailable(self, detail: str) -> None:
         sep = "=" * 60
