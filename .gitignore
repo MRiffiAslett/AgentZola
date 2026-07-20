@@ -5,6 +5,10 @@ __pycache__/
 # IDE
 .vscode/
 
+# Claude Code project notes (local-only, may contain cluster paths/job details)
+CLAUDE.md
+.claude/settings.local.json
+
 # WhiteFox generated artifacts
 WhiteFox/slurm/output_tf
 WhiteFox/logging/
