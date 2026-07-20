@@ -546,6 +546,27 @@ for ATTEMPT in $(seq 1 "$MAX_RESUME_ATTEMPTS"); do
 
   REMAINING_OPTS=$(IFS=,; echo "${_STILL_TODO[*]}")
   echo "[$(date)] $BATCH_LABEL: ${#_STILL_TODO[@]} optimization(s) remaining, retrying: $REMAINING_OPTS"
+
+  # An OOM-killed attempt can leave an orphaned vLLM/CUDA worker still
+  # holding GPU memory (SIGKILL on the parent doesn't guarantee its child
+  # processes exit). The next retry's vLLM engine then fails at startup
+  # before running a single test, and every remaining attempt fails the
+  # same way since the leak persists across retries on the same node.
+  # Observed job 262025 batch2: attempt 1 OOM-killed, attempts 2-5 all
+  # failed in ~30s with "Free memory on device (10.5/79.25 GiB) ... less
+  # than desired GPU memory utilization" -- the 5-attempt safety net never
+  # got a chance to actually retry. --gres=gpu:1 gives this job exclusive
+  # use of its allocated GPU, so any compute process nvidia-smi reports on
+  # it belongs to us; clear it before the next attempt.
+  _leaked_pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | grep -v '^$' || true)
+  if [ -n "$_leaked_pids" ]; then
+    echo "[$(date)] $BATCH_LABEL: killing leftover GPU process(es) before retry: $_leaked_pids"
+    for _pid in $_leaked_pids; do
+      kill -9 "$_pid" 2>/dev/null || true
+    done
+    sleep 5
+  fi
+
   sleep 10
 done
 
@@ -702,7 +723,21 @@ for _bname, stats in all_stats:
         agg_thompson[opt]["sum_alpha"] += td.get("sum_alpha", 0.0)
         agg_thompson[opt]["sum_beta"]  += td.get("sum_beta",  0.0)
 
-all_opt_names = sorted(set(list(agg_opt.keys()) + list(agg_oracle.keys())))
+# Row set must come from the opt_stats/oracle_counts *keys* every batch's
+# run_stats.json always writes (one per configured optimization, per
+# WhiteFoxLogger._write_stats_json), not from agg_opt/agg_oracle's own keys.
+# Those are defaultdicts that only materialize an entry once a batch has at
+# least one nonzero stat for that optimization, so an optimization with zero
+# data in every batch (e.g. it crashed before ever being reached) would
+# otherwise vanish from every table below with no row, not even a zero row,
+# to indicate it was ever supposed to be there. Observed job 262025 batch2:
+# WhileLoopTripCountAnnotator and ZeroSizedHloElimination silently dropped
+# from Tables 1/3/4/5 this way (47 rows shown instead of 49).
+all_opt_names_set = set()
+for _bname, stats in all_stats:
+    all_opt_names_set.update(stats.get("opt_stats", {}).keys())
+    all_opt_names_set.update(stats.get("oracle_counts", {}).keys())
+all_opt_names = sorted(all_opt_names_set)
 
 # ---- Helpers ---------------------------------------------------------------
 def pct(n, total):
@@ -876,6 +911,8 @@ with open(combined_summary, "w") as f:
     f.write("=" * 95 + "\n")
     f.write("WHITEFOX COMBINED RUN SUMMARY (all batches)\n")
     f.write("=" * 95 + "\n\n")
+
+    f.write(f"Run ID:      {job_id or 'unknown'}  (SLURM_ARRAY_JOB_ID)\n")
 
     tf_label = tf_version or "unknown"
     if tf_version == "20250806":
