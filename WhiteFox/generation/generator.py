@@ -923,19 +923,6 @@ class StarCoderGenerator:
                         sorted(self.whitefox_state.optimizations.keys()),
                         opt_states=self.whitefox_state.optimizations,
                     )
-                # Coverage snapshot on the same cadence: appends one row to
-                # coverage/coverage_history.jsonl with both the XLA-subset
-                # and full-TF-tree line coverage, so growth over the run can
-                # be charted per optimization. Costs a full llvm-cov report
-                # pass (tens of seconds) each time it fires — do not lower
-                # the interval without accounting for that.
-                try:
-                    self.coverage.record_snapshot(opt_name, iteration + 1)
-                except Exception as _cov_exc:
-                    self.logger.warning(
-                        "  Coverage snapshot failed (non-fatal) at it%d: %s",
-                        iteration, _cov_exc,
-                    )
                 # Purge XLA HLO dump files every 10 iterations so that orphaned
                 # page cache (write()-backed, not mmap) doesn't accumulate in the
                 # cgroup.  Without this, --xla_dump_hlo_pass_re=.* generates
