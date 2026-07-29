@@ -127,7 +127,21 @@ def is_equal(x, y) -> Tuple[bool, Optional[str]]:
         eq = _floats_equal(x, y)
         return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.TFTensor, DataType.KerasTensor, DataType.TorchTensor]:
-        eq = np.allclose(np.array(x), np.array(y), atol=_NUMERIC_TOLERANCE, equal_nan=True)
+        try:
+            ax, ay = np.array(x), np.array(y)
+        except (ValueError, TypeError):
+            return False, "Type mismatch: {} vs {}".format(x_type.name, y_type.name)
+        if ax.shape != ay.shape:
+            # A genuine output-shape divergence between modes is itself an
+            # interesting compiler bug, not a "type" mismatch in the usual
+            # sense — but np.allclose() below would raise ValueError on
+            # unbroadcastable shapes (dropping this test from Table 4/5
+            # entirely via the generic result_processing_error handler in
+            # generator.py) rather than classify it. Report it explicitly so
+            # value_diff_type()'s "Type mismatch" substring check routes it
+            # to AllDiff_TypeMismatch instead of being silently swallowed.
+            return False, "Type mismatch: shape {} vs shape {}".format(ax.shape, ay.shape)
+        eq = np.allclose(ax, ay, atol=_NUMERIC_TOLERANCE, equal_nan=True)
         return eq, None if eq else "Value mismatch: {} vs {}".format(x, y)
     elif x_type in [DataType.List, DataType.Tuple]:
         if len(x) != len(y):

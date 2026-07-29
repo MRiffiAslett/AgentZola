@@ -148,8 +148,20 @@ class CoverageCollector:
         self._llvm_dir: Optional[str] = None
         self._profdata_tool: Optional[str] = None
 
-        # Fresh merged profile for this WhiteFox run (avoid stacking onto old runs).
-        self.profdata_file.unlink(missing_ok=True)
+        # Existing completed_opts/*.done markers mean the SLURM wrapper's
+        # retry loop is re-invoking this process after a crash (see the
+        # matching check in generator.py's generate_whitefox()) — NOT a
+        # fresh run. merge_pending() runs incrementally during each
+        # optimization's iterations, so on a resume, merged.profdata already
+        # holds real coverage from every optimization completed in a prior
+        # attempt; wiping it here would silently drop that coverage from
+        # this batch's final report and from the cross-batch union.
+        completed_dir = logging_dir / "completed_opts"
+        is_resume = completed_dir.exists() and any(completed_dir.glob("*.done"))
+
+        if not is_resume:
+            # Fresh merged profile for this WhiteFox run (avoid stacking onto old runs).
+            self.profdata_file.unlink(missing_ok=True)
         tmp = self.profdata_file.with_suffix(".profdata.tmp")
         tmp.unlink(missing_ok=True)
 

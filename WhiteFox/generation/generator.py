@@ -1046,6 +1046,17 @@ class StarCoderGenerator:
 
         self.whitefox_state = self._load_or_init_whitefox_state()
 
+        # Existing .done markers mean the SLURM wrapper's retry loop is
+        # re-invoking this process after a crash (see the marker-writing
+        # comment further down) — NOT a fresh run. On a resume, the
+        # already-completed optimizations' generated test files and raw
+        # per-test logs (execution_results.jsonl, bug_reports.json, ...)
+        # must survive, or they're lost even though run_stats.json still
+        # reports full counts for them.
+        completed_dir = self.logging_dir / "completed_opts"
+        is_resume = completed_dir.exists() and any(completed_dir.glob("*.done"))
+        completed_dir.mkdir(parents=True, exist_ok=True)
+
         output_dir = Path(self.config.paths.output_dir)
         output_root = Path(
             self.config.paths.test_output_root or str(output_dir / "whitefox_tests")
@@ -1065,7 +1076,7 @@ class StarCoderGenerator:
                 self.logging_dir / generated_outputs_name / whitefox_tests_name
             )
 
-        if output_root.exists():
+        if output_root.exists() and not is_resume:
             shutil.rmtree(output_root)
         output_root.mkdir(parents=True, exist_ok=True)
 
@@ -1079,7 +1090,15 @@ class StarCoderGenerator:
                 else os.environ.get("WHITEFOX_MODEL", "")
             ),
         )
-        whitefox_logger.clear_old_logs()
+        if not is_resume:
+            whitefox_logger.clear_old_logs()
+        else:
+            self.logger.info(
+                "Resume detected (%d completed_opts marker(s) found) — "
+                "preserving existing generated test files and raw logs "
+                "instead of clearing them.",
+                len(list(completed_dir.glob("*.done"))),
+            )
 
         opt_states_to_process = [
             opt_state
@@ -1103,9 +1122,6 @@ class StarCoderGenerator:
         )
         if only_optimizations:
             self.logger.info("  Filtering to: %s", only_optimizations)
-
-        completed_dir = self.logging_dir / "completed_opts"
-        completed_dir.mkdir(parents=True, exist_ok=True)
 
         if parallel_optimizations <= 1:
             self.logger.info("Running optimizations sequentially")
