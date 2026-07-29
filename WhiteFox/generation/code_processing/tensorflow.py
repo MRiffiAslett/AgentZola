@@ -1,9 +1,57 @@
 import ast
+import os
+import re
 from typing import List, Tuple
 
 import astunparse
 
 from generation.code_processing.base import CodeParser
+
+# Static pre-check mirroring harness/xla.py's wrapper-script guard against
+# pathologically large literal tensor shapes (e.g. shape=[512,512,512,512,512]
+# ~= 144 PB). That guard only protects the sandboxed test-execution subprocess
+# (RLIMIT_AS + this same regex check there). split_func_tensor() below does
+# its own exec()/eval() of fragments of the same raw generated code, but runs
+# unsandboxed in the main long-lived process — a native crash there (observed:
+# a SIGSEGV from an ~65 TB allocation attempt, job 266428 batch1) takes down
+# the whole multi-hour run instead of just failing one test. Skip the exec/eval
+# entirely for code matching this pattern; the sandboxed harness still handles
+# the test safely and records a normal (not lost) result for it.
+_TENSOR_SHAPE_RE = re.compile(
+    r'(?:tf\.(?:zeros|ones|random\.(?:normal|uniform|truncated_normal)|fill|constant)'
+    r'|np\.(?:zeros|ones|random\.(?:randn?|uniform|normal)|full|empty))'
+    r'\s*\('
+    r'[^)]*?'
+    r'(?:shape\s*=\s*|size\s*=\s*)?'
+    r'(?:\[|\()'
+    r'([\d,\s]+)'
+    r'(?:\]|\))',
+)
+_TENSOR_BARE_RE = re.compile(
+    r'np\.random\.(?:randn?|uniform|normal|standard_normal)'
+    r'\s*\(\s*'
+    r'([\d,\s]+)'
+    r'\s*\)',
+)
+_STATIC_ELEMENT_BYTES = 4
+_MAX_STATIC_BYTES = (
+    int(os.environ.get("WHITEFOX_TEST_MEM_LIMIT_GB", "8")) * 1024 ** 3
+) // 2
+
+
+def _estimate_tensor_bytes(code_str: str) -> int:
+    total = 0
+    for pat in (_TENSOR_SHAPE_RE, _TENSOR_BARE_RE):
+        for m in pat.finditer(code_str):
+            try:
+                dims = [int(d.strip()) for d in m.group(1).split(",") if d.strip()]
+                numel = 1
+                for d in dims:
+                    numel *= d
+                total += numel * _STATIC_ELEMENT_BYTES
+            except (ValueError, OverflowError):
+                total += _MAX_STATIC_BYTES + 1
+    return total
 
 
 class _MultilineAssignTransformer(ast.NodeTransformer):
@@ -194,6 +242,16 @@ class TensorFlowCodeParser(CodeParser):
 
     def process_code(self, code: str) -> str:
         code = code.replace("__call__", "call")
+
+        if _estimate_tensor_bytes(code) > _MAX_STATIC_BYTES:
+            # split_func_tensor() below exec()s/eval()s fragments of this
+            # code unsandboxed in the main process to detect tensor
+            # variables — skip it entirely for a pathological shape literal
+            # and fall back to unmodified code, same as the exception
+            # fallback below. The sandboxed test-execution harness has its
+            # own copy of this same check and will still handle this test
+            # safely (and record a normal result for it).
+            return code
 
         try:
             class_code, class_name, tensors, tensor_inits = self.split_func_tensor(code)
