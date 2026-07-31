@@ -449,11 +449,33 @@ CG_REL=$(awk -F'::' 'NR==1 {print $2}' /proc/self/cgroup 2>/dev/null)
 CG_DIR="/sys/fs/cgroup${CG_REL}"
 TRACE_FILE="$WHITEFOX_LOGGING_DIR/cgroup_mem.tsv"
 XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
+
+# ---------------------------------------------------------------------------
+# Mem-guard: a full cgroup OOM (job 265218 batch0, 2026-07-26) can take out
+# the whole job step at once -- wrapper script and background tracers
+# included, not just generation.main -- because Slurm's cgroup/v2 plugin
+# kills the entire step's cgroup on OOM (memory.oom.group semantics) rather
+# than just the offending process. That silently defeats the 5-attempt
+# resume loop below: it can only retry if it survives to see a nonzero
+# exit, and a whole-cgroup kill gives it no such chance.
+#
+# Instead of waiting for the kernel to do an indiscriminate cgroup-wide
+# kill at the --mem=200G hard cap, proactively SIGTERM (then SIGKILL) just
+# generation.main's PID once mem_current crosses a soft cap well below
+# that -- the wrapper's own footprint is negligible, so it never becomes a
+# fellow victim, and the existing .done-marker retry logic gets to run on
+# every crash instead of only sometimes.
+# ---------------------------------------------------------------------------
+MEM_GUARD_BYTES=$(( ${WHITEFOX_MEM_GUARD_GB:-170} * 1024 * 1024 * 1024 ))
+GEN_PID_FILE="$WHITEFOX_LOGGING_DIR/gen_pid"
+MEM_GUARD_LOG="$WHITEFOX_LOGGING_DIR/mem_guard.log"
+rm -f "$GEN_PID_FILE"
 (
 
   set +e
   set +o pipefail
   printf 'ts\tmem_current\tmem_peak\tswap_current\toom\toom_kill\ttmp_kb\ttop5_pid_rss_cmd\n' > "$TRACE_FILE"
+  _guard_fired_at=0
   while true; do
     CUR=$(cat "$CG_DIR/memory.current" 2>/dev/null)
     PEAK=$(cat "$CG_DIR/memory.peak" 2>/dev/null)
@@ -466,6 +488,22 @@ XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$(date +%s)" "${CUR:-0}" "${PEAK:-0}" "${SWAP:-0}" \
       "${OOM:-0}" "${OOMK:-0}" "${TMP_KB:-0}" "$TOP" >> "$TRACE_FILE"
+
+    _guard_pid=$(cat "$GEN_PID_FILE" 2>/dev/null)
+    if [ -n "${CUR:-}" ] && [ "$CUR" -gt "$MEM_GUARD_BYTES" ] 2>/dev/null \
+       && [ -n "$_guard_pid" ] && kill -0 "$_guard_pid" 2>/dev/null; then
+      _now=$(date +%s)
+      if [ "$_guard_fired_at" = "0" ]; then
+        _guard_fired_at=$_now
+        echo "[$(date)] [mem-guard] mem_current=$CUR > soft cap ${MEM_GUARD_BYTES}; SIGTERM to generation.main PID $_guard_pid" >> "$MEM_GUARD_LOG"
+        kill -TERM "$_guard_pid" 2>/dev/null || true
+      elif [ $(( _now - _guard_fired_at )) -ge 15 ]; then
+        echo "[$(date)] [mem-guard] PID $_guard_pid still alive 15s after SIGTERM; SIGKILL" >> "$MEM_GUARD_LOG"
+        kill -KILL "$_guard_pid" 2>/dev/null || true
+      fi
+    else
+      _guard_fired_at=0
+    fi
     sleep 2
   done
 ) &
@@ -491,6 +529,7 @@ GPU_TRACER_PID=$!
 echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
 echo "[$(date)] cgroup trace: $TRACE_FILE (PID=$TRACER_PID)"
 echo "[$(date)] GPU trace:    $GPU_TRACE_FILE (PID=$GPU_TRACER_PID)"
+echo "[$(date)] mem-guard:    SIGTERM generation.main above ${WHITEFOX_MEM_GUARD_GB:-170}G (cap from --mem=200G), log: $MEM_GUARD_LOG"
 
 
 ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
@@ -516,8 +555,12 @@ GEN_EXIT=0
 for ATTEMPT in $(seq 1 "$MAX_RESUME_ATTEMPTS"); do
   echo "[$(date)] $BATCH_LABEL attempt $ATTEMPT/$MAX_RESUME_ATTEMPTS: --only-opt $REMAINING_OPTS"
   GEN_EXIT=0
-  $RUN_PYTHON -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$REMAINING_OPTS" \
-    || GEN_EXIT=$?
+  rm -f "$GEN_PID_FILE"
+  $RUN_PYTHON -m generation.main --sut xla --config "$CONFIG_PATH" --only-opt "$REMAINING_OPTS" &
+  GEN_PID=$!
+  echo "$GEN_PID" > "$GEN_PID_FILE"
+  wait "$GEN_PID" || GEN_EXIT=$?
+  rm -f "$GEN_PID_FILE"
 
   if [ "$GEN_EXIT" = "0" ]; then
     break
