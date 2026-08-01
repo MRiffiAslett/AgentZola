@@ -30,7 +30,7 @@ set -euo pipefail
 # resolved automatically from the _MODEL_REGISTRY in generation/generator.py —
 # no other file needs editing when you switch MODEL here.
 # ===========================================================================
-WHITEFOX_MODEL="bigcode/starcoder"
+WHITEFOX_MODEL="Qwen/Qwen2.5-Coder-14B-Instruct"
 WHITEFOX_WHEEL_VERSION="20250806"
 WHITEFOX_PROMPTS_VERSION="20250806"
 export WHITEFOX_MODEL WHITEFOX_WHEEL_VERSION WHITEFOX_PROMPTS_VERSION
