@@ -8,7 +8,10 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_compl
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 from domain.bandit import (
     OptimizationState,
     WhiteFoxState,
