@@ -3,7 +3,14 @@
 #SBATCH --partition=a100
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-gpu=12
-#SBATCH --mem=200G
+#SBATCH --mem=190G
+# NOTE 2026-08-05: a100 partition's MaxMemPerNode is 192 GiB (196608M) as of
+# now -- --mem=200G (which succeeded as recently as job269204) is rejected
+# outright by sbatch ("Memory required by task is not available"), not just
+# queued pending. Lowered to 190G, under the cap; WHITEFOX_MEM_GUARD_GB
+# default below dropped from 170->160 to preserve the same 30G headroom
+# between the soft guard and the hard cgroup cap. If MaxMemPerNode changes
+# again, check `scontrol show partition a100` before resubmitting.
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -30,9 +37,9 @@ set -euo pipefail
 # resolved automatically from the _MODEL_REGISTRY in generation/generator.py —
 # no other file needs editing when you switch MODEL here.
 # ===========================================================================
-WHITEFOX_MODEL="Qwen/Qwen2.5-Coder-14B-Instruct"
-WHITEFOX_WHEEL_VERSION="20250806"
-WHITEFOX_PROMPTS_VERSION="20250806"
+WHITEFOX_MODEL="bigcode/starcoder"
+WHITEFOX_WHEEL_VERSION="20230507"
+WHITEFOX_PROMPTS_VERSION="20230507"
 export WHITEFOX_MODEL WHITEFOX_WHEEL_VERSION WHITEFOX_PROMPTS_VERSION
 # ===========================================================================
 
@@ -460,13 +467,13 @@ XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
 # exit, and a whole-cgroup kill gives it no such chance.
 #
 # Instead of waiting for the kernel to do an indiscriminate cgroup-wide
-# kill at the --mem=200G hard cap, proactively SIGTERM (then SIGKILL) just
+# kill at the --mem=190G hard cap, proactively SIGTERM (then SIGKILL) just
 # generation.main's PID once mem_current crosses a soft cap well below
 # that -- the wrapper's own footprint is negligible, so it never becomes a
 # fellow victim, and the existing .done-marker retry logic gets to run on
 # every crash instead of only sometimes.
 # ---------------------------------------------------------------------------
-MEM_GUARD_BYTES=$(( ${WHITEFOX_MEM_GUARD_GB:-170} * 1024 * 1024 * 1024 ))
+MEM_GUARD_BYTES=$(( ${WHITEFOX_MEM_GUARD_GB:-160} * 1024 * 1024 * 1024 ))
 GEN_PID_FILE="$WHITEFOX_LOGGING_DIR/gen_pid"
 MEM_GUARD_LOG="$WHITEFOX_LOGGING_DIR/mem_guard.log"
 rm -f "$GEN_PID_FILE"
@@ -529,7 +536,7 @@ GPU_TRACER_PID=$!
 echo "[$(date)] Starting $BATCH_LABEL: --only-opt $OPT_CSV"
 echo "[$(date)] cgroup trace: $TRACE_FILE (PID=$TRACER_PID)"
 echo "[$(date)] GPU trace:    $GPU_TRACE_FILE (PID=$GPU_TRACER_PID)"
-echo "[$(date)] mem-guard:    SIGTERM generation.main above ${WHITEFOX_MEM_GUARD_GB:-170}G (cap from --mem=200G), log: $MEM_GUARD_LOG"
+echo "[$(date)] mem-guard:    SIGTERM generation.main above ${WHITEFOX_MEM_GUARD_GB:-160}G (cap from --mem=190G), log: $MEM_GUARD_LOG"
 
 
 ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
