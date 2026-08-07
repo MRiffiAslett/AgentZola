@@ -5,7 +5,7 @@ __pycache__/
 # IDE
 .vscode/
 
-# Claude Code project notes (local-only, may contain cluster paths/job details)
+# Local project notes and tool settings (may contain cluster paths/job details)
 CLAUDE.md
 .claude/settings.local.json
 
