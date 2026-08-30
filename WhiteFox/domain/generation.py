@@ -85,8 +85,8 @@ class PromptsConfig(BaseModel):
 
 
 class SUTConfig(BaseModel):
-    name: str  # e.g. "xla"
-    framework: str  # e.g. "tensorflow"
+    name: str
+    framework: str
 
 
 class GeneratorConfig(BaseModel):

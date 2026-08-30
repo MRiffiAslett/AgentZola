@@ -33,7 +33,6 @@ class WhiteFoxProfiler:
     def set_optimization_metadata(
         self, optimization_name: str, metadata: Dict[str, Any]
     ) -> None:
-        """Attach extra metrics to be printed for the given optimization segment."""
         with self._segment_lock:
             self._optimization_metadata[optimization_name] = metadata
 
@@ -56,7 +55,6 @@ class WhiteFoxProfiler:
         self.estimated_peak_mb = base_memory + process_memory + peak_buffer
 
     def begin_run(self) -> None:
-        """Truncate the report file and write the run header. Call before start_monitoring()."""
         self.log_dir.mkdir(parents=True, exist_ok=True)
         with open(self.report_file, "w", encoding="utf-8") as f:
             f.write("=" * 70 + "\n")
@@ -113,7 +111,6 @@ class WhiteFoxProfiler:
         self._capture_snapshot()
 
     def append_optimization_segment(self, optimization_name: str) -> None:
-        """Append a snapshot for one optimization, then resume monitoring."""
         with self._segment_lock:
             self.stop_monitoring()
             try:
@@ -174,7 +171,6 @@ class WhiteFoxProfiler:
                 )
 
     def generate_report(self):
-        """Append the full-run summary (after all optimizations)."""
         self.stop_monitoring()
 
         elapsed = time.time() - self.start_time

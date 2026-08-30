@@ -102,8 +102,6 @@ class GPTModel:
         output_dir.mkdir(exist_ok=True, parents=True)
         results_file = output_dir / "generation_results.json"
 
-        # Resume from a prior partial run's results (e.g. if this process itself
-        # was killed/restarted) so failed/succeeded status isn't lost between runs.
         results: Dict[str, Dict] = {}
         if results_file.exists():
             try:
@@ -122,12 +120,6 @@ class GPTModel:
             if skip_existing and output_file.exists():
                 continue
 
-            # A single optimization exhausting all retries (rate limit, timeout,
-            # content policy, etc.) must not abort the whole batch — that is
-            # exactly how generation-prompts-20250806 ended up with only 34/49
-            # optimizations: an uncaught exception here silently orphaned every
-            # optimization after the failing one, with no results.json written
-            # to even reveal it happened.
             try:
                 descriptions, metadata = self.generate_requirement(
                     prompt=prompt, n_samples=n_samples
@@ -149,9 +141,6 @@ class GPTModel:
                 "descriptions": [description],
                 "metadata": metadata,
             }
-            # Write incrementally (not just at the end) so a hard crash/kill
-            # mid-batch still leaves an accurate results.json for everything
-            # completed so far.
             with open(results_file, "w") as f:
                 json.dump(results, f, indent=2)
 

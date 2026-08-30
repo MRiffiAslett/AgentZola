@@ -55,10 +55,6 @@ def load_optimization_specs(
         for name in optimizations:
             txt = req_dir / f"{name}.txt"
             if not txt.exists():
-                # Don't crash the whole array job (all --only-opt targets in this
-                # batch) over one optimization whose generation prompt hasn't been
-                # produced yet (e.g. requirement/main.py's GPT step is still
-                # backfilling it).  Skip with a loud warning instead.
                 missing.append(name)
                 continue
             specs[name] = _make_spec(name, txt, aliases)

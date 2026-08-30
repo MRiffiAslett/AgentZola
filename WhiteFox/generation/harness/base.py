@@ -15,9 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 class _BoundedTail:
-    """Drain a subprocess pipe in a background thread, retaining only the last `cap` bytes.
-    Keeps the tail (not the head) since WHITEFOX_RESULT markers appear at the end.
-    """
 
     def __init__(self, stream, cap: int = 1024 * 1024) -> None:
         self._cap = cap
@@ -53,8 +50,6 @@ class _BoundedTail:
 
 
 def _child_preexec() -> None:
-    """preexec_fn for test subprocesses — runs after fork() before exec()
-    so RLIMIT_AS applies before the interpreter loads libc/libpython."""
     try:
         with open("/proc/self/oom_score_adj", "w") as f:
             f.write("1000")
@@ -141,7 +136,6 @@ class TestHarness(ABC):
                 optimization_name, test_file.name, timeout,
             )
 
-            # Bounded readers cap per-worker RSS regardless of wrapper output size.
             _PIPE_CAP = int(
                 os.environ.get("WHITEFOX_PIPE_CAP_BYTES", str(1024 * 1024))
             )
@@ -229,7 +223,6 @@ class TestHarness(ABC):
                     for line in process.stderr.strip().splitlines()[-3:]:
                         logger.warning("  stderr: %s", line)
 
-            # Prefer JSON log_text; fall back to raw output tail, capped to _MAX_LOG_CHARS.
             _MAX_LOG_CHARS = 8192
             chosen_log = log_text_from_json if log_text_from_json else output
             result.log_text = (
@@ -237,10 +230,8 @@ class TestHarness(ABC):
                 if len(chosen_log) > _MAX_LOG_CHARS
                 else chosen_log
             )
-            del chosen_log  # release alias before del output below
+            del chosen_log
 
-            # Merge pass markers from JSON and raw output; TF/XLA writes markers to fd 2
-            # directly, bypassing the Python-level StringIO captured in the wrapper.
             passes_set = set(passes_from_json) if passes_from_json is not None else set()
             passes_set |= self.extract_triggered_passes(output)
             result.triggered_passes = passes_set
@@ -252,7 +243,6 @@ class TestHarness(ABC):
                     sorted(result.triggered_passes),
                 )
 
-            # Release captured buffers promptly to avoid large strings persisting between tests.
             del output
             process.stdout = ""
             process.stderr = ""

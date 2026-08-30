@@ -9,7 +9,6 @@ if str(project_root) not in sys.path:
 
 from generation.generator import StarCoderGenerator
 
-# Default config paths per SUT (relative to project root)
 _DEFAULT_CONFIG = {
     "xla": "xilo_xla/config/generator.toml",
 }
@@ -57,9 +56,6 @@ def main():
         traceback.print_exc()
         os._exit(1)
 
-    # vLLM's V1 engine spawns non-daemon processes that can prevent a clean
-    # exit even after the LLM object is deleted.  Hard-exit once all files
-    # have been flushed so the SLURM job terminates promptly.
     os._exit(0)
 
 

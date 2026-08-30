@@ -1,4 +1,3 @@
-"""Classify generated tests by execution quality (pre-oracle)."""
 
 import ast
 from typing import Any, Dict, List, Optional
@@ -103,7 +102,6 @@ def classify_generation_quality(
     result: Optional[Any] = None,
     worker_error: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Return funnel flags and a primary failure label for one generated test."""
     quality: Dict[str, Any] = {
         "syntax_valid": False,
         "imports_successfully": False,

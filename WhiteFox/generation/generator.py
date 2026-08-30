@@ -43,11 +43,10 @@ except Exception:
     _HAS_MALLOC_TRIM = False
     _HAS_FADVISE = False
 
-_POSIX_FADV_DONTNEED = 4  # Linux constant — release page cache for a file range
+_POSIX_FADV_DONTNEED = 4
 
 
 def _release_freed_memory() -> None:
-    """Return freed glibc arenas to the OS via malloc_trim to prevent monotonic RSS growth."""
     import gc
 
     gc.collect()
@@ -59,15 +58,6 @@ def _release_freed_memory() -> None:
 
 
 def _drop_dir_page_cache(dump_dir: str) -> None:
-    """Release kernel page cache for XLA HLO dump files, then delete them.
-
-    XLA test subprocesses write HLO dump files to /data via write().  After the
-    subprocess exits the kernel retains those pages as orphaned page cache
-    (still charged to the cgroup) until evicted under memory pressure.  Calling
-    posix_fadvise(POSIX_FADV_DONTNEED) on each file before deletion signals the
-    kernel to release the pages immediately — without requiring root — so the
-    cgroup memory.current drops before the next allocation wave hits.
-    """
     import shutil
 
     if not os.path.isdir(dump_dir):
@@ -96,7 +86,6 @@ def _drop_dir_page_cache(dump_dir: str) -> None:
 
 
 def _log_parent_rss(logger: logging.Logger, label: str) -> None:
-    """Log the parent process's RSS from /proc/self/status for OOM diagnosis."""
     try:
         rss_kb = -1
         with open("/proc/self/status") as _f:
@@ -111,7 +100,6 @@ def _log_parent_rss(logger: logging.Logger, label: str) -> None:
 
 
 def _read_cgroup_mem_gb() -> float:
-    """Return the cgroup's memory.current in GB, or -1 on any error."""
     try:
         with open("/proc/self/cgroup") as _f:
             _rel = _f.readline().split("::")[-1].strip()
@@ -130,15 +118,6 @@ def _log_llm_call(
     prompt: str,
     prompt_type: str,
 ) -> float:
-    """Log diagnostic context immediately before an LLM generate call.
-
-    Returns cgroup_gb_before so the caller can compute the delta after.
-    Logs every iteration:
-     - prompt token count
-     - cgroup memory.current
-    Logs every 10th iteration only (expensive):
-     - top-3 processes by RSS via ps (reads /proc for every PID on the node)
-    """
     cgroup_gb = _read_cgroup_mem_gb()
     try:
         tok = llm.get_tokenizer()
@@ -174,7 +153,6 @@ def _log_llm_call_post(
     cgroup_gb_before: float,
     outputs,
 ) -> None:
-    """Log cgroup memory delta and output token counts after llm.generate()."""
     cgroup_gb_after = _read_cgroup_mem_gb()
     delta = cgroup_gb_after - cgroup_gb_before if cgroup_gb_before >= 0 else float("nan")
     out_token_counts = []
@@ -192,11 +170,6 @@ def _log_llm_call_post(
 
 
 def _determine_oracle_outcome(result: Any, bug_reports: list) -> Optional[str]:
-    """Map an oracle result to one of the ORACLE_OUTCOME_TYPES strings.
-
-    Returns None for edge cases (allowed errors, test-code errors) that
-    the oracle silently filters — these are not counted in Table 4.
-    """
     if bug_reports:
         return bug_reports[0].oracle_type
     if not result or not result.modes:
@@ -206,7 +179,6 @@ def _determine_oracle_outcome(result: Any, bug_reports: list) -> Optional[str]:
         return "AllFail"
     if not any(not result.get_mode(m).runtime_success for m in modes):
         return "AllPass"
-    # Partial failures that were filtered (allowed errors / test-code errors).
     return None
 
 
@@ -239,9 +211,6 @@ def _execute_test_worker(task: TestExecutionTask) -> TestExecutionResult:
 
 
 def _pool_worker_init() -> None:
-    """No-op. RLIMIT_AS is not set here: pool workers fork from the parent and inherit
-    vLLM's full VSZ, so any address-space limit fires immediately. Memory limits are
-    applied per test subprocess via _child_preexec and the in-wrapper RSS watchdog."""
     pass
 
 
@@ -252,8 +221,6 @@ _PARSER = {
     "xla": "generation.code_processing.tensorflow.TensorFlowCodeParser",
 }
 
-# Model registry: maps HF model IDs → vLLM init overrides, extra stop tokens,
-# and a display name. Switch models by setting WHITEFOX_MODEL in the SLURM script.
 _MODEL_REGISTRY: Dict[str, Dict] = {
     "bigcode/starcoder": {
         "vllm_kwargs": {},
@@ -292,7 +259,6 @@ _REGISTRY_VLLM_SCALAR_KEYS = frozenset(
 
 
 def _get_model_registry_entry(model_name: str) -> Dict:
-    """Return the registry entry for model_name; falls back to a no-op default for unknown models."""
     if model_name in _MODEL_REGISTRY:
         return _MODEL_REGISTRY[model_name]
     lname = model_name.lower()
@@ -327,8 +293,6 @@ class StarCoderGenerator:
         self._setup_environment()
         self._setup_logging()
 
-        # Verify coverage instrumentation before loading the LLM so the TF
-        # subprocess runs in a clean process without GPU memory pressure.
         self.coverage = CoverageCollector(self.logging_dir)
         os.environ.update(self.coverage.env_vars())
         self.coverage.verify()
@@ -400,7 +364,6 @@ class StarCoderGenerator:
         self.logger = logging.getLogger(__name__)
 
     def _initialize_llm(self) -> LLM:
-        """Initialise vLLM; registry overrides take precedence over TOML model config."""
         registry = _get_model_registry_entry(self.config.model.name)
         reg_kwargs = registry["vllm_kwargs"]
 
@@ -421,7 +384,6 @@ class StarCoderGenerator:
             ),
             "swap_space": reg_kwargs.get("swap_space", self.config.model.swap_space),
         }
-        # Forward any registry-only kwargs (e.g. trust_remote_code for future models).
         for k, v in reg_kwargs.items():
             if k not in _REGISTRY_VLLM_SCALAR_KEYS:
                 vllm_kwargs[k] = v
@@ -439,7 +401,6 @@ class StarCoderGenerator:
         return LLM(**vllm_kwargs)
 
     def _create_sampling_params(self, num_samples: int) -> SamplingParams:
-        """Build SamplingParams, merging TOML stop tokens with model-specific ones."""
         registry = _get_model_registry_entry(self.config.model.name)
         stop_tokens: List[str] = list(self.config.stopping.eof_strings)
         for tok in registry.get("extra_stop", []):
@@ -852,10 +813,6 @@ class StarCoderGenerator:
                         whitefox_logger.log_oracle_outcome(opt_name, oracle_type)
 
                     for bug_report in bug_reports:
-                        # bug_report.logs_file (oracle.py) points at test_file
-                        # with a .log suffix on the assumption a raw log gets
-                        # written there; nothing else in the pipeline does, so
-                        # without this write it's a permanently dangling path.
                         try:
                             bug_report.logs_file.write_text(result.log_text)
                         except Exception:
@@ -903,7 +860,6 @@ class StarCoderGenerator:
                 example_tests,
             )
 
-            # Release iteration data before the next allocation cycle.
             try:
                 del execution_results
             except NameError:
@@ -911,14 +867,6 @@ class StarCoderGenerator:
             finally:
                 _release_freed_memory()
 
-            # Checkpoint periodically so a mid-opt SIGKILL loses minimal stats.
-            # flush_and_clear() must run alongside generate_run_summary(), not
-            # on its own separate per-optimization cadence: run_stats.json's
-            # opt_stats/oracle_counts are only ever incremented in memory, so
-            # without a matching flush a crash between checkpoints leaves
-            # run_stats.json reporting counts (e.g. "37 AllDiff") that have no
-            # corresponding row in execution_results.jsonl/bug_reports.json to
-            # back them up (observed job 262025 batch2, WhileLoopInvariantCodeMotion).
             if (iteration + 1) % 10 == 0:
                 whitefox_logger.flush_and_clear()
                 with self._state_lock:
@@ -926,12 +874,6 @@ class StarCoderGenerator:
                         sorted(self.whitefox_state.optimizations.keys()),
                         opt_states=self.whitefox_state.optimizations,
                     )
-                # Purge XLA HLO dump files every 10 iterations so that orphaned
-                # page cache (write()-backed, not mmap) doesn't accumulate in the
-                # cgroup.  Without this, --xla_dump_hlo_pass_re=.* generates
-                # hundreds of files per test; 1000 tests × ~30 MB = 30+ GB of
-                # page cache charged to the cgroup, causing OOM long before RSS
-                # itself hits the limit.
                 _xla_flags_str = os.environ.get("XLA_FLAGS", "")
                 try:
                     import re as _re_dump
@@ -1049,13 +991,6 @@ class StarCoderGenerator:
 
         self.whitefox_state = self._load_or_init_whitefox_state()
 
-        # Existing .done markers mean the SLURM wrapper's retry loop is
-        # re-invoking this process after a crash (see the marker-writing
-        # comment further down) — NOT a fresh run. On a resume, the
-        # already-completed optimizations' generated test files and raw
-        # per-test logs (execution_results.jsonl, bug_reports.json, ...)
-        # must survive, or they're lost even though run_stats.json still
-        # reports full counts for them.
         completed_dir = self.logging_dir / "completed_opts"
         is_resume = completed_dir.exists() and any(completed_dir.glob("*.done"))
         completed_dir.mkdir(parents=True, exist_ok=True)
@@ -1133,12 +1068,6 @@ class StarCoderGenerator:
                     self._run_single_optimization(
                         opt_state, output_root, whitefox_logger, only_optimizations
                     )
-                    # Marker for the SLURM wrapper's OOM/SIGBUS resume logic:
-                    # a hard kill (SIGKILL/SIGBUS) never reaches this line, so
-                    # only optimizations that *actually* finished are marked —
-                    # the wrapper re-invokes with --only-opt reduced to
-                    # whatever has no marker yet, instead of losing every
-                    # remaining optimization in the batch to one crash.
                     (completed_dir / f"{opt_state.spec.internal_name}.done").touch()
                 except Exception as e:
                     whitefox_logger.log_error(
@@ -1163,7 +1092,6 @@ class StarCoderGenerator:
                         opt_state.spec.internal_name
                     )
                     whitefox_logger.flush_and_clear()
-                    # Deep-clean between opts: flush accumulated glibc arenas before forking next workers.
                     _log_parent_rss(
                         self.logger,
                         f"after {opt_state.spec.internal_name}",
@@ -1173,7 +1101,6 @@ class StarCoderGenerator:
                         self.logger,
                         f"after malloc_trim post-{opt_state.spec.internal_name}",
                     )
-                    # Purge XLA dump dir to prevent unbounded HLO file accumulation.
                     _xla_flags = os.environ.get("XLA_FLAGS", "")
                     _m = None
                     try:

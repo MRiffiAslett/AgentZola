@@ -1,6 +1,4 @@
 #!/bin/bash
-# One-time setup: download LLVM 17 tools for profraw v8 coverage merging.
-# Run from the login node (needs internet access).
 set -euo pipefail
 
 LLVM17_DIR="/vol/bitbucket/mtr25/tfbuild/llvm17"

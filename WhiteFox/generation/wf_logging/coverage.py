@@ -106,32 +106,13 @@ tf.constant(1)
 
 
 class CoverageCollector:
-    """Incremental profraw → merged.profdata; final llvm-cov XLA line summary.
-
-    Supports two profraw collection modes:
-
-    1. Per-process (default): each subprocess writes its own ~950 MB profraw
-       file via ``wf_%p.profraw``.  Works everywhere but generates enormous
-       I/O when tests number in the thousands.
-
-    2. Merge-pool (``WHITEFOX_PROFRAW_POOL_SIZE=N``): uses LLVM's ``%Nm``
-       online-merge pattern.  The runtime maintains N shared pool files;
-       each subprocess locks one, merges its counters in-place, and unlocks.
-       After all tests finish, only N files (~950 MB each) need merging
-       instead of thousands.  Requires a POSIX filesystem with reliable
-       ``fcntl`` locking — use node-local storage (e.g. ``/data``), NOT NFS.
-    """
 
     def __init__(self, logging_dir: Path):
         self.cov_dir = logging_dir / "coverage"
         self.cov_dir.mkdir(parents=True, exist_ok=True)
 
-        # Pool mode: LLVM %Nm online merge.  0 = disabled (per-process mode).
         self._pool_size = int(os.environ.get("WHITEFOX_PROFRAW_POOL_SIZE", "0"))
 
-        # Profraw storage: default to a subdir of logging_dir (NFS-backed).
-        # For pool mode, WHITEFOX_PROFRAW_DIR should point to node-local
-        # storage (e.g. /data) — NFS + fcntl locking is unreliable.
         profraw_base = os.environ.get("WHITEFOX_PROFRAW_DIR")
         if profraw_base:
             self.profraw_dir = Path(
@@ -148,19 +129,10 @@ class CoverageCollector:
         self._llvm_dir: Optional[str] = None
         self._profdata_tool: Optional[str] = None
 
-        # Existing completed_opts/*.done markers mean the SLURM wrapper's
-        # retry loop is re-invoking this process after a crash (see the
-        # matching check in generator.py's generate_whitefox()) — NOT a
-        # fresh run. merge_pending() runs incrementally during each
-        # optimization's iterations, so on a resume, merged.profdata already
-        # holds real coverage from every optimization completed in a prior
-        # attempt; wiping it here would silently drop that coverage from
-        # this batch's final report and from the cross-batch union.
         completed_dir = logging_dir / "completed_opts"
         is_resume = completed_dir.exists() and any(completed_dir.glob("*.done"))
 
         if not is_resume:
-            # Fresh merged profile for this WhiteFox run (avoid stacking onto old runs).
             self.profdata_file.unlink(missing_ok=True)
         tmp = self.profdata_file.with_suffix(".profdata.tmp")
         tmp.unlink(missing_ok=True)
@@ -183,12 +155,6 @@ class CoverageCollector:
         return {"LLVM_PROFILE_FILE": str(self.profraw_dir / "wf_%p.profraw")}
 
     def verify(self) -> None:
-        """Quick check that TF writes profraw and llvm-profdata can read it.
-
-        Tests profraw on the actual profraw_dir (which may be NFS-backed).
-        If profraw cannot be written there, falls back to /dev/null and
-        disables coverage to avoid silent data loss.
-        """
         lines: List[str] = ["COVERAGE DIAGNOSTICS", "=" * 50]
         lines.append(f"profraw_dir: {self.profraw_dir}")
 
@@ -298,12 +264,6 @@ class CoverageCollector:
 
     @staticmethod
     def _merge_batch_size() -> int:
-        """Max profraw files per merge invocation.
-
-        Each profraw can be ~1 GB; merging too many at once OOM-kills
-        the llvm-profdata process.  Default 6, override with
-        WHITEFOX_MERGE_BATCH_SIZE.
-        """
         try:
             return max(1, int(os.environ.get("WHITEFOX_MERGE_BATCH_SIZE", "6")))
         except ValueError:
@@ -312,13 +272,6 @@ class CoverageCollector:
     def _run_merge_cmd(
         self, cmd: List[str], tmp_out: Path, *, timeout: int = 600,
     ) -> bool:
-        """Run a single llvm-profdata merge with oom_score_adj protection.
-
-        No RLIMIT_AS: llvm-profdata's internal data structures for large
-        instrumented binaries (like TF ~950 MB profraw) need far more
-        virtual memory than the raw file size.  oom_score_adj=1000 is
-        sufficient to protect the parent from an OOM cascade.
-        """
         def _preexec() -> None:
             try:
                 with open("/proc/self/oom_score_adj", "w") as f:
@@ -372,22 +325,12 @@ class CoverageCollector:
         return max(1, min(4, multiprocessing.cpu_count() or 1))
 
     def merge_pending(self) -> int:
-        """Merge pending .profraw into merged.profdata, delete raw on success.
-
-        In pool mode (``%Nm``), merges the N pool files in a single
-        invocation — extremely fast on local storage.  In per-process
-        mode, processes files in batches.
-
-        Returns:
-            Number of profraw files successfully merged.
-        """
         with self._lock:
             if self._pool_size > 0:
                 return self._merge_pool_files()
             return self._merge_per_process_files()
 
     def _merge_pool_files(self) -> int:
-        """Merge %Nm pool files.  Typically only 8-16 files, all local."""
         pool_files = sorted(self.profraw_dir.glob("pool_*.profraw"))
         valid = [pf for pf in pool_files if self._validate_profraw(pf)]
         if not valid:
@@ -441,7 +384,6 @@ class CoverageCollector:
         return True
 
     def _merge_per_process_files(self) -> int:
-        """Original per-process merge with batching and retry."""
         pending = sorted(self.profraw_dir.glob("*.profraw"))
         if not pending:
             return 0

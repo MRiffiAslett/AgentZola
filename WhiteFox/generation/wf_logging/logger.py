@@ -15,14 +15,12 @@ from generation.wf_logging.quality import (
     default_quality_stats,
 )
 
-# Oracle outcome types that constitute a "raw fail" for Table 5.
 _BUG_ORACLE_TYPES = frozenset([
     "NaiveFail", "XLAFail", "ACFail",
     "Naive_XLAFail", "Naive_ACFail", "XLA_ACFail",
     "AllDiff", "AllDiff_Rand", "AllDiff_LessLikely", "AllDiff_TypeMismatch",
 ])
 
-# Canonical ordered list of oracle outcome columns for Table 4.
 ORACLE_OUTCOME_TYPES = [
     "NaiveFail", "XLAFail", "ACFail",
     "Naive_XLAFail", "Naive_ACFail", "XLA_ACFail",
@@ -63,10 +61,8 @@ class WhiteFoxLogger:
         self.execution_results_data: List[Dict] = []
 
         self.opt_stats: Dict[str, Dict[str, int]] = {}
-        # Per-optimization oracle outcome counts (Table 4 data).
         self.oracle_counts: Dict[str, Dict[str, int]] = {}
 
-        # Run metadata – written to every summary and the JSON sidecar.
         self.tf_version = tf_version or os.environ.get("WHITEFOX_WHEEL_VERSION", "")
         self.model_name = model_name or os.environ.get("WHITEFOX_MODEL", "")
 
@@ -285,13 +281,6 @@ class WhiteFoxLogger:
             )
 
     def log_oracle_outcome(self, optimization_name: str, oracle_type: str) -> None:
-        """Record a single oracle outcome for Table 4 tracking.
-
-        Call once per test that successfully went through the oracle
-        (i.e., was not a worker failure). Pass the ResType name string
-        (e.g. 'AllPass', 'NaiveFail', 'AllDiff_Rand') or one of the
-        ORACLE_OUTCOME_TYPES constants.
-        """
         with self._lock:
             if optimization_name not in self.oracle_counts:
                 self.oracle_counts[optimization_name] = {}
@@ -300,7 +289,6 @@ class WhiteFoxLogger:
 
     @staticmethod
     def _append_jsonl(file_path: Path, data: Any, **kwargs) -> None:
-        """Append each top-level entry as a single JSON line."""
         with open(file_path, "a") as f:
             if isinstance(data, dict):
                 for key, entries in data.items():
@@ -379,7 +367,6 @@ class WhiteFoxLogger:
 
     @staticmethod
     def _get_jit_ok_count(stats: Dict[str, int]) -> int:
-        """Return the JIT/XLA runtime-success count from opt_stats."""
         for key in ("success_xla", "success_jit", "success_compiled"):
             if key in stats:
                 return stats[key]
@@ -441,7 +428,6 @@ class WhiteFoxLogger:
             ):
                 count = stats.get(key, 0)
                 f.write(f"{self._pct(count, generated):>6s} | ")
-            # JIT OK = XLA-mode runtime success
             f.write(f"{self._pct(jit_ok, generated):>6s} | ")
             for key in ("invalid_tf_api", "unsupported_by_xla", "timeout"):
                 count = stats.get(key, 0)
@@ -493,7 +479,6 @@ class WhiteFoxLogger:
         f,
         opt_names: List[str],
     ) -> None:
-        """Write Table 4: per-optimization oracle outcome counts."""
         self._write_header(f, "ORACLE OUTCOMES (Table 4)")
 
         col_w = 14
@@ -531,7 +516,6 @@ class WhiteFoxLogger:
         f,
         opt_names: List[str],
     ) -> None:
-        """Write Table 5: bug pipeline — automated fields only."""
         self._write_header(f, "BUG PIPELINE (Table 5)")
         f.write(
             "NOTE: Only 'RawFails' is tracked automatically.\n"
@@ -560,15 +544,8 @@ class WhiteFoxLogger:
         opt_states: Optional[Dict[str, Any]] = None,
         coverage_data: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Write a machine-readable sidecar used by the SLURM aggregator."""
         stats_file = self.log_dir / "run_stats.json"
 
-        # If a crash mid-batch caused the SLURM wrapper to re-invoke this
-        # process with a shrunk --only-opt (see completed_opts/ resume logic),
-        # this fresh WhiteFoxLogger's in-memory opt_stats/oracle_counts only
-        # covers optimizations touched *this* attempt. Fall back to whatever
-        # a prior attempt already wrote for everything else, so the sidecar
-        # never regresses to zero counts for already-completed optimizations.
         prior_opt_stats: Dict[str, Any] = {}
         prior_oracle_counts: Dict[str, Any] = {}
         prior_thompson: Dict[str, Any] = {}
@@ -647,7 +624,6 @@ class WhiteFoxLogger:
             mode_keys.sort()
 
             with open(detailed_summary_file, "w") as f:
-                # ---- Run metadata ----
                 f.write("=" * 80 + "\n")
                 f.write("WHITEFOX DETAILED RUN SUMMARY\n")
                 f.write("=" * 80 + "\n\n")
@@ -657,7 +633,6 @@ class WhiteFoxLogger:
                 f.write(f"Updated:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("\n")
 
-                # ---- Table 1: test generation stats ----
                 mode_labels = [k.replace("success_", "") for k in mode_keys]
                 header = (
                     "Optimization                             "
@@ -706,7 +681,6 @@ class WhiteFoxLogger:
                 f.write("\n")
                 f.write("=" * sep_len + "\n")
 
-                # ---- Table 2: generation quality ----
                 f.write("\n")
                 self._write_quality_table(
                     f,
@@ -714,7 +688,6 @@ class WhiteFoxLogger:
                     title="GENERATION QUALITY DISTRIBUTION (pre-oracle)",
                 )
 
-                # ---- Thompson sampling stats ----
                 if opt_states:
                     f.write("\n")
                     self._write_header(f, "THOMPSON SAMPLING STATS")
@@ -742,17 +715,14 @@ class WhiteFoxLogger:
                         )
                     f.write("=" * 85 + "\n")
 
-                # ---- Table 4: oracle outcomes ----
                 if self.oracle_counts:
                     f.write("\n")
                     self._write_oracle_outcomes_table(f, opt_names)
 
-                # ---- Table 5: bug pipeline ----
                 if self.oracle_counts:
                     f.write("\n")
                     self._write_bug_pipeline_table(f, opt_names)
 
-                # ---- Coverage ----
                 if coverage_data:
                     f.write("\n")
                     self._write_header(f, "COVERAGE")
@@ -770,7 +740,6 @@ class WhiteFoxLogger:
 
             self._write_generation_quality_log(opt_names)
 
-            # Write machine-readable sidecar for SLURM aggregator.
             self._write_stats_json(opt_names, opt_states, coverage_data)
 
             if self.base_logger:
@@ -789,12 +758,6 @@ class WhiteFoxLogger:
             self._write_execution_results()
 
     def flush_and_clear(self) -> None:
-        """Flush all buffered data to disk and release the in-memory copies.
-
-        Call between optimizations to prevent unbounded memory growth.
-        ``opt_stats`` and ``oracle_counts`` are preserved since the run
-        summary needs them.
-        """
         with self._lock:
             self._write_prompts()
             self._write_cleaned_code()

@@ -4,13 +4,6 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-gpu=12
 #SBATCH --mem=190G
-# NOTE 2026-08-05: a100 partition's MaxMemPerNode is 192 GiB (196608M) as of
-# now -- --mem=200G (which succeeded as recently as job269204) is rejected
-# outright by sbatch ("Memory required by task is not available"), not just
-# queued pending. Lowered to 190G, under the cap; WHITEFOX_MEM_GUARD_GB
-# default below dropped from 170->160 to preserve the same 30G headroom
-# between the soft guard and the hard cgroup cap. If MaxMemPerNode changes
-# again, check `scontrol show partition a100` before resubmitting.
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
@@ -21,27 +14,10 @@ N_TASKS=3
 
 set -euo pipefail
 
-# ===========================================================================
-# RUN CONFIGURATION — edit the three variables below to switch experiments.
-#
-#   MODEL:   bigcode/starcoder              (7 B,  float16,  8 192-token ctx)
-#            Qwen/Qwen2.5-Coder-14B         (14 B, bfloat16, 32 768-token ctx)
-#            Qwen/Qwen2.5-Coder-14B-Instruct(14 B, bfloat16, 32 768-token ctx)
-#
-#   WHEEL:   20250806 → tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806
-#            20230507 → tensorflow_cpu-2.14.0+selfbuilt.20230507
-#
-#   PROMPTS: 20250806 | 20230507
-#
-# Model-specific vLLM params (dtype, max_model_len, stop tokens, …) are
-# resolved automatically from the _MODEL_REGISTRY in generation/generator.py —
-# no other file needs editing when you switch MODEL here.
-# ===========================================================================
 WHITEFOX_MODEL="bigcode/starcoder"
 WHITEFOX_WHEEL_VERSION="20230507"
 WHITEFOX_PROMPTS_VERSION="20230507"
 export WHITEFOX_MODEL WHITEFOX_WHEEL_VERSION WHITEFOX_PROMPTS_VERSION
-# ===========================================================================
 
 _WHEEL_DIR="/vol/bitbucket/mtr25/tfbuild/wheels"
 case "$WHITEFOX_WHEEL_VERSION" in
@@ -150,12 +126,9 @@ mkdir -p "$LOCAL_COV_DIR"
 export WHITEFOX_PROFRAW_DIR="$LOCAL_COV_DIR"
 export WHITEFOX_PROFRAW_POOL_SIZE="${WHITEFOX_PROFRAW_POOL_SIZE:-8}"
 
-# Model weights on local SSD — avoids 40-min NFS load per job.
-# First run downloads to /data/hf_cache; subsequent runs reuse it.
 export HF_HOME=/data/hf_cache
 mkdir -p "$HF_HOME"
 
-# Keep vLLM telemetry and compile cache off /homes (disk quota).
 export VLLM_NO_USAGE_STATS=1
 export VLLM_CACHE_ROOT=/data/vllm_cache
 mkdir -p "$VLLM_CACHE_ROOT"
@@ -170,11 +143,6 @@ export WHITEFOX_PARALLEL_TEST_WORKERS="${WHITEFOX_PARALLEL_TEST_WORKERS:-4}"
 export WHITEFOX_TEST_MEM_LIMIT_GB="${WHITEFOX_TEST_MEM_LIMIT_GB:-6}"
 export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
-# Surface vLLM's internal scheduler/preemption events (KV-cache swap/overflow
-# decisions) so a future OOM postmortem has something to correlate against.
-# The default offline LLM API doesn't emit periodic scheduler stats the way
-# the online server does, so this is the next-best free source of visibility
-# into the batch1/batch2 job-260703 memory-spike investigation.
 export VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL:-DEBUG}"
 
 PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
@@ -255,7 +223,6 @@ echo "[$(date)] Prompts dir:   $WHITEFOX_PROMPTS_DIR"
 echo "[$(date)] Base config:   $BASE_CONFIG_PATH"
 echo "[$(date)] Patched config: $TMP_CONFIG"
 
-# ---- LLVM toolchain --------------------------------------------------------
 LLVM17_BIN="/vol/bitbucket/mtr25/tfbuild/llvm17/bin"
 if [ -x "$LLVM17_BIN/llvm-profdata" ]; then
   export WHITEFOX_LLVM_DIR="$LLVM17_BIN"
@@ -277,22 +244,13 @@ if [ -f "$HOME/.hf_token" ]; then
   export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
 fi
 
-# ---------------------------------------------------------------------------
-# Model-cache pre-seed: copy from NFS to node-local SSD on first use.
-# safetensors mmap()s the shard files; if they live on NFS the mapping can
-# go stale after the 16-18 min cold load (server evicts cached pages), and
-# the first GPU forward pass triggers SIGBUS.  Loading from /data (SSD)
-# eliminates both the mmap-over-NFS hazard and the 18-min load penalty.
-# ---------------------------------------------------------------------------
 _HF_SSD_CACHE=/data/hf_cache
 mkdir -p "$_HF_SSD_CACHE"
-# HF Hub cache directories are named  models--{org}--{repo}  (/ → --)
 _HF_MODEL_SLUG="models--$(echo "$WHITEFOX_MODEL" | sed 's|/|--|g')"
 _HF_NFS_SRC="$PROJECT_ROOT/hf_cache/$_HF_MODEL_SLUG"
 _HF_SSD_DST="$_HF_SSD_CACHE/$_HF_MODEL_SLUG"
 if [ -d "$_HF_NFS_SRC" ] && [ ! -d "$_HF_SSD_DST" ]; then
   echo "[$(date)] [$BATCH_LABEL] Pre-seeding model cache from NFS to SSD (~30 GB, ~60 s)…"
-  # flock guards against two array tasks racing on the same node
   (
     flock -x 200
     if [ ! -d "$_HF_SSD_DST" ]; then
@@ -312,10 +270,6 @@ XLA_DUMP_DIR="$LOCAL_COV_DIR/xla_dump"
 rm -rf "$XLA_DUMP_DIR" 2>/dev/null || true
 rm -rf /tmp/wf_profraw_* 2>/dev/null || true
 mkdir -p "$XLA_DUMP_DIR"
-# Clear the node-local vLLM torch.compile cache.  Stale mmap'd compiled kernels
-# left by a previous job on this node can cause SIGBUS when replayed on a new
-# CUDA context.  The cache is rebuilt in ~17 s and costs much less than a
-# crashed run.
 rm -rf /data/vllm_cache/torch_compile_cache 2>/dev/null || true
 
 export XLA_FLAGS="--xla_dump_to=$XLA_DUMP_DIR"
@@ -324,11 +278,6 @@ export TOKENIZERS_PARALLELISM=false
 
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
-# Restrict CUDA to the single GPU allocated by Slurm.  Without this, the CUDA
-# runtime enumerates and opens a context on every visible GPU, mapping each
-# 80 GB A100 BAR window into the process address space (~80 GB RSS per GPU).
-# With --gres=gpu:1 Slurm already sets CUDA_VISIBLE_DEVICES; this line is a
-# belt-and-suspenders guard in case the binding is absent.
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -355,9 +304,6 @@ case "$WHITEFOX_WHEEL_VERSION" in
       poetry install --no-interaction
       echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
       poetry run pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
-      # NFS write-back can leave newly written package files invisible for a few
-      # seconds after pip returns.  transformers imports TF at module-load time
-      # (image_transforms.py), so we verify here and retry if needed.
       for _tf_attempt in 1 2 3; do
         if poetry run python -c "import tensorflow; print('[$(date)] TF import OK:', tensorflow.__version__)" 2>&1; then
           break
@@ -372,19 +318,6 @@ case "$WHITEFOX_WHEEL_VERSION" in
       echo "[$(date)] [$BATCH_LABEL] Install done"
     ) 200>"$LOCKFILE"
 
-    # ---------------------------------------------------------------------------
-    # Venv-to-SSD copy: eliminates NFS mmap SIGBUS for Python .so extension modules.
-    #
-    # The model-weight fix (Bug 3 / commit 259c4b7) moved the safetensors mmaps
-    # from NFS to SSD.  The same hazard exists for the .venv: TF, vLLM, and torch
-    # each mmap() dozens of .so files via dlopen().  These mappings live for the
-    # entire process lifetime.  After ~1 h the NFS server evicts its page cache
-    # for those files; the next code-path that touches a reclaimed page delivers
-    # SIGBUS to the main Python process (batch0 at it71, batch1 at it44).
-    #
-    # Fix: identical pattern to the model pre-seed — flock-guarded cp to /data.
-    # Subsequent jobs on the same node skip the copy (marker file present).
-    # ---------------------------------------------------------------------------
     _VENV_NFS=$(cd "$PROJECT_ROOT" && poetry env info --path 2>/dev/null || true)
     _VENV_SSD="/data/whitefox_venv"
     _VENV_MARKER="$_VENV_SSD/.wf_installed"
@@ -422,7 +355,6 @@ case "$WHITEFOX_WHEEL_VERSION" in
     echo "[$(date)] Force-reinstalling TensorFlow wheel: $WHITEFOX_TF_WHEEL"
     pip install --force-reinstall --no-deps "$WHITEFOX_TF_WHEEL"
     echo "[$(date)] [$BATCH_LABEL] Install done"
-    # Same venv-to-SSD pattern as the 20250806 case.
     _VENV_SSD_310="/data/whitefox_venv_cp310"
     _VENV_MARKER_310="$_VENV_SSD_310/.wf_installed"
     (
@@ -457,22 +389,6 @@ CG_DIR="/sys/fs/cgroup${CG_REL}"
 TRACE_FILE="$WHITEFOX_LOGGING_DIR/cgroup_mem.tsv"
 XLA_DUMP_GLOB="$LOCAL_COV_DIR/xla_dump"
 
-# ---------------------------------------------------------------------------
-# Mem-guard: a full cgroup OOM (job 265218 batch0, 2026-07-26) can take out
-# the whole job step at once -- wrapper script and background tracers
-# included, not just generation.main -- because Slurm's cgroup/v2 plugin
-# kills the entire step's cgroup on OOM (memory.oom.group semantics) rather
-# than just the offending process. That silently defeats the 5-attempt
-# resume loop below: it can only retry if it survives to see a nonzero
-# exit, and a whole-cgroup kill gives it no such chance.
-#
-# Instead of waiting for the kernel to do an indiscriminate cgroup-wide
-# kill at the --mem=190G hard cap, proactively SIGTERM (then SIGKILL) just
-# generation.main's PID once mem_current crosses a soft cap well below
-# that -- the wrapper's own footprint is negligible, so it never becomes a
-# fellow victim, and the existing .done-marker retry logic gets to run on
-# every crash instead of only sometimes.
-# ---------------------------------------------------------------------------
 MEM_GUARD_BYTES=$(( ${WHITEFOX_MEM_GUARD_GB:-160} * 1024 * 1024 * 1024 ))
 GEN_PID_FILE="$WHITEFOX_LOGGING_DIR/gen_pid"
 MEM_GUARD_LOG="$WHITEFOX_LOGGING_DIR/mem_guard.log"
@@ -542,18 +458,6 @@ echo "[$(date)] mem-guard:    SIGTERM generation.main above ${WHITEFOX_MEM_GUARD
 ulimit -u "$(ulimit -Hu)" 2>/dev/null || true
 echo "[$(date)] nproc limit: $(ulimit -u)"
 
-# ---------------------------------------------------------------------------
-# Auto-resume on crash: an OOM (137) or SIGBUS (135) kills the whole process,
-# silently orphaning every optimization after the one in progress at kill
-# time — this is what happened to batches 1 and 2 in job 260703, each losing
-# 20+ optimizations to a single memory spike partway through a ~24h run.
-#
-# generator.py touches "$WHITEFOX_LOGGING_DIR/completed_opts/<name>.done" the
-# instant an optimization finishes (before the next one starts allocating).
-# On a nonzero exit we recompute --only-opt from whatever has no marker yet
-# and retry, so one crash costs at most the in-progress optimization's
-# progress — not the rest of the batch.
-# ---------------------------------------------------------------------------
 COMPLETED_DIR="$WHITEFOX_LOGGING_DIR/completed_opts"
 MAX_RESUME_ATTEMPTS="${WHITEFOX_MAX_RESUME_ATTEMPTS:-5}"
 REMAINING_OPTS="$OPT_CSV"
@@ -575,7 +479,6 @@ for ATTEMPT in $(seq 1 "$MAX_RESUME_ATTEMPTS"); do
 
   echo "[$(date)] $BATCH_LABEL attempt $ATTEMPT failed (exit $GEN_EXIT)"
 
-  # Recompute what's left to do from completion markers.
   IFS=',' read -ra _ALL_ATTEMPT_OPTS <<< "$OPT_CSV"
   _STILL_TODO=()
   for _o in "${_ALL_ATTEMPT_OPTS[@]}"; do
@@ -597,17 +500,6 @@ for ATTEMPT in $(seq 1 "$MAX_RESUME_ATTEMPTS"); do
   REMAINING_OPTS=$(IFS=,; echo "${_STILL_TODO[*]}")
   echo "[$(date)] $BATCH_LABEL: ${#_STILL_TODO[@]} optimization(s) remaining, retrying: $REMAINING_OPTS"
 
-  # An OOM-killed attempt can leave an orphaned vLLM/CUDA worker still
-  # holding GPU memory (SIGKILL on the parent doesn't guarantee its child
-  # processes exit). The next retry's vLLM engine then fails at startup
-  # before running a single test, and every remaining attempt fails the
-  # same way since the leak persists across retries on the same node.
-  # Observed job 262025 batch2: attempt 1 OOM-killed, attempts 2-5 all
-  # failed in ~30s with "Free memory on device (10.5/79.25 GiB) ... less
-  # than desired GPU memory utilization" -- the 5-attempt safety net never
-  # got a chance to actually retry. --gres=gpu:1 gives this job exclusive
-  # use of its allocated GPU, so any compute process nvidia-smi reports on
-  # it belongs to us; clear it before the next attempt.
   _leaked_pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | grep -v '^$' || true)
   if [ -n "$_leaked_pids" ]; then
     echo "[$(date)] $BATCH_LABEL: killing leftover GPU process(es) before retry: $_leaked_pids"
