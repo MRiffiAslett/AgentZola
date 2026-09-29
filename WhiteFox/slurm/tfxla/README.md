@@ -5,7 +5,7 @@
 Must be run from inside `WhiteFox/`:
 
 ```bash
-cd /vol/bitbucket/mtr25/AgentZola/WhiteFox
+cd /vol/bitbucket/<user>/AgentZola/WhiteFox
 sbatch slurm/tfxla/tfxla_a100_array.sh
 ```
 

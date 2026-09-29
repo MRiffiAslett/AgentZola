@@ -3,14 +3,14 @@ name = "whitefox"
 version = "0.1.0"
 description = "WhiteFox — TF 2.14.0 / 20230507 wheel variant (cp310)"
 authors = [
-    "Max Riffi-Aslett <max.riffi3@gmail.com>"
+    "Anonymous <anon@example.com>"
 ]
 readme = "README.md"
 package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.11"
-tensorflow-cpu = { path = "/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl" }
+tensorflow-cpu = { path = "/vol/bitbucket/<user>/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl" }
 numpy = ">=1.24,<2.3"
 pydantic = "^2.12.5"
 tomli = "^2.3.0"

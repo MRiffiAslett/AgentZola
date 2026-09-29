@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VENV_DIR="$PROJECT_ROOT/venv-cp310"
-WHEEL="/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl"
+WHEEL="/vol/bitbucket/<user>/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl"
 echo "[$(date)] PROJECT_ROOT : $PROJECT_ROOT"
 echo "[$(date)] VENV_DIR     : $VENV_DIR"
 echo "[$(date)] WHEEL        : $WHEEL"

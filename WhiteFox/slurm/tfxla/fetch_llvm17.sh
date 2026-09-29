@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-LLVM17_DIR="/vol/bitbucket/mtr25/tfbuild/llvm17"
+LLVM17_DIR="/vol/bitbucket/<user>/tfbuild/llvm17"
 LLVM17_BIN="$LLVM17_DIR/bin"
 
 if [ -x "$LLVM17_BIN/llvm-profdata" ]; then

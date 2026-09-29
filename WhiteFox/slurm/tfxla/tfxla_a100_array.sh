@@ -7,7 +7,7 @@
 #SBATCH --time=72:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=${USER}
-#SBATCH --output=/vol/bitbucket/mtr25/AgentZola/WhiteFox/slurm/tfxla/out/whitefox_%A_%a.out
+#SBATCH --output=/vol/bitbucket/<user>/AgentZola/WhiteFox/slurm/tfxla/out/whitefox_%A_%a.out
 
 #SBATCH --array=0-2
 N_TASKS=3
@@ -19,7 +19,7 @@ WHITEFOX_WHEEL_VERSION="20230507"
 WHITEFOX_PROMPTS_VERSION="20230507"
 export WHITEFOX_MODEL WHITEFOX_WHEEL_VERSION WHITEFOX_PROMPTS_VERSION
 
-_WHEEL_DIR="/vol/bitbucket/mtr25/tfbuild/wheels"
+_WHEEL_DIR="/vol/bitbucket/<user>/tfbuild/wheels"
 case "$WHITEFOX_WHEEL_VERSION" in
   20250806) WHITEFOX_TF_WHEEL="$_WHEEL_DIR/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl" ;;
   20230507) WHITEFOX_TF_WHEEL="$_WHEEL_DIR/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl" ;;
@@ -145,7 +145,7 @@ export WHITEFOX_EARLY_STOP_ITERS="${WHITEFOX_EARLY_STOP_ITERS:-0}"
 
 export VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL:-DEBUG}"
 
-PROJECT_ROOT="/vol/bitbucket/mtr25/AgentZola/WhiteFox"
+PROJECT_ROOT="/vol/bitbucket/<user>/AgentZola/WhiteFox"
 export PROJECT_ROOT
 export WHITEFOX_LOGGING_DIR="$PROJECT_ROOT/logging/$BATCH_LABEL"
 
@@ -223,11 +223,11 @@ echo "[$(date)] Prompts dir:   $WHITEFOX_PROMPTS_DIR"
 echo "[$(date)] Base config:   $BASE_CONFIG_PATH"
 echo "[$(date)] Patched config: $TMP_CONFIG"
 
-LLVM17_BIN="/vol/bitbucket/mtr25/tfbuild/llvm17/bin"
+LLVM17_BIN="/vol/bitbucket/<user>/tfbuild/llvm17/bin"
 if [ -x "$LLVM17_BIN/llvm-profdata" ]; then
   export WHITEFOX_LLVM_DIR="$LLVM17_BIN"
 fi
-for _llvm_dir in /vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/llvm_linux_x86_64/bin; do
+for _llvm_dir in /vol/bitbucket/<user>/tfbuild/tmp/bazel_root_*/*/external/llvm_linux_x86_64/bin; do
   [ -d "$_llvm_dir" ] && export PATH="$_llvm_dir:$PATH"
 done
 export PATH="$LLVM17_BIN:$HOME/.local/bin:$PATH"

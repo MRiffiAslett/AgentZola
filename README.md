@@ -11,7 +11,7 @@
 └── .pyenv/                 # Python managed via pyenv
 ```
 
-The SLURM scripts hardcode `/vol/bitbucket/mtr25/...` — update if running as a different user.
+The SLURM scripts hardcode `/vol/bitbucket/<user>/...` — update `<user>` for your environment.
 
 ## Python
 
@@ -30,7 +30,5 @@ On login nodes it may not be in PATH — run jobs via SLURM, not manually from t
 ## Cloning
 
 ```bash
-git clone git@github.com:MRiffiAslett/AgentZola.git /vol/bitbucket/<user>/AgentZola
+git clone <artifact-repo-url> /vol/bitbucket/<user>/AgentZola
 ```
-
-SSH key must already be added to GitHub (`ssh -T git@github.com` to verify).

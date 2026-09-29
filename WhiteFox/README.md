@@ -6,7 +6,7 @@ Poetry manages the virtualenv. The SLURM script runs `poetry install` automatica
 To install manually on a compute node:
 
 ```bash
-cd /vol/bitbucket/mtr25/AgentZola/WhiteFox
+cd /vol/bitbucket/<user>/AgentZola/WhiteFox
 poetry lock --check || poetry lock
 poetry install
 ```
@@ -17,12 +17,12 @@ The TF wheel is not on PyPI — it must exist locally before `poetry install` ru
 
 | Key | Path |
 |-----|------|
-| `20250806` | `/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl` |
-| `20230507` | `/vol/bitbucket/mtr25/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl` |
+| `20250806` | `/vol/bitbucket/<user>/tfbuild/wheels/tensorflow_cpu-2.20.0.dev0+selfbuilt.20250806-cp312-cp312-linux_x86_64.whl` |
+| `20230507` | `/vol/bitbucket/<user>/tfbuild/wheels/tensorflow_cpu-2.14.0+selfbuilt.20230507-cp310-cp310-linux_x86_64.whl` |
 
 ## LLVM (coverage)
 
-`llvm-profdata` and `llvm-cov` must be at `/vol/bitbucket/mtr25/tfbuild/llvm17/bin/`.  
+`llvm-profdata` and `llvm-cov` must be at `/vol/bitbucket/<user>/tfbuild/llvm17/bin/`.  
 The SLURM script sets `WHITEFOX_LLVM_DIR` to that path automatically if it exists.
 
 ## HuggingFace cache

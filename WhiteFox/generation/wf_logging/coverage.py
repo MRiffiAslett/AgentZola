@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _TFBUILD_LLVM_GLOB = (
-    "/vol/bitbucket/mtr25/tfbuild/tmp/bazel_root_*/*/external/"
+    "/vol/bitbucket/<user>/tfbuild/tmp/bazel_root_*/*/external/"
     "llvm_linux_x86_64/bin"
 )
 
